@@ -150,6 +150,12 @@ def detect_workspace_stack(workspace_dir):
             tags.update(["docker", "devops", "container"])
         elif base.endswith(".prisma"):
             tags.update(["prisma", "database"])
+        elif base.endswith(".html") or base == "index.html":
+            tags.update(["web", "frontend", "html"])
+        elif base.endswith(".py") and "python" not in tags:
+            tags.update(["python"])
+        elif base == "plugin.json":
+            tags.update(["plugin", "antigravity", "customization"])
 
     return list(tags)
 
