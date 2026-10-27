@@ -1,0 +1,26 @@
+{
+  "hermes-agent": {
+    "repo": "NousResearch/hermes-agent",
+    "branch": "main",
+    "skills_path": "skills",
+    "enabled": true,
+    "last_sha": null,
+    "description": "Nous Research autonomous agent skills"
+  },
+  "ponytail": {
+    "repo": "DietrichGebert/ponytail",
+    "branch": "main",
+    "skills_path": "skills",
+    "enabled": true,
+    "last_sha": null,
+    "description": "Lazy senior dev minimal coding rules"
+  },
+  "awesome-agent-skills": {
+    "repo": "VoltAgent/awesome-agent-skills",
+    "branch": "main",
+    "skills_path": "skills",
+    "enabled": true,
+    "last_sha": null,
+    "description": "Curated production-ready agent skills collection"
+  }
+}

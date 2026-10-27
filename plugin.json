@@ -1,0 +1,17 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "omni-skill-orchestrator",
+  "version": "1.0.0",
+  "description": "Universal AI Skill & Plugin Intelligence: Autonomous stack detection, intent-based skill auto-activation, and intelligent arbitration across 7,749+ skills without remembering commands.",
+  "author": {
+    "name": "Antigravity Engineering Pair Programmer"
+  },
+  "keywords": [
+    "orchestrator",
+    "skill-manager",
+    "auto-activation",
+    "stack-detection",
+    "arbiter",
+    "universal-skills"
+  ]
+}

@@ -1,0 +1,21 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Local dynamic registries and caches
+scripts/registry.json
+*.tmp
+*.log
+
+# OS generated files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# IDE & temporary test outputs
+.vscode/
+.idea/
+scratch/
+*.docx
+*.pdf
