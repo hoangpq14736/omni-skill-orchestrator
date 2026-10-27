@@ -3,7 +3,7 @@
 [![Agent Plugins 1.0.0](https://img.shields.io/badge/Spec-Agent%20Plugins%201.0.0-blue.svg)](https://agent-plugins.org)
 [![Python 3.10+](https://img.shields.io/badge/Python-3.10%2B-green.svg)](https://python.org)
 [![Zero Dependency](https://img.shields.io/badge/Dependencies-0%20(Pure%20Stdlib)-brightgreen.svg)]()
-[![Tests](https://img.shields.io/badge/Tests-8%2F8%20Passing-success.svg)]()
+[![Tests](https://img.shields.io/badge/Tests-9%2F9%20Passing-success.svg)]()
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 > **Universal Autonomous Skill Intelligence for Google Antigravity & AI Coding Harnesses.**  
@@ -18,8 +18,9 @@ Traditional agentic skill systems (such as Claude Code or Antigravity's active s
 | Challenge | Traditional Skills / Active Plugins | Omni-Skill Orchestrator |
 |---|---|---|
 | **Context Overhead** | Loads 50–120 skills into System Prompt (**15,000–25,000 tokens**), hitting the 20k token ceiling and triggering silent exclusions. | **0 Tokens at idle!** Skills reside in an offline library (`skills_library/`) and are loaded Just-In-Time (JIT) only when needed. |
-| **Activation Model** | Requires the user to remember and type `/command` or `/skill-name` manually. | **100% Autonomous Dual-Channel Detection** (Stack Markers + Semantic Intent). |
+| **Activation Model** | Requires the user to remember and type `/command` or `/skill-name` manually. | **Mandatory Step 0 Gatekeeper** with **100% Autonomous Dual-Channel Detection** (Stack Markers + Semantic Intent). |
 | **Conflict Handling** | Naive keyword matching can trigger obsolete or overly generic skills (e.g. `python-reviewer` over `fastapi-patterns`). | **4-Tier Arbitration Matrix** (Domain Specificity > SemVer Freshness > Scope Priority > Quality). |
+| **Adaptability & Learning** | Static hardcoded triggers. Fails when prompt phrasing changes. | **Continuous Meta-Learning (Self-Evolution)**: Learns from agent/user feedback (`--feedback`), dynamically boosting token-skill affinities. |
 | **Bilingual Support** | English only. | **Built-in Bilingual Semantic Mapper** (Vietnamese & English technical terms). |
 | **Speed & Dependencies** | Heavy vector databases or slow embedding lookups. | **0 Dependencies (Pure Python Stdlib)**. Scans 496+ skills in **0.12s**, resolves in **1.1ms**. |
 
@@ -100,6 +101,15 @@ python scripts/resolver.py --intent "chuyển ảnh chụp hóa đơn sang bản
 
 # Query optimal skills for a workspace
 python scripts/resolver.py --workspace "./my-rust-project" --intent "test firmware UART"
+
+# Reinforce feedback (Self-Learning / Meta-Evolution)
+python scripts/resolver.py --intent "canvas game" --workspace "./my-game" --feedback generative_ui
+
+# View self-learning stats
+python scripts/resolver.py --learn-stats
+
+# Reset learned memory
+python scripts/resolver.py --reset-learning
 ```
 
 ---
@@ -107,7 +117,7 @@ python scripts/resolver.py --workspace "./my-rust-project" --intent "test firmwa
 ## 🛠️ CLI Tools Included
 
 * **`indexer.py`**: High-speed zero-dependency inverted indexer. Parses multi-line YAML frontmatters, extracts SemVer version clues, and builds an ultra-compact `registry.json`.
-* **`resolver.py`**: Sub-2ms arbitration engine with bilingual Vietnamese-English mapping and stack detection.
+* **`resolver.py`**: Sub-2ms arbitration engine with bilingual Vietnamese-English mapping, stack detection, and adaptive self-learning (`learned_affinities.json`).
 * **`updater.py`**: Automated upstream watcher that monitors community skill repositories (`NousResearch/hermes-agent`, `DietrichGebert/ponytail`, `VoltAgent/awesome-agent-skills`) via GitHub API commit SHAs.
 
 ---
@@ -121,9 +131,9 @@ python -m unittest tests/test_engine.py
 ```
 
 ```text
-........
+.........
 ----------------------------------------------------------------------
-Ran 8 tests in 0.52s
+Ran 9 tests in 0.30s
 
 OK
 ```

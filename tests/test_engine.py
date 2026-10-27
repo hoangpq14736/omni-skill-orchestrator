@@ -10,7 +10,10 @@ import unittest
 
 sys.path.append(os.path.join(os.path.dirname(__file__), "..", "scripts"))
 from indexer import build_index
-from resolver import resolve_skill, detect_workspace_stack, compare_versions, load_registry
+from resolver import (
+    resolve_skill, detect_workspace_stack, compare_versions, load_registry,
+    record_feedback, get_learned_stats, reset_learning
+)
 
 
 class TestOmniSkillOrchestrator(unittest.TestCase):
@@ -95,6 +98,47 @@ class TestOmniSkillOrchestrator(unittest.TestCase):
                 shutil.rmtree(dummy_dir)
             # Rebuild clean registry
             build_index(os.path.join(os.path.dirname(__file__), "..", "scripts", "registry.json"))
+
+    def test_09_self_learning_feedback(self):
+        """Verify that Meta-Evolution records feedback and elevates chosen skills on subsequent queries."""
+        temp_aff_path = os.path.join(os.path.dirname(__file__), "temp_test_affinities.json")
+        try:
+            # Clean start
+            reset_learning(temp_aff_path)
+
+            # Query before feedback
+            initial_res = resolve_skill("canvas game animation", top_k=5, registry=self.reg, affinities_path=temp_aff_path)
+            initial_names = [r["skill"]["name"] for r in initial_res]
+            self.assertNotIn("generative_ui", initial_names[:1])
+
+            # Record feedback teaching Omni that 'canvas game animation' should activate 'generative_ui'
+            fb = record_feedback("canvas game animation", None, "generative_ui", affinities_path=temp_aff_path)
+            self.assertEqual(fb["status"], "ok")
+            self.assertEqual(fb["chosen_skill"], "generative_ui")
+
+            # Query after feedback
+            learned_res = resolve_skill("canvas game animation", top_k=5, registry=self.reg, affinities_path=temp_aff_path)
+            self.assertTrue(len(learned_res) > 0)
+            top_cand = learned_res[0]
+            self.assertEqual(top_cand["skill"]["name"], "generative_ui")
+            self.assertGreater(top_cand.get("learned_boost", 0), 0)
+
+            # Check stats
+            stats = get_learned_stats(temp_aff_path)
+            self.assertGreaterEqual(stats["total_tokens_learned"], 3)
+            self.assertEqual(stats["top_skills"][0][0], "generative_ui")
+            self.assertEqual(stats["top_skills"][0][1]["chosen_count"], 1)
+
+            # Sub-millisecond performance check
+            start = time.perf_counter()
+            for _ in range(50):
+                resolve_skill("canvas game animation", top_k=3, registry=self.reg, affinities_path=temp_aff_path)
+            elapsed = (time.perf_counter() - start) / 50.0
+            self.assertLess(elapsed, 0.005, f"Learned resolution took {elapsed*1000:.2f}ms (expected < 5ms)")
+
+        finally:
+            if os.path.exists(temp_aff_path):
+                os.remove(temp_aff_path)
 
 
 if __name__ == "__main__":

@@ -8,8 +8,10 @@ import re
 import json
 import sys
 import argparse
+import datetime
 
 REGISTRY_PATH = os.path.join(os.path.dirname(__file__), "registry.json")
+LEARNED_PATH = os.path.join(os.path.dirname(__file__), "learned_affinities.json")
 
 # Vietnamese to technical terms synonyms map
 VI_EN_SYNONYMS = {
@@ -83,6 +85,142 @@ SCOPE_PRIORITY = {
     "builtin": 15,
     "library": 5
 }
+
+
+def load_learned_affinities(path=None):
+    """Loads learned affinities and stats from disk in <0.2ms."""
+    path = path or LEARNED_PATH
+    if not os.path.exists(path):
+        return {"version": "1.1.0", "affinities": {}, "skill_stats": {}}
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+            if not isinstance(data, dict):
+                return {"version": "1.1.0", "affinities": {}, "skill_stats": {}}
+            data.setdefault("affinities", {})
+            data.setdefault("skill_stats", {})
+            return data
+    except Exception:
+        return {"version": "1.1.0", "affinities": {}, "skill_stats": {}}
+
+
+def save_learned_affinities(data, path=None):
+    """Safely saves learned affinities and stats to disk."""
+    path = path or LEARNED_PATH
+    try:
+        os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
+        temp_path = f"{path}.tmp.{os.getpid()}"
+        with open(temp_path, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2, ensure_ascii=False)
+        if os.path.exists(path):
+            os.replace(temp_path, path)
+        else:
+            os.rename(temp_path, path)
+        return True
+    except Exception:
+        try:
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump(data, f, indent=2, ensure_ascii=False)
+            return True
+        except Exception:
+            return False
+
+
+def record_feedback(intent_text="", workspace_dir=None, chosen_skill="", rejected_skills=None, affinities_path=None):
+    """
+    Self-Learning / Meta-Evolution:
+    Records positive reinforcement for chosen_skill and optional dampening for rejected_skills.
+    Learns associations between target tokens (intent + workspace markers) and skill name.
+    """
+    if not chosen_skill:
+        return {"status": "error", "message": "chosen_skill is required"}
+
+    path = affinities_path or LEARNED_PATH
+    data = load_learned_affinities(path)
+    affinities = data["affinities"]
+    stats = data["skill_stats"]
+
+    # Gather target tokens
+    query_tokens = extract_query_tokens(intent_text) if intent_text else set()
+    stack_tags = set(detect_workspace_stack(workspace_dir)) if workspace_dir else set()
+    all_tokens = query_tokens.union(stack_tags)
+
+    # Fallback to tokens from skill name if prompt and stack are empty
+    if not all_tokens:
+        all_tokens = set(re.findall(r'\b[\w\-]+\b', chosen_skill.lower()))
+
+    # Positive reinforcement for chosen skill
+    chosen_lower = chosen_skill.lower()
+    for tok in all_tokens:
+        tok_lower = tok.lower()
+        if tok_lower not in affinities:
+            affinities[tok_lower] = {}
+        curr = affinities[tok_lower].get(chosen_lower, 0.0)
+        # Boost by +15.0 per feedback event, capped at +60.0 to prevent runaway bias
+        affinities[tok_lower][chosen_lower] = min(60.0, curr + 15.0)
+
+    # Optional dampening for rejected skills
+    if rejected_skills:
+        if isinstance(rejected_skills, str):
+            rejected_skills = [rejected_skills]
+        for rej in rejected_skills:
+            rej_lower = rej.lower()
+            if rej_lower and rej_lower != chosen_lower:
+                for tok in all_tokens:
+                    tok_lower = tok.lower()
+                    if tok_lower in affinities and rej_lower in affinities[tok_lower]:
+                        curr = affinities[tok_lower][rej_lower]
+                        affinities[tok_lower][rej_lower] = max(-30.0, curr - 10.0)
+
+    # Update stats
+    skill_stat = stats.setdefault(chosen_lower, {"chosen_count": 0, "rejected_count": 0, "last_chosen": ""})
+    skill_stat["chosen_count"] += 1
+    skill_stat["last_chosen"] = datetime.datetime.now(datetime.timezone.utc).isoformat()
+
+    if rejected_skills:
+        for rej in rejected_skills:
+            rej_lower = rej.lower()
+            if rej_lower and rej_lower != chosen_lower:
+                rstat = stats.setdefault(rej_lower, {"chosen_count": 0, "rejected_count": 0, "last_chosen": ""})
+                rstat["rejected_count"] += 1
+
+    data["updated_at"] = datetime.datetime.now(datetime.timezone.utc).isoformat()
+    save_learned_affinities(data, path)
+
+    return {
+        "status": "ok",
+        "chosen_skill": chosen_lower,
+        "tokens_boosted": sorted(list(all_tokens)),
+        "total_associations": len(affinities)
+    }
+
+
+def reset_learning(affinities_path=None):
+    """Resets the learned affinities database."""
+    path = affinities_path or LEARNED_PATH
+    data = {"version": "1.1.0", "affinities": {}, "skill_stats": {}}
+    save_learned_affinities(data, path)
+    return {"status": "ok", "message": "Learned affinities database reset"}
+
+
+def get_learned_stats(affinities_path=None):
+    """Returns self-learning statistics."""
+    path = affinities_path or LEARNED_PATH
+    data = load_learned_affinities(path)
+    affinities = data.get("affinities", {})
+    stats = data.get("skill_stats", {})
+    
+    top_reinforced = sorted(
+        stats.items(),
+        key=lambda item: item[1].get("chosen_count", 0),
+        reverse=True
+    )
+    return {
+        "total_tokens_learned": len(affinities),
+        "total_tracked_skills": len(stats),
+        "top_skills": top_reinforced[:10],
+        "updated_at": data.get("updated_at", "Never")
+    }
 
 
 def load_registry(registry_path=REGISTRY_PATH):
@@ -227,7 +365,7 @@ def extract_query_tokens(text):
     return tokens
 
 
-def resolve_skill(intent_text="", workspace_dir=None, registry=None, top_k=3):
+def resolve_skill(intent_text="", workspace_dir=None, registry=None, top_k=3, affinities_path=None):
     if registry is None:
         registry = load_registry()
 
@@ -235,14 +373,19 @@ def resolve_skill(intent_text="", workspace_dir=None, registry=None, top_k=3):
     token_index = registry.get("token_index", {})
     stack_tags = detect_workspace_stack(workspace_dir)
 
+    # Load learned affinities for meta-evolution (<0.2ms)
+    learned_data = load_learned_affinities(affinities_path)
+    affinities = learned_data.get("affinities", {})
+
     query_tokens = extract_query_tokens(intent_text) if intent_text else set()
     all_target_tokens = query_tokens.union(set(stack_tags))
 
     candidate_scores = {}
+    name_to_idx = {s["name"].lower(): i for i, s in enumerate(skills)}
 
     for token in all_target_tokens:
         token_lower = token.lower()
-        matching_indices = token_index.get(token_lower, [])
+        matching_indices = set(token_index.get(token_lower, []))
         is_query = token_lower in query_tokens
         is_stack = token_lower in stack_tags
         
@@ -252,6 +395,13 @@ def resolve_skill(intent_text="", workspace_dir=None, registry=None, top_k=3):
 
         for idx in matching_indices:
             candidate_scores[idx] = candidate_scores.get(idx, 0) + weight
+
+        # Pull candidates learned from past agent/user feedback for this token
+        tok_affinities = affinities.get(token_lower, {})
+        for aff_skill, aff_weight in tok_affinities.items():
+            if aff_skill in name_to_idx:
+                s_idx = name_to_idx[aff_skill]
+                candidate_scores[s_idx] = candidate_scores.get(s_idx, 0) + max(0, int(aff_weight))
 
     candidates = []
     for idx, score in candidate_scores.items():
@@ -296,10 +446,22 @@ def resolve_skill(intent_text="", workspace_dir=None, registry=None, top_k=3):
                     spec = max(spec, 1)
         score += spec * 10
 
+        # Meta-Learned affinity boost across all target tokens
+        learned_boost = 0.0
+        for t in all_target_tokens:
+            t_lower = t.lower()
+            if t_lower in affinities and name in affinities[t_lower]:
+                learned_boost += affinities[t_lower][name]
+        
+        # Bounded between -40.0 and +80.0
+        learned_boost = max(-40.0, min(80.0, learned_boost))
+        score += learned_boost
+
         candidates.append({
             "skill": s,
             "raw_score": score,
             "specificity": spec,
+            "learned_boost": learned_boost
         })
 
     if not candidates:
@@ -329,6 +491,8 @@ def _arbitrate_candidates(candidates, stack_tags, query_tokens):
         name = s["name"]
         spec = cand["specificity"]
         ver = s.get("version", "1.0.0")
+        learned_boost = cand.get("learned_boost", 0.0)
+        boost_suffix = f" [Meta-Boost: +{learned_boost:.1f}]" if learned_boost > 0 else ""
 
         domain_key = None
         for dom in SPECIFICITY_MAP:
@@ -342,14 +506,14 @@ def _arbitrate_candidates(candidates, stack_tags, query_tokens):
             existing = seen_domains[domain_key]
             # Higher score wins if within same domain
             if cand["raw_score"] > existing["raw_score"] + 10:
-                reason = f"Arbitration: Selected {name} (Score: {cand['raw_score']:.1f}) over {existing['skill']['name']} (Score: {existing['raw_score']:.1f})"
+                reason = f"Arbitration: Selected {name} (Score: {cand['raw_score']:.1f}) over {existing['skill']['name']} (Score: {existing['raw_score']:.1f}){boost_suffix}"
                 cand["arbitration_reason"] = reason
                 selected.remove(existing)
                 selected.append(cand)
                 seen_domains[domain_key] = cand
                 continue
             elif spec > existing["specificity"]:
-                reason = f"Arbitration: Replaced {existing['skill']['name']} with {name} (Higher specificity: {spec} > {existing['specificity']})"
+                reason = f"Arbitration: Replaced {existing['skill']['name']} with {name} (Higher specificity: {spec} > {existing['specificity']}){boost_suffix}"
                 cand["arbitration_reason"] = reason
                 selected.remove(existing)
                 selected.append(cand)
@@ -358,7 +522,7 @@ def _arbitrate_candidates(candidates, stack_tags, query_tokens):
             elif spec == existing["specificity"]:
                 v_cmp = compare_versions(ver, existing["skill"].get("version"))
                 if v_cmp > 0:
-                    reason = f"Arbitration: Selected {name} (v{ver}) over older {existing['skill']['name']} (v{existing['skill'].get('version')})"
+                    reason = f"Arbitration: Selected {name} (v{ver}) over older {existing['skill']['name']} (v{existing['skill'].get('version')}){boost_suffix}"
                     cand["arbitration_reason"] = reason
                     selected.remove(existing)
                     selected.append(cand)
@@ -369,7 +533,7 @@ def _arbitrate_candidates(candidates, stack_tags, query_tokens):
             else:
                 continue
 
-        cand["arbitration_reason"] = f"Optimal candidate for domain '{domain_key}'"
+        cand["arbitration_reason"] = f"Optimal candidate for domain '{domain_key}'{boost_suffix}"
         seen_domains[domain_key] = cand
         selected.append(cand)
 
@@ -397,12 +561,43 @@ def format_resolution_output(results, is_json=False):
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Omni-Skill Resolver CLI")
+    parser = argparse.ArgumentParser(description="Omni-Skill Resolver & Meta-Learning CLI")
     parser.add_argument("--intent", "-i", type=str, default="", help="User prompt or intent")
     parser.add_argument("--workspace", "-w", type=str, default="", help="Workspace directory")
     parser.add_argument("--json", action="store_true", help="Output in JSON format")
     parser.add_argument("--top", "-k", type=int, default=3, help="Top K results")
+    parser.add_argument("--feedback", "-f", type=str, default="", help="Reinforce feedback for chosen skill")
+    parser.add_argument("--reject", "-r", type=str, default="", help="Dampen affinity for rejected skill")
+    parser.add_argument("--learn-stats", action="store_true", help="Display self-learning memory statistics")
+    parser.add_argument("--reset-learning", action="store_true", help="Reset learned affinities memory")
     args = parser.parse_args()
+
+    if args.reset_learning:
+        res = reset_learning()
+        print(f"✅ {res['message']}")
+        sys.exit(0)
+
+    if args.learn_stats:
+        stats = get_learned_stats()
+        print("📊 Omni-Skill Self-Learning Statistics:")
+        print(f"   - Total Learned Token Associations: {stats['total_tokens_learned']}")
+        print(f"   - Total Skills Tracked: {stats['total_tracked_skills']}")
+        print(f"   - Last Evolved: {stats['updated_at']}")
+        if stats['top_skills']:
+            print("   - Top Reinforced Skills:")
+            for sk, sdata in stats['top_skills']:
+                print(f"     * {sk}: chosen {sdata.get('chosen_count', 0)} times (rejected {sdata.get('rejected_count', 0)})")
+        else:
+            print("   - No skill feedback recorded yet.")
+        sys.exit(0)
+
+    if args.feedback:
+        fb_res = record_feedback(args.intent, args.workspace, args.feedback, rejected_skills=args.reject)
+        if not args.json:
+            print(f"🎯 Omni-Skill Self-Learning: Feedback recorded successfully!")
+            print(f"   - Reinforced Skill: {fb_res.get('chosen_skill')}")
+            print(f"   - Boosted Tokens: {fb_res.get('tokens_boosted')}")
+            print(f"   - Total Learned Associations: {fb_res.get('total_associations')}\n")
 
     res = resolve_skill(args.intent, args.workspace, top_k=args.top)
     print(format_resolution_output(res, args.json))
