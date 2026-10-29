@@ -835,7 +835,34 @@ if __name__ == "__main__":
     parser.add_argument("--reject", "-r", type=str, default="", help="Dampen affinity for rejected skill")
     parser.add_argument("--learn-stats", action="store_true", help="Display self-learning memory statistics")
     parser.add_argument("--reset-learning", action="store_true", help="Reset learned affinities memory")
+    parser.add_argument("--last", action="store_true", help="Inspect the most recent Omni-Kernel hook activation")
     args = parser.parse_args()
+
+    if args.last:
+        last_file = os.path.join(os.path.dirname(__file__), "last_activation.json")
+        if not os.path.exists(last_file):
+            print("ℹ️ No previous hook activations recorded yet.")
+            sys.exit(0)
+        with open(last_file, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        if args.json:
+            print(json.dumps(data, indent=2, ensure_ascii=False))
+        else:
+            print("⚡ OMNI-KERNEL LAST ACTIVATION INSPECTOR\n" + "=" * 65)
+            print(f"🕒 Timestamp: {data.get('timestamp')}")
+            print(f"💬 Prompt:    {data.get('user_input')}")
+            print(f"📂 Workspace: {data.get('workspace_dir')}")
+            print(f"\n🎯 Top Candidate: {data.get('top_skill')}")
+            for i, s in enumerate(data.get("skills", []), 1):
+                reason = f" ({s.get('arbitration_reason')})" if s.get('arbitration_reason') else ""
+                print(f"   [{i}] {s.get('name')} (v{s.get('version', '1.0')}, {s.get('source_type')}) - Score: {s.get('raw_score')}{reason}")
+            print(f"\n🛡️ Active Inferred Rules ({len(data.get('inferred_rules', []))}):")
+            for r in data.get("inferred_rules", []):
+                print(f"   - {r}")
+            print(f"\n🔌 Suggested MCP Tools:")
+            for m in (data.get("suggested_mcp", []) or ["Standard Workspace Environment"]):
+                print(f"   - {m}")
+        sys.exit(0)
 
     if args.reset_learning:
         res = reset_learning()

@@ -11,11 +11,14 @@ Processes Antigravity PreInvocation events:
 import os
 import sys
 import json
+import datetime
 
 # Ensure scripts directory is on sys.path
 _SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 if _SCRIPT_DIR not in sys.path:
     sys.path.insert(0, _SCRIPT_DIR)
+
+LAST_ACTIVATION_PATH = os.path.join(_SCRIPT_DIR, "last_activation.json")
 
 # Conversational fillers that do not require full pre-flight injection
 TRIVIAL_FILLERS = {
@@ -79,6 +82,14 @@ def build_preflight_message(resolution: dict) -> str:
             if mand:
                 lines.append(f"  * Thiếu (Implicit Needs): Enforce {len(mand)} mandatory guardrails.")
 
+    # 5. Model Transparency & User Observability Directive
+    top_skill_name = skills[0].get("skill", {}).get("name", "generic") if skills else "generic"
+    rule_count = len(rules)
+    mcp_count = len(mcps)
+    lines.append("\n📢 Transparency Directive:")
+    lines.append("Render a compact 1-line badge at the very beginning of your technical response:")
+    lines.append(f"`⚡ Omni-Kernel: Skill: [{top_skill_name}] | Rules: [{rule_count} active] | MCP: [{mcp_count} tools]`")
+
     return "\n".join(lines)
 
 
@@ -110,7 +121,33 @@ def process_hook(payload: dict) -> dict:
     # If no skills and no rules, do not inject
     if not resolution.get("skills") and not resolution.get("inferred_rules"):
         return {"injectSteps": []}
-    
+
+    # Record telemetry to last_activation.json for user observability and CLI inspection
+    skills = resolution.get("skills", [])
+    try:
+        record = {
+            "timestamp": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "user_input": user_input,
+            "workspace_dir": workspace_dir,
+            "top_skill": skills[0]["skill"]["name"] if skills else "none",
+            "skills": [
+                {
+                    "name": s.get("skill", {}).get("name"),
+                    "version": s.get("skill", {}).get("version"),
+                    "source_type": s.get("skill", {}).get("source_type"),
+                    "raw_score": round(s.get("raw_score", 0), 1),
+                    "arbitration_reason": s.get("arbitration_reason", "")
+                } for s in skills[:3]
+            ],
+            "inferred_rules": resolution.get("inferred_rules", []),
+            "suggested_mcp": resolution.get("suggested_mcp", []),
+            "cognitive_pre_flight": resolution.get("cognitive_pre_flight", {})
+        }
+        with open(LAST_ACTIVATION_PATH, "w", encoding="utf-8") as f:
+            json.dump(record, f, indent=2, ensure_ascii=False)
+    except Exception:
+        pass
+
     message_text = build_preflight_message(resolution)
     
     return {

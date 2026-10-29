@@ -1,0 +1,61 @@
+{
+  "timestamp": "2026-10-29 23:13:45",
+  "user_input": "triển khai docker compose container",
+  "workspace_dir": "d:/Antigravity/Skill management",
+  "top_skill": "deployment-patterns",
+  "skills": [
+    {
+      "name": "deployment-patterns",
+      "version": "1.0.0",
+      "source_type": "library",
+      "raw_score": 185.0,
+      "arbitration_reason": "Optimal candidate for domain 'deployment'"
+    },
+    {
+      "name": "modern-web-guidance",
+      "version": "0.0.196",
+      "source_type": "plugin",
+      "raw_score": 170.5,
+      "arbitration_reason": "Optimal candidate for domain 'web'"
+    },
+    {
+      "name": "compose-preview",
+      "version": "1.0.16625370",
+      "source_type": "plugin",
+      "raw_score": 114.5,
+      "arbitration_reason": "Optimal candidate for domain 'compose'"
+    }
+  ],
+  "inferred_rules": [
+    "Kernel Ring 0 Security (Zero-trust, validate input at trust boundaries, no secrets)",
+    "Kernel Ring 0 Reliability (Fail loudly, immutability, no silent exception swallow)",
+    "Kernel Ring 0 Ponytail (Shortest working diff, YAGNI, standard library first)",
+    "Reliable Error Handling (Fail loudly with diagnostic context; never silent pass)",
+    "Standard Library Precedence (Zero-dependency first; YAGNI)",
+    "Least Privilege Container (Run as non-root user; minimal base images)",
+    "Multi-Stage Build (Zero build tools or secrets left in final production image)",
+    "Workspace Rule (rules/AGENTS.md): Omni-Kernel v2.0 Autonomous Protocol | You have access to the **Omni-Kernel v2.0 Orchestrator**, a unified autonomous intelligence engine governing Skills, Infe"
+  ],
+  "suggested_mcp": [],
+  "cognitive_pre_flight": {
+    "loi_value": "Apply minimal diff via 'deployment-patterns' prioritizing standard library and zero bloat.",
+    "hai_risks": [
+      "Breaking existing callers or schemas without backwards compatibility",
+      "Exposing secrets or introducing unvalidated trust boundaries"
+    ],
+    "du_completeness": [
+      "Ensure full coverage across callers, configuration, and automated assertions",
+      "Verify all error states are handled with diagnostic context"
+    ],
+    "thieu_implicit": {
+      "mandatory_inferred_rules": [
+        "Kernel Ring 0 Security (Zero-trust, validate input at trust boundaries, no secrets)",
+        "Kernel Ring 0 Reliability (Fail loudly, immutability, no silent exception swallow)",
+        "Kernel Ring 0 Ponytail (Shortest working diff, YAGNI, standard library first)"
+      ],
+      "suggested_mcp_drivers": [
+        "Standard OS/Shell tools"
+      ]
+    }
+  }
+}

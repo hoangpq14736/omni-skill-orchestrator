@@ -367,6 +367,27 @@ class TestOmniSkillOrchestrator(unittest.TestCase):
             if os.path.exists(temp_ws):
                 shutil.rmtree(temp_ws)
 
+    def test_21_last_activation_telemetry_and_transparency(self):
+        """Verify that hook runner persists telemetry and injects transparency directive."""
+        from hook_runner import LAST_ACTIVATION_PATH
+        payload = {
+            "lastUserInput": "triển khai docker compose container",
+            "workspacePaths": ["d:/Antigravity/Skill management"]
+        }
+        output = process_hook(payload)
+        self.assertEqual(len(output["injectSteps"]), 1)
+        msg = output["injectSteps"][0]["ephemeralMessage"]
+        self.assertIn("Transparency Directive", msg)
+        self.assertIn("⚡ Omni-Kernel: Skill:", msg)
+
+        # Verify telemetry persistence
+        self.assertTrue(os.path.exists(LAST_ACTIVATION_PATH))
+        with open(LAST_ACTIVATION_PATH, "r", encoding="utf-8") as f:
+            record = json.load(f)
+        self.assertEqual(record["user_input"], "triển khai docker compose container")
+        self.assertIn("top_skill", record)
+        self.assertTrue(len(record["inferred_rules"]) > 0)
+
 
 if __name__ == "__main__":
     unittest.main()
