@@ -41,18 +41,24 @@ VI_EN_SYNONYMS = {
     "tức giận": ["angry", "frustrated", "de-escalation", "escalation"],
     # Hardware & Embedded
     "phần cứng": ["hardware", "embedded", "firmware", "pcb", "circuit"],
+    "nhúng": ["embedded", "firmware", "hardware", "baremetal"],
     "mạch": ["circuit", "pcb", "schematic", "hardware"],
     "nạp": ["flash", "flashing", "bootloader", "firmware"],
+    "máy chủ": ["server", "vps", "linux", "sysadmin", "infrastructure"],
     "dịch": ["translate", "translation", "layman"],
     # Office & Document Productivity
+    "trình chiếu": ["slides", "presentation", "deck"],
+    "thuyết trình": ["slides", "presentation", "deck"],
+    "tiện ích mở rộng": ["extension", "chrome-extension", "plugin"],
+    "khả năng tiếp cận": ["a11y", "accessibility", "aria"],
     "ảnh sang chữ": ["ocr", "image", "vision", "text"],
     "chuyển ảnh": ["ocr", "image", "vision", "extract"],
     "ocr": ["ocr", "image", "vision", "extract"],
     "hình ảnh": ["image", "ocr", "screenshot"],
     "chụp": ["screenshot", "image", "ocr"],
-    "pdf": ["pdf", "converter", "word", "docx"],
+    "pdf": ["pdf"],
     "pdf sang word": ["pdf", "word", "docx", "converter"],
-    "word": ["word", "docx", "document", "pdf"],
+    "word": ["word", "docx", "document"],
     "excel": ["excel", "spreadsheet", "csv", "openpyxl", "pandas"],
     "bảng tính": ["excel", "spreadsheet", "sheets", "csv"],
     "gộp file": ["merge", "excel", "pdf", "combine"],
@@ -65,16 +71,22 @@ VI_EN_SYNONYMS = {
 SPECIFICITY_MAP = {
     # Web / Frontend
     "nextjs": 4, "remix": 4, "nuxt": 4, "svelte": 3, "vue": 3, "react": 3, "angular": 3,
-    "typescript": 2, "javascript": 1, "web": 1,
+    "chrome-extensions": 5, "chrome": 3, "typescript": 2, "javascript": 1, "web": 1,
     # Backend / Frameworks
     "fastapi": 4, "django": 4, "flask": 3, "springboot": 4, "laravel": 4, "express": 3,
     "python": 1, "java": 1, "php": 1, "nodejs": 1, "golang": 1, "rust": 1, "csharp": 1,
     # Mobile
     "flutter": 3, "react-native": 3, "compose": 3, "swiftui": 3, "android": 2, "ios": 2, "dart": 1, "swift": 1, "kotlin": 1,
     # Database / Data
-    "bigquery-sql": 5, "bigquery": 3, "prisma": 3, "drizzle": 3, "postgres": 2, "mysql": 2, "database": 1,
+    "bigquery-sql": 5, "bigquery": 3, "prisma": 4, "drizzle": 3, "postgres": 2, "mysql": 2, "database": 1,
     # Review / Standards
     "ponytail": 5, "code-reviewer": 2, "coding-standards": 1,
+    # Hardware & Embedded
+    "baremetal": 5, "embedded": 4, "firmware": 3,
+    # Office & Google Suite
+    "gslides": 4, "slides": 3, "gsheets": 4, "sheets": 3, "gdocs": 4, "docs": 2, "gcalendar": 4, "calendar": 3,
+    # Accessibility & Quality
+    "a11y": 4, "accessibility": 4,
 }
 
 # Scope priority bonus
@@ -138,6 +150,19 @@ DOMAIN_INFERRED_MCP = {
 }
 
 
+RULE_DOMAIN_ALIASES = {
+    "web": ["web", "html", "css", "frontend", "dom", "browser", "lcp", "a11y", "chrome"],
+    "frontend": ["frontend", "ui", "react", "vue", "svelte", "nextjs", "component"],
+    "python": ["python", "py", "fastapi", "django", "flask"],
+    "fastapi": ["fastapi", "pydantic", "starlette", "restful", "api"],
+    "database": ["database", "sql", "postgres", "postgresql", "mysql", "prisma", "migration", "sqlite", "bigquery"],
+    "docker": ["docker", "container", "compose", "dockerfile"],
+    "vps": ["vps", "server", "linux", "ubuntu", "debian", "ssh", "fail2ban", "ufw"],
+    "embedded": ["embedded", "hardware", "firmware", "baremetal", "stm32", "esp32", "serial", "uart", "modbus", "rust"],
+    "cad": ["cad", "3d", "step", "stl", "manifold", "solidcraft", "3mf", "overhang"]
+}
+
+
 def infer_domain_rules_and_mcp(target_tokens):
     """
     Cognitive Entailment Graph:
@@ -150,13 +175,15 @@ def infer_domain_rules_and_mcp(target_tokens):
     tokens_lower = set(t.lower() for t in target_tokens)
     
     for domain, rules in DOMAIN_INFERRED_RULES.items():
-        if domain in tokens_lower or any(domain in t for t in tokens_lower):
+        aliases = RULE_DOMAIN_ALIASES.get(domain, [domain])
+        if any(a in tokens_lower or any(a in t for t in tokens_lower) for a in aliases):
             for r in rules:
                 if r not in inferred_rules:
                     inferred_rules.append(r)
                     
     for domain, tools in DOMAIN_INFERRED_MCP.items():
-        if domain in tokens_lower or any(domain in t for t in tokens_lower):
+        aliases = RULE_DOMAIN_ALIASES.get(domain, [domain])
+        if any(a in tokens_lower or any(a in t for t in tokens_lower) for a in aliases):
             for tool in tools:
                 if tool not in inferred_mcp:
                     inferred_mcp.append(tool)
