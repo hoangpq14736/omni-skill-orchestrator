@@ -1,5 +1,5 @@
 """
-Omni-Kernel v2.0 Comprehensive Benchmark & Stress-Testing Suite
+Omni-Kernel v3.0 Comprehensive Benchmark & Stress-Testing Suite
 Profiles latency, accuracy, edge-case resilience, security injection,
 sandbox containment, and self-healing under extreme conditions.
 """
@@ -216,7 +216,7 @@ time.sleep(10)
 
 if __name__ == "__main__":
     print("=" * 70)
-    print("🔬 OMNI-KERNEL v2.0 PRE-RELEASE COMPREHENSIVE BENCHMARK")
+    print("🔬 OMNI-KERNEL v3.0 PRE-RELEASE COMPREHENSIVE BENCHMARK")
     print("=" * 70)
 
     reg = load_registry(REGISTRY_PATH)

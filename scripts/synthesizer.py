@@ -1,5 +1,5 @@
 """
-Omni-Kernel v2.0: Autonomous Skill, Rule & Tool Synthesizer
+Omni-Kernel v3.0: Autonomous Skill, Rule & Tool Synthesizer
 Enables the AI to independently hypothesize, author, sandbox-test, and promote
 new skills, rules, and MCP wrappers when facing unmapped technical requirements.
 """

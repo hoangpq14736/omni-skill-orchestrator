@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Omni-Kernel v2.5: Global PreInvocation Lifecycle Hook Runner
+Omni-Kernel v3.0: Global PreInvocation Lifecycle Hook Runner
 Processes Antigravity PreInvocation events:
 - Reads stdin JSON (lastUserInput, workspacePaths, etc.)
 - Resolves intent JIT via Omni-Kernel Unified Resolver
@@ -31,7 +31,7 @@ TRIVIAL_FILLERS = {
 
 def build_preflight_message(resolution: dict) -> str:
     """Formats the cognitive pre-flight resolution into a clean, markdown block."""
-    lines = ["[OMNI-KERNEL v2.5 PRE-FLIGHT ACTIVATION]"]
+    lines = ["[OMNI-KERNEL v3.0 PRE-FLIGHT ACTIVATION]"]
     
     # 1. Top Skills
     skills = resolution.get("skills", [])

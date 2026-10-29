@@ -285,7 +285,7 @@ class TestOmniSkillOrchestrator(unittest.TestCase):
         step = output["injectSteps"][0]
         self.assertIn("ephemeralMessage", step)
         msg = step["ephemeralMessage"]
-        self.assertIn("[OMNI-KERNEL v2.5 PRE-FLIGHT ACTIVATION]", msg)
+        self.assertIn("[OMNI-KERNEL v3.0 PRE-FLIGHT ACTIVATION]", msg)
         self.assertIn("fastapi", msg.lower())
         self.assertIn("Inferred Domain Rules", msg)
         self.assertIn("SQL Injection Immunity", msg)

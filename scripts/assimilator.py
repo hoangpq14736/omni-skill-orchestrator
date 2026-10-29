@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Omni-Kernel v2.5: Workspace Virtualization Engine (Assimilator)
+Omni-Kernel v3.0: Workspace Virtualization Engine (Assimilator)
 Automatically discovers and assimilates local skills, rules, and conventions from ANY workspace.
 Completely non-destructive and read-only on the target repository.
 Supported formats:

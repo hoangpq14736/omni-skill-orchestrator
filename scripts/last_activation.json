@@ -1,5 +1,5 @@
 {
-  "timestamp": "2026-10-30 00:53:59",
+  "timestamp": "2026-10-30 01:00:24",
   "user_input": "sửa lỗi docker container port 8080 conflict",
   "workspace_dir": "d:/Antigravity/Skill management",
   "top_skill": "troubleshooting",
@@ -12,18 +12,18 @@
       "arbitration_reason": "Optimal candidate for domain 'troubleshooting'"
     },
     {
-      "name": "memory-leak-debugging",
-      "version": "1.10.1",
-      "source_type": "plugin",
-      "raw_score": 123.5,
-      "arbitration_reason": "Optimal candidate for domain 'memory'"
-    },
-    {
       "name": "dart-fix-runtime-errors",
       "version": "1.0.7",
       "source_type": "plugin",
       "raw_score": 123.5,
       "arbitration_reason": "Optimal candidate for domain 'dart'"
+    },
+    {
+      "name": "memory-leak-debugging",
+      "version": "1.10.1",
+      "source_type": "plugin",
+      "raw_score": 123.5,
+      "arbitration_reason": "Optimal candidate for domain 'memory'"
     }
   ],
   "inferred_rules": [
@@ -34,7 +34,7 @@
     "Standard Library Precedence (Zero-dependency first; YAGNI)",
     "Least Privilege Container (Run as non-root user; minimal base images)",
     "Multi-Stage Build (Zero build tools or secrets left in final production image)",
-    "Workspace Rule (rules/AGENTS.md): Omni-Kernel v2.0 Autonomous Protocol | You have access to the **Omni-Kernel v2.0 Orchestrator**, a unified autonomous intelligence engine governing Skills, Infe"
+    "Workspace Rule (rules/AGENTS.md): Omni-Kernel v3.0 Autonomous Protocol | You have access to the **Omni-Kernel v3.0 Orchestrator**, a unified autonomous intelligence engine governing Skills, Infe"
   ],
   "suggested_mcp": [],
   "cognitive_pre_flight": {
@@ -96,12 +96,12 @@
         ],
         "success_count": 1,
         "created_at": "2026-10-30 00:38:37",
-        "last_recalled": "2026-10-30 00:53:59"
+        "last_recalled": "2026-10-30 01:00:24"
       },
       "score": 0.279,
       "matched_tokens": [
-        "port",
-        "docker"
+        "docker",
+        "port"
       ]
     }
   ]

@@ -1,6 +1,6 @@
-# Omni-Kernel v2.0 Autonomous Protocol
+# Omni-Kernel v3.0 Autonomous Protocol
 
-You have access to the **Omni-Kernel v2.0 Orchestrator**, a unified autonomous intelligence engine governing Skills, Inferred Rules, MCP Tool Drivers, and Self-Evolution across 550+ capabilities.
+You have access to the **Omni-Kernel v3.0 Orchestrator**, a unified autonomous intelligence engine governing Skills, Inferred Rules, MCP Tool Drivers, and Self-Evolution across 550+ capabilities.
 
 ## Operating Guidelines
 
