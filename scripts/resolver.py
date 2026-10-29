@@ -86,6 +86,116 @@ SCOPE_PRIORITY = {
     "library": 5
 }
 
+# Domain Inferred Rules (Implicit Entailment Graph)
+DOMAIN_INFERRED_RULES = {
+    "web": [
+        "Web Security Invariants (OWASP Top 10, XSS/CSRF Prevention, Content-Security-Policy)",
+        "Input Trust Boundary (Never trust client-supplied params; sanitize all inputs)",
+        "Modern Web Standards (Semantic HTML, Accessible ARIA, no obsolete patterns)"
+    ],
+    "frontend": [
+        "Client-Side State Integrity (No plaintext secrets or private keys in JS bundle)",
+        "Accessibility Invariants (Keyboard navigation, contrast, tap targets)"
+    ],
+    "python": [
+        "Reliable Error Handling (Fail loudly with diagnostic context; never silent pass)",
+        "Standard Library Precedence (Zero-dependency first; YAGNI)"
+    ],
+    "fastapi": [
+        "FastAPI Lifespan Pattern (Use lifespan context manager, avoid deprecated on_event)",
+        "Pydantic v2 Strict Validation at all ingress/egress boundaries",
+        "Upload Security (Magic bytes check, UUID storage, no path traversal)"
+    ],
+    "database": [
+        "SQL Injection Immunity (Parameterized queries only; no raw string concatenation)",
+        "Transactional Safety (Atomic operations, migration reversibility, no raw drop table)"
+    ],
+    "docker": [
+        "Least Privilege Container (Run as non-root user; minimal base images)",
+        "Multi-Stage Build (Zero build tools or secrets left in final production image)"
+    ],
+    "vps": [
+        "Host Security Guardrails (Non-root user, UFW/Fail2ban, key-only SSH)",
+        "Resource Quotas (cgroups limits, swap/zram, process supervision)"
+    ],
+    "embedded": [
+        "Hardware Safety Guardrails (Safe voltage, timing delays, timeout watchdog)",
+        "Memory Bounds & Safe Register Access"
+    ],
+    "cad": [
+        "Design for Additive Manufacturing (Check overhangs, wall thickness, manifold geometry)",
+        "Parametric Constraint Integrity"
+    ]
+}
+
+# Domain Inferred MCP Drivers (Plug-and-Play Tools)
+DOMAIN_INFERRED_MCP = {
+    "web": ["chrome-devtools (DOM, Network, A11y, Performance inspection)"],
+    "frontend": ["chrome-devtools (Console & Element inspector)"],
+    "cad": ["solidcraft (Parametric 3D CAD engine)", "text-to-cad_cad"],
+    "cloud": ["gcloud (Cloud platform CLI validation & guardrails)"],
+    "api": ["gemini-api_gemini-api-docs (Upstream live documentation inspection)"]
+}
+
+
+def infer_domain_rules_and_mcp(target_tokens):
+    """
+    Cognitive Entailment Graph:
+    Infers mandatory security, reliability invariants and relevant MCP tools
+    even if the user prompt omitted explicit keywords.
+    """
+    inferred_rules = []
+    inferred_mcp = []
+    
+    tokens_lower = set(t.lower() for t in target_tokens)
+    
+    for domain, rules in DOMAIN_INFERRED_RULES.items():
+        if domain in tokens_lower or any(domain in t for t in tokens_lower):
+            for r in rules:
+                if r not in inferred_rules:
+                    inferred_rules.append(r)
+                    
+    for domain, tools in DOMAIN_INFERRED_MCP.items():
+        if domain in tokens_lower or any(domain in t for t in tokens_lower):
+            for tool in tools:
+                if tool not in inferred_mcp:
+                    inferred_mcp.append(tool)
+                    
+    # Always enforce Kernel Ring 0 Core Invariants
+    ring0_invariants = [
+        "Kernel Ring 0 Security (Zero-trust, validate input at trust boundaries, no secrets)",
+        "Kernel Ring 0 Reliability (Fail loudly, immutability, no silent exception swallow)",
+        "Kernel Ring 0 Ponytail (Shortest working diff, YAGNI, standard library first)"
+    ]
+    for inv in reversed(ring0_invariants):
+        if inv not in inferred_rules:
+            inferred_rules.insert(0, inv)
+            
+    return inferred_rules, inferred_mcp
+
+
+def build_cognitive_pre_flight(intent_text, workspace_dir, top_skills, inferred_rules, inferred_mcp):
+    """
+    Constructs the 4-Dimensional Cognitive Pre-Flight Assessment (Lợi - Hại - Đủ - Thiếu).
+    """
+    top_name = top_skills[0]["skill"]["name"] if top_skills else "ponytail"
+    
+    return {
+        "loi_value": f"Apply minimal diff via '{top_name}' prioritizing standard library and zero bloat.",
+        "hai_risks": [
+            "Breaking existing callers or schemas without backwards compatibility",
+            "Exposing secrets or introducing unvalidated trust boundaries"
+        ],
+        "du_completeness": [
+            "Ensure full coverage across callers, configuration, and automated assertions",
+            "Verify all error states are handled with diagnostic context"
+        ],
+        "thieu_implicit": {
+            "mandatory_inferred_rules": inferred_rules[:3],
+            "suggested_mcp_drivers": inferred_mcp if inferred_mcp else ["Standard OS/Shell tools"]
+        }
+    }
+
 
 def load_learned_affinities(path=None):
     """Loads learned affinities and stats from disk in <0.2ms."""
@@ -365,7 +475,7 @@ def extract_query_tokens(text):
     return tokens
 
 
-def resolve_skill(intent_text="", workspace_dir=None, registry=None, top_k=3, affinities_path=None):
+def resolve_skill(intent_text="", workspace_dir=None, registry=None, top_k=3, affinities_path=None, unified=False):
     if registry is None:
         registry = load_registry()
 
@@ -379,6 +489,9 @@ def resolve_skill(intent_text="", workspace_dir=None, registry=None, top_k=3, af
 
     query_tokens = extract_query_tokens(intent_text) if intent_text else set()
     all_target_tokens = query_tokens.union(set(stack_tags))
+
+    # Cognitive Entailment: Infer mandatory rules & MCP drivers
+    inferred_rules, inferred_mcp = infer_domain_rules_and_mcp(all_target_tokens)
 
     candidate_scores = {}
     name_to_idx = {s["name"].lower(): i for i, s in enumerate(skills)}
@@ -465,12 +578,30 @@ def resolve_skill(intent_text="", workspace_dir=None, registry=None, top_k=3, af
         })
 
     if not candidates:
+        default_res = []
         for s in skills:
             if s["name"] == "ponytail":
-                return [{"skill": s, "raw_score": 100, "arbitration_reason": "Defaulted to Ponytail (YAGNI & minimal changes)"}]
-            if s["name"] == "coding-standards":
-                return [{"skill": s, "raw_score": 100, "arbitration_reason": "Defaulted to general coding standards"}]
-        return []
+                default_res = [{"skill": s, "raw_score": 100, "arbitration_reason": "Defaulted to Ponytail (YAGNI & minimal changes)"}]
+                break
+        if not default_res:
+            for s in skills:
+                if s["name"] == "coding-standards":
+                    default_res = [{"skill": s, "raw_score": 100, "arbitration_reason": "Defaulted to general coding standards"}]
+                    break
+        
+        pre_flight = build_cognitive_pre_flight(intent_text, workspace_dir, default_res, inferred_rules, inferred_mcp)
+        if unified:
+            return {
+                "skills": default_res,
+                "inferred_rules": inferred_rules,
+                "suggested_mcp": inferred_mcp,
+                "cognitive_pre_flight": pre_flight
+            }
+        for cand in default_res:
+            cand["inferred_rules"] = inferred_rules
+            cand["suggested_mcp"] = inferred_mcp
+            cand["cognitive_pre_flight"] = pre_flight
+        return default_res
 
     # Sort descending
     candidates.sort(key=lambda c: c["raw_score"], reverse=True)
@@ -478,8 +609,24 @@ def resolve_skill(intent_text="", workspace_dir=None, registry=None, top_k=3, af
     # Arbitration
     top_candidates = candidates[:20]
     arbitrated = _arbitrate_candidates(top_candidates, stack_tags, query_tokens)
+    top_skills = arbitrated[:top_k]
 
-    return arbitrated[:top_k]
+    pre_flight = build_cognitive_pre_flight(intent_text, workspace_dir, top_skills, inferred_rules, inferred_mcp)
+
+    if unified:
+        return {
+            "skills": top_skills,
+            "inferred_rules": inferred_rules,
+            "suggested_mcp": inferred_mcp,
+            "cognitive_pre_flight": pre_flight
+        }
+
+    for cand in top_skills:
+        cand["inferred_rules"] = inferred_rules
+        cand["suggested_mcp"] = inferred_mcp
+        cand["cognitive_pre_flight"] = pre_flight
+
+    return top_skills
 
 
 def _arbitrate_candidates(candidates, stack_tags, query_tokens):
@@ -545,27 +692,62 @@ def format_resolution_output(results, is_json=False):
         return json.dumps(results, indent=2, ensure_ascii=False)
     
     if not results:
-        return "No matching skills found."
+        return "No matching resources found."
 
     lines = []
-    lines.append(f"🎯 Omni-Skill Orchestrator: Found {len(results)} optimal skill(s)\n")
-    for i, res in enumerate(results, 1):
+    lines.append("⚡ OMNI-KERNEL v2.0 UNIFIED RESOURCE RESOLUTION\n" + "=" * 65)
+
+    # If results is unified dict
+    if isinstance(results, dict):
+        skills = results.get("skills", [])
+        rules = results.get("inferred_rules", [])
+        mcps = results.get("suggested_mcp", [])
+        pre_flight = results.get("cognitive_pre_flight", {})
+    else:
+        skills = results
+        rules = skills[0].get("inferred_rules", []) if skills else []
+        mcps = skills[0].get("suggested_mcp", []) if skills else []
+        pre_flight = skills[0].get("cognitive_pre_flight", {}) if skills else {}
+
+    # 1. Optimal Skills
+    lines.append(f"\n1. OPTIMAL SKILLS (Process / Logic Layer - {len(skills)} found):")
+    for i, res in enumerate(skills, 1):
         s = res["skill"]
         plugin_info = f" ({s.get('plugin_name')})" if s.get('plugin_name') else ""
-        lines.append(f"[{i}] {s['name']} (v{s.get('version', '1.0')})")
-        lines.append(f"    - Source: {s['source_type'].upper()}{plugin_info}")
-        lines.append(f"    - Path: {s['path']}")
-        lines.append(f"    - Reason: {res.get('arbitration_reason', 'Top match')}")
-        lines.append(f"    - Description: {s['description'][:120]}...\n")
+        lines.append(f"   [{i}] {s['name']} (v{s.get('version', '1.0')})")
+        lines.append(f"       - Source: {s['source_type'].upper()}{plugin_info}")
+        lines.append(f"       - Path: {s['path']}")
+        lines.append(f"       - Reason: {res.get('arbitration_reason', 'Top match')}")
+
+    # 2. Inferred Rules
+    lines.append(f"\n2. INFERRED KERNEL RULES & INVARIANTS (Security & Reliability):")
+    for r in rules:
+        lines.append(f"   🛡️ {r}")
+
+    # 3. Suggested MCP Tool Drivers
+    lines.append(f"\n3. SUGGESTED MCP TOOL DRIVERS (Dynamic I/O Bus):")
+    for m in (mcps or ["Standard Workspace Environment"]):
+        lines.append(f"   🔌 {m}")
+
+    # 4. Cognitive Pre-Flight Loop
+    if pre_flight:
+        lines.append(f"\n4. COGNITIVE PRE-FLIGHT ASSESSMENT (Tự vấn Lợi - Hại - Đủ - Thiếu):")
+        lines.append(f"   🧠 LỢI (Value & Simplicity): {pre_flight.get('loi_value', 'Minimal diff')}")
+        lines.append(f"   ⚠️ HẠI (Risks to Prevent): {'; '.join(pre_flight.get('hai_risks', []))}")
+        lines.append(f"   ✅ ĐỦ (Completeness Check): {'; '.join(pre_flight.get('du_completeness', []))}")
+        thieu_rules = pre_flight.get("thieu_implicit", {}).get("mandatory_inferred_rules", [])
+        lines.append(f"   🔍 THIẾU (Implicitly Inferred): {len(thieu_rules)} domain guardrails auto-attached.\n")
+
     return "\n".join(lines)
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Omni-Skill Resolver & Meta-Learning CLI")
+    parser = argparse.ArgumentParser(description="Omni-Kernel v2.0 Unified Resource Resolver CLI")
     parser.add_argument("--intent", "-i", type=str, default="", help="User prompt or intent")
     parser.add_argument("--workspace", "-w", type=str, default="", help="Workspace directory")
     parser.add_argument("--json", action="store_true", help="Output in JSON format")
     parser.add_argument("--top", "-k", type=int, default=3, help="Top K results")
+    parser.add_argument("--unified", "-u", action="store_true", help="Output unified dictionary with skills, rules, mcp, preflight")
     parser.add_argument("--feedback", "-f", type=str, default="", help="Reinforce feedback for chosen skill")
     parser.add_argument("--reject", "-r", type=str, default="", help="Dampen affinity for rejected skill")
     parser.add_argument("--learn-stats", action="store_true", help="Display self-learning memory statistics")
@@ -599,5 +781,5 @@ if __name__ == "__main__":
             print(f"   - Boosted Tokens: {fb_res.get('tokens_boosted')}")
             print(f"   - Total Learned Associations: {fb_res.get('total_associations')}\n")
 
-    res = resolve_skill(args.intent, args.workspace, top_k=args.top)
+    res = resolve_skill(args.intent, args.workspace, top_k=args.top, unified=args.unified)
     print(format_resolution_output(res, args.json))

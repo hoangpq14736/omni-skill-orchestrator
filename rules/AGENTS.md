@@ -1,28 +1,27 @@
-# Omni-Skill Autonomous Protocol
+# Omni-Kernel v2.0 Autonomous Protocol
 
-You have access to the **Omni-Skill Orchestrator**, a unified management, auto-activation, and self-learning engine governing 550+ (and up to 7,749+) skills across all installed plugins, active skills, offline libraries, and builtin tools.
+You have access to the **Omni-Kernel v2.0 Orchestrator**, a unified autonomous intelligence engine governing Skills, Inferred Rules, MCP Tool Drivers, and Self-Evolution across 550+ capabilities.
 
-## Mandatory Operating Guidelines
+## Operating Guidelines
 
-1. **Zero-Memory Autonomous Operation**:
-   - **NEVER** ask or expect the user to remember, activate, or name skills or slash commands manually.
-   - Automatically detect the current workspace tech stack (marker files: `package.json`, `Cargo.toml`, `go.mod`, `pubspec.yaml`, `pom.xml`, `requirements.txt`, `pyproject.toml`, `Dockerfile`, `schema.prisma`, `index.html`, etc.).
-   - Automatically identify the user's intent from their prompt (supports both English and Vietnamese technical keywords).
+1. **Kernel Ring 0 Invariants (Immutable)**:
+   - **Zero-Trust Security:** Never hardcode secrets. Always validate and sanitize inputs at trust boundaries.
+   - **Reliable Engineering:** Never silently swallow exceptions. Fail loudly with diagnostic context. Immutability first.
+   - **Ponytail Simplicity:** Smallest complete working diff wins. YAGNI. Codebase helper > Standard library > Dependency > New code.
 
-2. **Mandatory Step 0 Gatekeeper (Zero-Skip Dynamic Activation)**:
-   - BEFORE planning, writing, or refactoring code for any technical task, you MUST run the resolver:
-     `python "C:/Users/vuhuu/.gemini/config/plugins/omni-skill-orchestrator/scripts/resolver.py" --intent "<user_query>" --workspace "<current_workspace>"`
-   - Use `read_file` to read the top candidate's `SKILL.md` from its resolved path before generating code.
-   - Never skip resolution assuming internal model knowledge is sufficient.
+2. **Mandatory Step 0 Gatekeeper & Cognitive Pre-Flight Loop**:
+   - BEFORE planning or modifying code on any technical task:
+     Execute: `python "C:/Users/vuhuu/.gemini/config/plugins/omni-skill-orchestrator/scripts/resolver.py" --intent "<user_query>" --workspace "<current_workspace>"`
+   - Use `read_file` to read the top candidate's `SKILL.md` before generating code.
+   - Assess the 4 Cognitive Axes: **Lợi (Value)**, **Hại (Risks)**, **Đủ (Completeness)**, **Thiếu (Implicit Inferred Requirements)**.
 
-3. **Autonomous Meta-Learning & Feedback Loop**:
-   - When a skill other than rank #1 is selected or corrected by the user, register feedback immediately:
+3. **Autonomous Skill & Tool Synthesis (Self-Bootstrapping)**:
+   - When a required domain or skill is missing from the 500+ library:
+     Synthesize and validate in sandbox:
+     `python "C:/Users/vuhuu/.gemini/config/plugins/omni-skill-orchestrator/scripts/synthesizer.py" --name "<name>" --desc "<desc>" --domain "<domain>" --test "<test_code>"`
+   - Omni automatically reindexes the library in <150ms.
+
+4. **Continuous Meta-Learning & Feedback Loop**:
+   - When an alternative skill is selected or corrected:
      `python "C:/Users/vuhuu/.gemini/config/plugins/omni-skill-orchestrator/scripts/resolver.py" --intent "<user_query>" --workspace "<current_workspace>" --feedback "<chosen_skill>"`
-   - Omni dynamically reinforces learned affinities (`learned_affinities.json`) to continuously evolve accuracy across future sessions.
-
-4. **Intelligent Arbitration (Newer & Better Wins)**:
-   - When multiple skills cover the same domain, always adhere to the **Skill Arbiter Protocol**:
-     - Modern / newer version overrides older versions.
-     - Specific framework skill overrides generic language skill.
-     - Workspace-local skill overrides system defaults.
-   - Follow Ponytail principles: prioritize minimal diffs, YAGNI, standard library first, and eliminate redundant abstractions.
+   - Omni dynamically adapts learned affinities (`learned_affinities.json`).

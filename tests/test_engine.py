@@ -12,8 +12,9 @@ sys.path.append(os.path.join(os.path.dirname(__file__), "..", "scripts"))
 from indexer import build_index
 from resolver import (
     resolve_skill, detect_workspace_stack, compare_versions, load_registry,
-    record_feedback, get_learned_stats, reset_learning
+    record_feedback, get_learned_stats, reset_learning, infer_domain_rules_and_mcp
 )
+from synthesizer import synthesize_and_promote_skill, run_sandbox_validation
 
 
 class TestOmniSkillOrchestrator(unittest.TestCase):
@@ -139,6 +140,53 @@ class TestOmniSkillOrchestrator(unittest.TestCase):
         finally:
             if os.path.exists(temp_aff_path):
                 os.remove(temp_aff_path)
+
+    def test_10_cognitive_pre_flight_and_inferred_rules(self):
+        """Verify Omni-Kernel v2.0 cognitive pre-flight matrix and implicit rule inference."""
+        res = resolve_skill("xây dựng api fastapi upload file avatar", unified=True, registry=self.reg)
+        self.assertIn("skills", res)
+        self.assertIn("inferred_rules", res)
+        self.assertIn("cognitive_pre_flight", res)
+        
+        rules_text = " ".join(res["inferred_rules"])
+        self.assertIn("Ring 0 Security", rules_text)
+        self.assertTrue(any("FastAPI" in r or "Upload" in r or "Web" in r for r in res["inferred_rules"]))
+        
+        pre = res["cognitive_pre_flight"]
+        self.assertIn("loi_value", pre)
+        self.assertIn("hai_risks", pre)
+        self.assertIn("du_completeness", pre)
+        self.assertIn("thieu_implicit", pre)
+
+    def test_11_synthesizer_sandbox_validation_and_promotion(self):
+        """Verify autonomous skill synthesis with sandbox execution and promotion."""
+        import tempfile
+        import shutil
+
+        # Test failure case (bad test)
+        fail_res = run_sandbox_validation("assert 1 == 2, 'Should fail'")
+        self.assertFalse(fail_res[0])
+        self.assertIn("Should fail", fail_res[2])
+
+        # Test success case with temporary library dir
+        temp_lib = tempfile.mkdtemp(prefix="omni_test_lib_")
+        try:
+            synth_res = synthesize_and_promote_skill(
+                name="test-auto-synth-sensor",
+                description="Auto generated sensor reader skill",
+                domain="embedded",
+                test_code="def read(): return 42\nassert read() == 42",
+                library_dir=temp_lib
+            )
+            self.assertEqual(synth_res["status"], "success")
+            self.assertTrue(os.path.exists(synth_res["path"]))
+            with open(synth_res["path"], "r", encoding="utf-8") as f:
+                content = f.read()
+                self.assertIn("test-auto-synth-sensor", content)
+                self.assertIn("embedded", content)
+        finally:
+            if os.path.exists(temp_lib):
+                shutil.rmtree(temp_lib)
 
 
 if __name__ == "__main__":

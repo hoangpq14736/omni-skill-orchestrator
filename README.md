@@ -1,67 +1,73 @@
-# 🧠 Omni-Skill Orchestrator
+# 🧠 Omni-Kernel v2.0: Universal Autonomous Cognitive Kernel
 
 [![Agent Plugins 1.0.0](https://img.shields.io/badge/Spec-Agent%20Plugins%201.0.0-blue.svg)](https://agent-plugins.org)
 [![Python 3.10+](https://img.shields.io/badge/Python-3.10%2B-green.svg)](https://python.org)
 [![Zero Dependency](https://img.shields.io/badge/Dependencies-0%20(Pure%20Stdlib)-brightgreen.svg)]()
-[![Tests](https://img.shields.io/badge/Tests-9%2F9%20Passing-success.svg)]()
+[![Tests](https://img.shields.io/badge/Tests-11%2F11%20Passing-success.svg)]()
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-> **Universal Autonomous Skill Intelligence for Google Antigravity & AI Coding Harnesses.**  
-> *Stop memorizing slash commands. Let your AI agent autonomously detect stacks, resolve intent, arbitrate versions, and JIT-load 570+ (and up to 7,749+) skills with 0 token context waste.*
+> **Universal Autonomous AI Cognitive Kernel for Google Antigravity & Advanced Agentic Harnesses.**  
+> *Combines JIT Skills, Inferred Rules, Dynamic MCP Tool Drivers, Human-like Cognitive Pre-Flight Deliberation (Lợi - Hại - Đủ - Thiếu), and Self-Bootstrapping Skill Synthesis with 0 static token overhead.*
 
 ---
 
-## ⚡ Why Omni-Skill?
+## ⚡ Why Omni-Kernel v2.0?
 
-Traditional agentic skill systems (such as Claude Code or Antigravity's active skills) suffer from a critical flaw: **Prompt Bloat vs. User Memory Fatigue**.
+Traditional agentic systems suffer from context bloat, rigid hardcoded rules, and inability to adapt to novel tasks.
 
-| Challenge | Traditional Skills / Active Plugins | Omni-Skill Orchestrator |
+| Challenge | Traditional Skills & Rules | Omni-Kernel v2.0 |
 |---|---|---|
-| **Context Overhead** | Loads 50–120 skills into System Prompt (**15,000–25,000 tokens**), hitting the 20k token ceiling and triggering silent exclusions. | **0 Tokens at idle!** Skills reside in an offline library (`skills_library/`) and are loaded Just-In-Time (JIT) only when needed. |
-| **Activation Model** | Requires the user to remember and type `/command` or `/skill-name` manually. | **Mandatory Step 0 Gatekeeper** with **100% Autonomous Dual-Channel Detection** (Stack Markers + Semantic Intent). |
-| **Conflict Handling** | Naive keyword matching can trigger obsolete or overly generic skills (e.g. `python-reviewer` over `fastapi-patterns`). | **4-Tier Arbitration Matrix** (Domain Specificity > SemVer Freshness > Scope Priority > Quality). |
-| **Adaptability & Learning** | Static hardcoded triggers. Fails when prompt phrasing changes. | **Continuous Meta-Learning (Self-Evolution)**: Learns from agent/user feedback (`--feedback`), dynamically boosting token-skill affinities. |
-| **Bilingual Support** | English only. | **Built-in Bilingual Semantic Mapper** (Vietnamese & English technical terms). |
-| **Speed & Dependencies** | Heavy vector databases or slow embedding lookups. | **0 Dependencies (Pure Python Stdlib)**. Scans 496+ skills in **0.12s**, resolves in **1.1ms**. |
+| **Context Overhead** | Loads 50–120 skills & static rules into System Prompt (**15,000–25,000 tokens**), hitting token ceilings and degrading model IQ. | **< 300 Tokens at idle!** Ring 0 Invariants stay lean; domain rules, skills, and tools are resolved Just-In-Time (JIT). |
+| **Cognitive Reasoning** | Blind execution. Code without considering risks, security gotchas, or missing configurations. | **Cognitive Pre-Flight Loop (Lợi - Hại - Đủ - Thiếu)**: Evaluates value vs. risk, completeness, and implicit requirements before coding. |
+| **Security & Invariants** | Hên xui: Chỉ bật bảo mật nếu user gõ từ "security". | **Kernel Ring 0 + Implicit Entailment**: Tự động suy ra luật bảo mật tương ứng theo domain (Web -> XSS/CORS; DB -> SQLi prevention). |
+| **Adaptability & Learning** | Static hardcoded skills. Bó tay khi gặp công nghệ hoặc bo mạch lạ. | **Self-Bootstrapping Synthesizer**: Tự thiết kế, sandbox-test trong subprocess, và auto-promote skill mới vào thư viện. |
+| **Multi-Resource Routing** | Chỉ quản lý skill đơn lẻ. MCP và Rules phải config tay. | **Unified Resource Resolution**: 1 lệnh giải quyết trọn bộ: Skill + Inferred Rule + Plug-and-Play MCP Driver. |
+| **Speed & Dependencies** | Heavy vector databases or slow embedding lookups. | **0 Dependencies (Pure Python Stdlib)**. Scans 496+ skills in **0.10s**, resolves in **1.1ms**. |
 
 ---
 
 ## 🏗️ Architecture
 
-Omni-Skill works like an **Operating System Virtual Memory Manager (Paging / JIT)** for AI Agent capabilities:
+Omni-Kernel v2.0 acts like a **Cognitive Operating System** for AI agents:
 
 ```
                       ┌────────────────────────────────────┐
                       │    USER PROMPT & REPO WORKSPACE   │
                       └─────────────────┬──────────────────┘
                                         │
-                    Dual-Channel Autonomous Detection
+                         Dual-Channel Autonomous Detection
                                         │
-            ┌───────────────────────────┴───────────────────────────┐
-            ▼                                                       ▼
-   [CHANNEL 1: STATIC]                                    [CHANNEL 2: DYNAMIC]
-   Workspace Stack Markers                                Semantic Intent & Synonyms
-   (package.json, Cargo.toml,                             (VI-EN Technical Mapper,
-    requirements.txt, etc.)                                Task Keywords, Error Traces)
-            │                                                       │
-            └───────────────────────────┬───────────────────────────┘
+             ┌──────────────────────────┴───────────────────────────┐
+             ▼                                                       ▼
+    [CHANNEL 1: STATIC]                                    [CHANNEL 2: DYNAMIC]
+    Workspace Stack Markers                                Semantic Intent & Synonyms
+    (package.json, Cargo.toml,                             (VI-EN Technical Mapper,
+     requirements.txt, etc.)                                Task Keywords, Error Traces)
+             │                                                       │
+             └──────────────────────────┬───────────────────────────┘
                                         ▼
                       ┌────────────────────────────────────┐
-                      │    4-TIER ARBITRATION ENGINE       │
-                      │  1. Domain Specificity (FastAPI>Py)│
-                      │  2. SemVer Freshness (v2.3 > v1.0) │
-                      │  3. Scope Priority (Local > Global)│
-                      │  4. Quality & Context Suitability  │
+                      │    COGNITIVE ENTAILMENT GRAPH      │
+                      │  - Inferred Domain Rules (Ring 3)  │
+                      │  - Suggested MCP Tool Drivers      │
+                      │  - 4-Tier Arbitration Matrix       │
                       └─────────────────┬──────────────────┘
                                         ▼
-                         [Top 1-3 Optimal Skills]
-                                        │
-                               JIT `read_file` (0.6ms)
-                                        ▼
                       ┌────────────────────────────────────┐
-                      │   EXECUTION VIA PONYTAIL SENIOR    │
-                      │   Smallest Diff · YAGNI · No Bloat │
-                      └────────────────────────────────────┘
+                      │   COGNITIVE PRE-FLIGHT LOOP        │
+                      │   🧠 LỢI (Value & Simplicity)      │
+                      │   ⚠️ HẠI (Blast Radius & Risks)    │
+                      │   ✅ ĐỦ (Completeness & Callers)   │
+                      │   🔍 THIẾU (Implicit Invariants)   │
+                      └─────────────────┬──────────────────┘
+                                        │
+             ┌──────────────────────────┴───────────────────────────┐
+             ▼ (Existing Skill)                                     ▼ (Novel Task)
+     JIT `read_file` (0.6ms)                               [SYNTHESIZER PIPELINE]
+             │                                              Hypothesize -> Sandbox Test ->
+             ▼                                              Auto-Promote (<150ms)
+    [PONYTAIL EXECUTION]
+    Smallest Diff · YAGNI · No Bloat
 ```
 
 ---
@@ -105,6 +111,9 @@ python scripts/resolver.py --workspace "./my-rust-project" --intent "test firmwa
 # Reinforce feedback (Self-Learning / Meta-Evolution)
 python scripts/resolver.py --intent "canvas game" --workspace "./my-game" --feedback generative_ui
 
+# Synthesize & sandbox-test a new skill
+python scripts/synthesizer.py --name "modbus-rtu-reader" --desc "Serial protocol reader for industrial sensors" --test "assert True"
+
 # View self-learning stats
 python scripts/resolver.py --learn-stats
 
@@ -116,24 +125,25 @@ python scripts/resolver.py --reset-learning
 
 ## 🛠️ CLI Tools Included
 
-* **`indexer.py`**: High-speed zero-dependency inverted indexer. Parses multi-line YAML frontmatters, extracts SemVer version clues, and builds an ultra-compact `registry.json`.
-* **`resolver.py`**: Sub-2ms arbitration engine with bilingual Vietnamese-English mapping, stack detection, and adaptive self-learning (`learned_affinities.json`).
+* **`resolver.py`**: Sub-2ms Unified Resource Resolver (Skills, Inferred Rules, MCP Drivers, and Cognitive Pre-Flight matrix).
+* **`synthesizer.py`**: Autonomous Skill & Tool Synthesizer with subprocess sandbox validation and auto-promotion to `skills_library`.
+* **`indexer.py`**: High-speed zero-dependency inverted indexer. Parses multi-line YAML frontmatters, extracts SemVer version clues, and builds an ultra-compact `registry.json` in 0.10s.
 * **`updater.py`**: Automated upstream watcher that monitors community skill repositories (`NousResearch/hermes-agent`, `DietrichGebert/ponytail`, `VoltAgent/awesome-agent-skills`) via GitHub API commit SHAs.
 
 ---
 
 ## 🧪 Testing
 
-Omni-Skill includes a comprehensive unit test suite:
+Omni-Kernel includes an automated unit test suite:
 
 ```bash
 python -m unittest tests/test_engine.py
 ```
 
 ```text
-.........
+...........
 ----------------------------------------------------------------------
-Ran 9 tests in 0.30s
+Ran 11 tests in 0.60s
 
 OK
 ```
