@@ -11,6 +11,11 @@ import argparse
 import datetime
 import unicodedata
 
+# Ensure script directory is on sys.path for sibling imports (indexer, etc.)
+_SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+if _SCRIPT_DIR not in sys.path:
+    sys.path.insert(0, _SCRIPT_DIR)
+
 REGISTRY_PATH = os.path.join(os.path.dirname(__file__), "registry.json")
 LEARNED_PATH = os.path.join(os.path.dirname(__file__), "learned_affinities.json")
 
@@ -536,6 +541,18 @@ def resolve_skill(intent_text="", workspace_dir=None, registry=None, top_k=3, af
     # Cognitive Entailment: Infer mandatory rules & MCP drivers
     inferred_rules, inferred_mcp = infer_domain_rules_and_mcp(all_target_tokens)
 
+    # Workspace Assimilator: Discover local skills and rules non-destructively
+    if workspace_dir and os.path.exists(workspace_dir):
+        try:
+            from assimilator import assimilate_workspace
+            workspace_data = assimilate_workspace(workspace_dir)
+            for wr in workspace_data.get("rules", []):
+                rule_str = f"Workspace Rule ({wr['source']}): {wr['summary']}"
+                if rule_str not in inferred_rules:
+                    inferred_rules.append(rule_str)
+        except Exception:
+            pass
+
     candidate_scores = {}
     name_to_idx = {s["name"].lower(): i for i, s in enumerate(skills)}
 
@@ -619,6 +636,29 @@ def resolve_skill(intent_text="", workspace_dir=None, registry=None, top_k=3, af
             "specificity": spec,
             "learned_boost": learned_boost
         })
+
+    # Merge assimilated workspace skills into candidate pool
+    if workspace_dir and 'workspace_data' in locals() and workspace_data:
+        for wsk in workspace_data.get("skills", []):
+            wsk_name = wsk["name"].lower()
+            wsk_desc = wsk["description"].lower()
+            wsk_tokens = set(wsk.get("tokens", []))
+            common = wsk_tokens.intersection(all_target_tokens)
+            if common or wsk_name in query_tokens or any(qt in wsk_name for qt in query_tokens if len(qt) > 2):
+                ws_score = len(common) * 15 + SCOPE_PRIORITY.get("workspace", 40) + 10
+                for qt in query_tokens:
+                    if qt and qt == wsk_name:
+                        ws_score += 80
+                    elif qt and qt in wsk_name:
+                        ws_score += 35
+                    elif qt and qt in wsk_desc:
+                        ws_score += 10
+                candidates.append({
+                    "skill": wsk,
+                    "raw_score": ws_score,
+                    "specificity": 5,
+                    "learned_boost": 0.0
+                })
 
     if not candidates:
         default_res = []

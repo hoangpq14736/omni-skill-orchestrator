@@ -16,6 +16,8 @@ from resolver import (
     record_feedback, get_learned_stats, reset_learning, infer_domain_rules_and_mcp
 )
 from synthesizer import synthesize_and_promote_skill, run_sandbox_validation
+from hook_runner import process_hook
+from assimilator import assimilate_workspace
 
 
 class TestOmniSkillOrchestrator(unittest.TestCase):
@@ -270,6 +272,100 @@ class TestOmniSkillOrchestrator(unittest.TestCase):
         success_timeout, _, err_timeout = run_sandbox_validation(timeout_code, timeout_sec=1)
         self.assertFalse(success_timeout)
         self.assertIn("timed out", err_timeout)
+
+    def test_17_hook_runner_contract(self):
+        """Verify that PreInvocation hook runner produces compliant ephemeral message injection."""
+        payload = {
+            "lastUserInput": "viết api fastapi và postgresql",
+            "workspacePaths": ["d:/Antigravity/Skill management"]
+        }
+        output = process_hook(payload)
+        self.assertIn("injectSteps", output)
+        self.assertEqual(len(output["injectSteps"]), 1)
+        step = output["injectSteps"][0]
+        self.assertIn("ephemeralMessage", step)
+        msg = step["ephemeralMessage"]
+        self.assertIn("[OMNI-KERNEL v2.5 PRE-FLIGHT ACTIVATION]", msg)
+        self.assertIn("fastapi", msg.lower())
+        self.assertIn("Inferred Domain Rules", msg)
+        self.assertIn("SQL Injection Immunity", msg)
+        self.assertIn("Cognitive Pre-Flight Assessment", msg)
+
+    def test_18_hook_runner_edge_cases(self):
+        """Verify that hook runner skips trivial fillers, slash commands, and empty inputs."""
+        # Trivial filler
+        res_ok = process_hook({"lastUserInput": "ok", "workspacePaths": []})
+        self.assertEqual(res_ok, {"injectSteps": []})
+
+        # Slash command
+        res_slash = process_hook({"lastUserInput": "/plan architecture", "workspacePaths": []})
+        self.assertEqual(res_slash, {"injectSteps": []})
+
+        # Empty payload
+        res_empty = process_hook({})
+        self.assertEqual(res_empty, {"injectSteps": []})
+
+        # Whitespace
+        res_space = process_hook({"lastUserInput": "   \n\t  "})
+        self.assertEqual(res_space, {"injectSteps": []})
+
+    def test_19_workspace_assimilator_rules_and_skills(self):
+        """Verify that Assimilator discovers local skills and Cursor/Claude/Gemini rules."""
+        import tempfile
+        import shutil
+
+        temp_ws = tempfile.mkdtemp(prefix="omni_assimilate_test_")
+        try:
+            # Create .cursorrules
+            with open(os.path.join(temp_ws, ".cursorrules"), "w", encoding="utf-8") as f:
+                f.write("# Project Rules\n- Always use strict TypeScript\n- Zero console.log in prod\n")
+            
+            # Create a local skill
+            local_skill_dir = os.path.join(temp_ws, "skills", "payment-service")
+            os.makedirs(local_skill_dir, exist_ok=True)
+            with open(os.path.join(local_skill_dir, "SKILL.md"), "w", encoding="utf-8") as f:
+                f.write("---\nname: payment-service\ndescription: Internal Stripe and PayPal checkout integration\nversion: 2.1.0\n---\n# Payment Integration Guide\n")
+
+            data = assimilate_workspace(temp_ws)
+            self.assertEqual(data["skills_count"], 1)
+            self.assertEqual(data["rules_count"], 1)
+            self.assertEqual(data["skills"][0]["name"], "payment-service")
+            self.assertEqual(data["skills"][0]["source_type"], "workspace")
+            self.assertEqual(data["rules"][0]["source"], ".cursorrules")
+        finally:
+            if os.path.exists(temp_ws):
+                shutil.rmtree(temp_ws)
+
+    def test_20_resolver_workspace_virtualization_integration(self):
+        """Verify that Unified Resolver automatically prioritizes local workspace skills and rules."""
+        import tempfile
+        import shutil
+
+        temp_ws = tempfile.mkdtemp(prefix="omni_resolver_virt_test_")
+        try:
+            # Create CLAUDE.md rule
+            with open(os.path.join(temp_ws, "CLAUDE.md"), "w", encoding="utf-8") as f:
+                f.write("# Repository Guidelines\n- Never use any in TypeScript\n- Must write e2e tests\n")
+
+            # Create local skill
+            local_skill_dir = os.path.join(temp_ws, "skills", "crm-connector")
+            os.makedirs(local_skill_dir, exist_ok=True)
+            with open(os.path.join(local_skill_dir, "SKILL.md"), "w", encoding="utf-8") as f:
+                f.write("---\nname: crm-connector\ndescription: Enterprise Salesforce CRM webhook synchronization\nversion: 1.0.0\n---\n# CRM Documentation\n")
+
+            res = resolve_skill("sync salesforce crm webhook data", workspace_dir=temp_ws, unified=True)
+            self.assertTrue(len(res["skills"]) > 0)
+            top_skill = res["skills"][0]["skill"]
+            self.assertEqual(top_skill["name"], "crm-connector")
+            self.assertEqual(top_skill["source_type"], "workspace")
+
+            # Check rule assimilation
+            inferred = res["inferred_rules"]
+            rule_matched = any("Workspace Rule (CLAUDE.md)" in r for r in inferred)
+            self.assertTrue(rule_matched, f"Expected Workspace Rule (CLAUDE.md) in {inferred}")
+        finally:
+            if os.path.exists(temp_ws):
+                shutil.rmtree(temp_ws)
 
 
 if __name__ == "__main__":

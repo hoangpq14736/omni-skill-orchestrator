@@ -1,13 +1,13 @@
-# 🧠 Omni-Kernel v2.0: Universal Autonomous Cognitive Kernel
+# 🧠 Omni-Kernel v2.5: Universal Autonomous Cognitive Operating System
 
 [![Agent Plugins 1.0.0](https://img.shields.io/badge/Spec-Agent%20Plugins%201.0.0-blue.svg)](https://agent-plugins.org)
 [![Python 3.10+](https://img.shields.io/badge/Python-3.10%2B-green.svg)](https://python.org)
 [![Zero Dependency](https://img.shields.io/badge/Dependencies-0%20(Pure%20Stdlib)-brightgreen.svg)]()
-[![Tests](https://img.shields.io/badge/Tests-16%2F16%20Passing-success.svg)]()
+[![Tests](https://img.shields.io/badge/Tests-20%2F20%20Passing-success.svg)]()
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 > **Universal Autonomous AI Cognitive Kernel for Google Antigravity & Advanced Agentic Harnesses.**  
-> *Combines JIT Skills, Inferred Rules, Dynamic MCP Tool Drivers, Human-like Cognitive Pre-Flight Deliberation (Lợi - Hại - Đủ - Thiếu), and Self-Bootstrapping Skill Synthesis with 0 static token overhead.*
+> *Features PreInvocation Lifecycle Hook Automation, Non-Destructive Workspace Virtualization (Cursor/Claude/Gemini assimilation), JIT Skills, Inferred Rules, Dynamic MCP Tool Drivers, Human-like Cognitive Pre-Flight Deliberation (Lợi - Hại - Đủ - Thiếu), and Self-Bootstrapping Skill Synthesis with 0 static token overhead.*
 
 ---
 
@@ -125,6 +125,8 @@ python scripts/resolver.py --reset-learning
 
 ## 🛠️ CLI Tools Included
 
+* **`hook_runner.py`**: Global Antigravity `PreInvocation` Lifecycle Hook runner. Intercepts incoming turns in <50ms and injects ephemeral Cognitive Pre-Flight directives without modifying `transcript.jsonl`.
+* **`assimilator.py`**: Non-destructive Workspace Virtualization Engine. Scans foreign repositories and assimilates `.cursorrules`, `GEMINI.md`, `CLAUDE.md`, and local skills into the virtual registry on the fly.
 * **`resolver.py`**: Sub-2ms Unified Resource Resolver (Skills, Inferred Rules, MCP Drivers, and Cognitive Pre-Flight matrix).
 * **`synthesizer.py`**: Autonomous Skill & Tool Synthesizer with subprocess sandbox validation and auto-promotion to `skills_library`.
 * **`indexer.py`**: High-speed zero-dependency inverted indexer. Parses multi-line YAML frontmatters, extracts SemVer version clues, and builds an ultra-compact `registry.json` in 0.10s.
@@ -134,16 +136,16 @@ python scripts/resolver.py --reset-learning
 
 ## 🧪 Testing
 
-Omni-Kernel includes an automated unit test suite:
+Omni-Kernel includes an automated unit test suite covering 20 full scenarios:
 
 ```bash
-python -m unittest tests/test_engine.py
+python tests/test_engine.py
 ```
 
 ```text
-...........
+....................
 ----------------------------------------------------------------------
-Ran 11 tests in 0.60s
+Ran 20 tests in 1.78s
 
 OK
 ```

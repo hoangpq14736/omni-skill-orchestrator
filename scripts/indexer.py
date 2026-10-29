@@ -209,9 +209,10 @@ def is_registry_stale(registry, sources=SOURCES):
             if os.path.getmtime(s_path) > gen_time:
                 return True
             try:
-                for entry in os.scandir(s_path):
-                    if entry.stat().st_mtime > gen_time:
-                        return True
+                with os.scandir(s_path) as it:
+                    for entry in it:
+                        if entry.stat().st_mtime > gen_time:
+                            return True
             except Exception:
                 pass
     return False

@@ -1,0 +1,11 @@
+{
+  "omni-kernel-gatekeeper": {
+    "PreInvocation": [
+      {
+        "type": "command",
+        "command": "python scripts/hook_runner.py",
+        "timeout": 3
+      }
+    ]
+  }
+}
