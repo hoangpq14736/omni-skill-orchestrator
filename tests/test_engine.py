@@ -573,6 +573,43 @@ class TestOmniSkillOrchestrator(unittest.TestCase):
             self.assertEqual(routed[0]["tool"], "slice_gcode")
             self.assertEqual(routed[0]["server"], "custom_printer_mcp")
 
+    def test_26_plugin_metadata_and_hook_integrity(self):
+        """Verify plugin.json, hooks.json, agents, and rules integrity for v3.0 release."""
+        root_dir = os.path.join(os.path.dirname(__file__), "..")
+
+        # 1. plugin.json
+        pjson_path = os.path.join(root_dir, "plugin.json")
+        self.assertTrue(os.path.exists(pjson_path))
+        with open(pjson_path, "r", encoding="utf-8") as f:
+            pj = json.load(f)
+        self.assertEqual(pj.get("version"), "3.0.0")
+        self.assertEqual(pj.get("name"), "omni-skill-orchestrator")
+
+        # 2. hooks.json
+        hooks_path = os.path.join(root_dir, "hooks.json")
+        self.assertTrue(os.path.exists(hooks_path))
+        with open(hooks_path, "r", encoding="utf-8") as f:
+            hj = json.load(f)
+        self.assertIn("omni-kernel-gatekeeper", hj)
+        pre_inv = hj["omni-kernel-gatekeeper"].get("PreInvocation", [])
+        self.assertEqual(len(pre_inv), 1)
+        self.assertIn("hook_runner.py", pre_inv[0]["command"])
+        self.assertLessEqual(pre_inv[0].get("timeout", 10), 5)
+
+        # 3. agents/omni-strategist.json
+        agent_path = os.path.join(root_dir, "agents", "omni-strategist.json")
+        self.assertTrue(os.path.exists(agent_path))
+        with open(agent_path, "r", encoding="utf-8") as f:
+            ag = json.load(f)
+        self.assertEqual(ag.get("name"), "omni-strategist")
+
+        # 4. rules/AGENTS.md
+        rules_path = os.path.join(root_dir, "rules", "AGENTS.md")
+        self.assertTrue(os.path.exists(rules_path))
+        with open(rules_path, "r", encoding="utf-8") as f:
+            rc = f.read()
+        self.assertIn("Omni-Kernel v3.0", rc)
+
 
 if __name__ == "__main__":
     unittest.main()

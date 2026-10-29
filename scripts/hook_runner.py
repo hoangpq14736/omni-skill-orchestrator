@@ -126,7 +126,7 @@ def build_preflight_message(resolution: dict) -> str:
 
 def process_hook(payload: dict) -> dict:
     """Core hook processing logic."""
-    user_input = (payload.get("lastUserInput") or "").strip()
+    user_input = (payload.get("lastUserInput") or payload.get("prompt") or payload.get("userInput") or "").strip()
     
     # Skip empty input, slash commands, or trivial conversational fillers
     if not user_input:

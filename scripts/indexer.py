@@ -96,13 +96,23 @@ def extract_tokens(text):
     return list(tokens)
 
 
+def safe_listdir(path):
+    """Safely lists directory entries without crashing on PermissionError or OS locks."""
+    if not path or not os.path.exists(path):
+        return []
+    try:
+        return os.listdir(path)
+    except Exception:
+        return []
+
+
 def scan_all_skills(extra_workspace_paths=None):
     skills = []
     
     # 1. Scan Plugins
     plugin_root = SOURCES["plugin"]
     if os.path.exists(plugin_root):
-        for plugin_name in os.listdir(plugin_root):
+        for plugin_name in safe_listdir(plugin_root):
             pdir = os.path.join(plugin_root, plugin_name)
             if not os.path.isdir(pdir):
                 continue
@@ -119,7 +129,7 @@ def scan_all_skills(extra_workspace_paths=None):
 
             skills_dir = os.path.join(pdir, "skills")
             if os.path.exists(skills_dir):
-                for item in os.listdir(skills_dir):
+                for item in safe_listdir(skills_dir):
                     sdir = os.path.join(skills_dir, item)
                     sm_file = os.path.join(sdir, "SKILL.md") if os.path.isdir(sdir) else (sdir if item == "SKILL.md" else None)
                     if sm_file and os.path.exists(sm_file):
@@ -129,7 +139,7 @@ def scan_all_skills(extra_workspace_paths=None):
     # 2. Scan User Active Skills
     active_root = SOURCES["user_active"]
     if os.path.exists(active_root):
-        for item in os.listdir(active_root):
+        for item in safe_listdir(active_root):
             sdir = os.path.join(active_root, item)
             sm_file = os.path.join(sdir, "SKILL.md")
             if os.path.exists(sm_file):
@@ -138,7 +148,7 @@ def scan_all_skills(extra_workspace_paths=None):
     # 3. Scan Offline Library
     lib_root = SOURCES["library"]
     if os.path.exists(lib_root):
-        for item in os.listdir(lib_root):
+        for item in safe_listdir(lib_root):
             sdir = os.path.join(lib_root, item)
             sm_file = os.path.join(sdir, "SKILL.md")
             if os.path.exists(sm_file):
@@ -147,7 +157,7 @@ def scan_all_skills(extra_workspace_paths=None):
     # 4. Scan Builtin
     builtin_root = SOURCES["builtin"]
     if os.path.exists(builtin_root):
-        for item in os.listdir(builtin_root):
+        for item in safe_listdir(builtin_root):
             sdir = os.path.join(builtin_root, item)
             sm_file = os.path.join(sdir, "SKILL.md")
             if os.path.exists(sm_file):
@@ -159,7 +169,7 @@ def scan_all_skills(extra_workspace_paths=None):
             for rel in [".agents/skills", ".gemini/skills", "skills"]:
                 ws_skills = os.path.join(ws, rel)
                 if os.path.exists(ws_skills):
-                    for item in os.listdir(ws_skills):
+                    for item in safe_listdir(ws_skills):
                         sdir = os.path.join(ws_skills, item)
                         sm_file = os.path.join(sdir, "SKILL.md")
                         if os.path.exists(sm_file):
