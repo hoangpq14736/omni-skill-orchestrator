@@ -673,17 +673,27 @@ def resolve_skill(intent_text="", workspace_dir=None, registry=None, top_k=3, af
                     break
         
         pre_flight = build_cognitive_pre_flight(intent_text, workspace_dir, default_res, inferred_rules, inferred_mcp)
+        try:
+            from dual_tier import calculate_task_complexity
+            tier_assessment = calculate_task_complexity(intent_text, workspace_dir)
+        except Exception:
+            tier_assessment = {
+                "score": 0, "tier": 1, "tier_name": "L1 Reflex",
+                "recommend_subagent": False, "subagent_role": None, "factors": []
+            }
         if unified:
             return {
                 "skills": default_res,
                 "inferred_rules": inferred_rules,
                 "suggested_mcp": inferred_mcp,
-                "cognitive_pre_flight": pre_flight
+                "cognitive_pre_flight": pre_flight,
+                "tier_assessment": tier_assessment
             }
         for cand in default_res:
             cand["inferred_rules"] = inferred_rules
             cand["suggested_mcp"] = inferred_mcp
             cand["cognitive_pre_flight"] = pre_flight
+            cand["tier_assessment"] = tier_assessment
         return default_res
 
     # Sort descending
@@ -696,18 +706,30 @@ def resolve_skill(intent_text="", workspace_dir=None, registry=None, top_k=3, af
 
     pre_flight = build_cognitive_pre_flight(intent_text, workspace_dir, top_skills, inferred_rules, inferred_mcp)
 
+    # Dual-Tier Cognitive Routing & Quota Guard Assessment (<0.2ms)
+    try:
+        from dual_tier import calculate_task_complexity
+        tier_assessment = calculate_task_complexity(intent_text, workspace_dir)
+    except Exception:
+        tier_assessment = {
+            "score": 0, "tier": 1, "tier_name": "L1 Reflex",
+            "recommend_subagent": False, "subagent_role": None, "factors": []
+        }
+
     if unified:
         return {
             "skills": top_skills,
             "inferred_rules": inferred_rules,
             "suggested_mcp": inferred_mcp,
-            "cognitive_pre_flight": pre_flight
+            "cognitive_pre_flight": pre_flight,
+            "tier_assessment": tier_assessment
         }
 
     for cand in top_skills:
         cand["inferred_rules"] = inferred_rules
         cand["suggested_mcp"] = inferred_mcp
         cand["cognitive_pre_flight"] = pre_flight
+        cand["tier_assessment"] = tier_assessment
 
     return top_skills
 
@@ -852,6 +874,11 @@ if __name__ == "__main__":
             print(f"🕒 Timestamp: {data.get('timestamp')}")
             print(f"💬 Prompt:    {data.get('user_input')}")
             print(f"📂 Workspace: {data.get('workspace_dir')}")
+            tier = data.get("tier_assessment", {})
+            t_name = tier.get("tier_name", "L1 Reflex")
+            print(f"⚡ Cognitive Tier: {t_name} (Score: {tier.get('score', 0)}/100 - {tier.get('quota_guard', 'Active')})")
+            if tier.get("factors"):
+                print(f"   Triggers: {'; '.join(tier.get('factors', []))}")
             print(f"\n🎯 Top Candidate: {data.get('top_skill')}")
             for i, s in enumerate(data.get("skills", []), 1):
                 reason = f" ({s.get('arbitration_reason')})" if s.get('arbitration_reason') else ""

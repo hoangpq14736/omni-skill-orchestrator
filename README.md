@@ -3,7 +3,7 @@
 [![Agent Plugins 1.0.0](https://img.shields.io/badge/Spec-Agent%20Plugins%201.0.0-blue.svg)](https://agent-plugins.org)
 [![Python 3.10+](https://img.shields.io/badge/Python-3.10%2B-green.svg)](https://python.org)
 [![Zero Dependency](https://img.shields.io/badge/Dependencies-0%20(Pure%20Stdlib)-brightgreen.svg)]()
-[![Tests](https://img.shields.io/badge/Tests-21%2F21%20Passing-success.svg)]()
+[![Tests](https://img.shields.io/badge/Tests-22%2F22%20Passing-success.svg)]()
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 > **Universal Autonomous AI Cognitive Kernel for Google Antigravity & Advanced Agentic Harnesses.**  

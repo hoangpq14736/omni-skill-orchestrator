@@ -82,13 +82,25 @@ def build_preflight_message(resolution: dict) -> str:
             if mand:
                 lines.append(f"  * Thiếu (Implicit Needs): Enforce {len(mand)} mandatory guardrails.")
 
-    # 5. Model Transparency & User Observability Directive
+    # 5. Dual-Tier Cognitive Routing & Quota Guard
+    tier_info = resolution.get("tier_assessment", {})
+    tier = tier_info.get("tier", 1)
+    tier_name = tier_info.get("tier_name", "L1 Reflex")
+    factors = tier_info.get("factors", [])
+    if tier == 2:
+        lines.append("\n⚡ Dual-Tier Routing: Tier 2 (Deep Deliberation) | 'omni-strategist' Subagent Approved")
+        if factors:
+            lines.append(f"   Complexity Factors: {'; '.join(factors)}")
+    else:
+        lines.append("\n⚡ Dual-Tier Routing: Tier 1 (Fast Reflex) | Quota Guard Active (0-Token Mode)")
+
+    # 6. Model Transparency & User Observability Directive
     top_skill_name = skills[0].get("skill", {}).get("name", "generic") if skills else "generic"
     rule_count = len(rules)
     mcp_count = len(mcps)
     lines.append("\n📢 Transparency Directive:")
     lines.append("Render a compact 1-line badge at the very beginning of your technical response:")
-    lines.append(f"`⚡ Omni-Kernel: Skill: [{top_skill_name}] | Rules: [{rule_count} active] | MCP: [{mcp_count} tools]`")
+    lines.append(f"`⚡ Omni-Kernel: [{tier_name}] | Skill: [{top_skill_name}] | Rules: [{rule_count} active] | MCP: [{mcp_count} suggested]`")
 
     return "\n".join(lines)
 
@@ -141,7 +153,8 @@ def process_hook(payload: dict) -> dict:
             ],
             "inferred_rules": resolution.get("inferred_rules", []),
             "suggested_mcp": resolution.get("suggested_mcp", []),
-            "cognitive_pre_flight": resolution.get("cognitive_pre_flight", {})
+            "cognitive_pre_flight": resolution.get("cognitive_pre_flight", {}),
+            "tier_assessment": resolution.get("tier_assessment", {})
         }
         with open(LAST_ACTIVATION_PATH, "w", encoding="utf-8") as f:
             json.dump(record, f, indent=2, ensure_ascii=False)

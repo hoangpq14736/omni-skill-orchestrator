@@ -378,7 +378,7 @@ class TestOmniSkillOrchestrator(unittest.TestCase):
         self.assertEqual(len(output["injectSteps"]), 1)
         msg = output["injectSteps"][0]["ephemeralMessage"]
         self.assertIn("Transparency Directive", msg)
-        self.assertIn("⚡ Omni-Kernel: Skill:", msg)
+        self.assertIn("⚡ Omni-Kernel: [L1 Reflex] | Skill:", msg)
 
         # Verify telemetry persistence
         self.assertTrue(os.path.exists(LAST_ACTIVATION_PATH))
@@ -387,6 +387,30 @@ class TestOmniSkillOrchestrator(unittest.TestCase):
         self.assertEqual(record["user_input"], "triển khai docker compose container")
         self.assertIn("top_skill", record)
         self.assertTrue(len(record["inferred_rules"]) > 0)
+
+    def test_22_dual_tier_routing_and_quota_guard(self):
+        """Verify that Dual-Tier router accurately calculates complexity and gates Subagent elevation."""
+        from dual_tier import calculate_task_complexity
+
+        # 1. Simple task -> L1 Reflex, 0-token Quota Guard
+        res_simple = calculate_task_complexity("viết hàm cộng hai số nguyên trong python")
+        self.assertEqual(res_simple["tier"], 1)
+        self.assertEqual(res_simple["tier_name"], "L1 Reflex")
+        self.assertFalse(res_simple["recommend_subagent"])
+        self.assertIn("L1 Reflex", res_simple["quota_guard"])
+
+        # 2. Complex architectural task -> L2 Strategist
+        res_complex = calculate_task_complexity("lập kế hoạch kiến trúc microservices và phân tách 10 modules")
+        self.assertEqual(res_complex["tier"], 2)
+        self.assertEqual(res_complex["tier_name"], "L2 Strategist")
+        self.assertTrue(res_complex["recommend_subagent"])
+        self.assertEqual(res_complex["subagent_role"], "Omni-Strategist")
+        self.assertIn("Tier 2 Subagent Approved", res_complex["quota_guard"])
+
+        # 3. Integration with Unified Resolver
+        res_unified = resolve_skill("lập kế hoạch kiến trúc", unified=True)
+        self.assertIn("tier_assessment", res_unified)
+        self.assertEqual(res_unified["tier_assessment"]["tier"], 2)
 
 
 if __name__ == "__main__":
