@@ -190,6 +190,7 @@ def index_mcp_tools(servers: dict = None) -> dict:
 
 _CACHED_MCP_INDEX = None
 _CACHED_MCP_TIME = 0.0
+_LAST_STALE_CHECK = 0.0
 
 
 def is_mcp_stale(index_data: dict, base_dirs: list = None) -> bool:
@@ -240,12 +241,23 @@ def is_mcp_stale(index_data: dict, base_dirs: list = None) -> bool:
 
 def get_mcp_index(force_refresh: bool = False, base_dirs: list = None) -> dict:
     """Returns cached MCP index, automatically re-indexing if files changed or TTL expired."""
-    global _CACHED_MCP_INDEX, _CACHED_MCP_TIME
+    global _CACHED_MCP_INDEX, _CACHED_MCP_TIME, _LAST_STALE_CHECK
     now = time.time()
-    if force_refresh or _CACHED_MCP_INDEX is None or is_mcp_stale(_CACHED_MCP_INDEX, base_dirs) or (now - _CACHED_MCP_TIME > 120):
+    
+    # If custom directories passed (e.g. testing) or force_refresh or not yet indexed
+    need_refresh = force_refresh or (_CACHED_MCP_INDEX is None)
+    if not need_refresh:
+        if base_dirs is not None:
+            need_refresh = is_mcp_stale(_CACHED_MCP_INDEX, base_dirs)
+        elif now - _LAST_STALE_CHECK > 1.5:
+            _LAST_STALE_CHECK = now
+            need_refresh = is_mcp_stale(_CACHED_MCP_INDEX, base_dirs) or (now - _CACHED_MCP_TIME > 120)
+
+    if need_refresh:
         servers = discover_mcp_servers(base_dirs)
         _CACHED_MCP_INDEX = index_mcp_tools(servers)
         _CACHED_MCP_TIME = now
+        _LAST_STALE_CHECK = now
     return _CACHED_MCP_INDEX
 
 

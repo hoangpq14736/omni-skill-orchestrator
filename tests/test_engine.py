@@ -610,6 +610,32 @@ class TestOmniSkillOrchestrator(unittest.TestCase):
             rc = f.read()
         self.assertIn("Omni-Kernel v3.0", rc)
 
+    def test_27_android_workspace_stack_and_cloud_penalty(self):
+        """Verify that Android mobile repos are not misidentified as backend, and cloud skills are penalized."""
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            # Create mock Android workspace
+            os.makedirs(os.path.join(tmp_dir, "app", "src", "main"), exist_ok=True)
+            with open(os.path.join(tmp_dir, "build.gradle.kts"), "w", encoding="utf-8") as f:
+                f.write("plugins { id('com.android.application') }\n")
+            with open(os.path.join(tmp_dir, "app", "src", "main", "AndroidManifest.xml"), "w", encoding="utf-8") as f:
+                f.write("<manifest package='com.example.app'></manifest>\n")
+
+            # 1. Stack detection correctly identifies Android/Mobile, NOT backend
+            stack = detect_workspace_stack(tmp_dir)
+            self.assertIn("android", stack)
+            self.assertIn("mobile", stack)
+            self.assertNotIn("backend", stack)
+
+            # 2. Vague conversational prompt in Android workspace should NEVER resolve to cloud bucket
+            res = resolve_skill("cứ đi theo lộ trình", workspace_dir=tmp_dir, top_k=3, registry=self.reg)
+            top_names = [r["skill"]["name"] for r in res]
+            self.assertNotIn("google-cloud-storage-bucket-architect", top_names)
+            for name in top_names:
+                self.assertFalse("bucket" in name, f"Unexpected cloud bucket skill: {name}")
+                self.assertFalse("cloud-storage" in name, f"Unexpected cloud storage skill: {name}")
+
 
 if __name__ == "__main__":
     unittest.main()

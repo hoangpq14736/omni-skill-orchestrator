@@ -421,10 +421,32 @@ def detect_workspace_stack(workspace_dir):
             tags.update(["flutter", "dart", "mobile"])
         elif base == "Package.swift":
             tags.update(["swift", "ios", "macos", "mobile"])
-        elif base in ["pom.xml", "build.gradle", "build.gradle.kts"]:
-            tags.update(["java", "kotlin", "backend"])
+        elif base in ["pom.xml", "build.gradle", "build.gradle.kts", "settings.gradle", "settings.gradle.kts"]:
+            # Check if this is an Android mobile project
+            is_android = False
+            for cand in ["app", "app/src/main/AndroidManifest.xml", "AndroidManifest.xml"]:
+                if os.path.exists(os.path.join(workspace_dir, cand)):
+                    is_android = True
+                    break
+            if not is_android:
+                try:
+                    fpath = os.path.join(workspace_dir, f)
+                    with open(fpath, "r", encoding="utf-8", errors="ignore") as gf:
+                        c = gf.read(4096)
+                        if "com.android" in c or "android {" in c or "androidx" in c:
+                            is_android = True
+                except Exception:
+                    pass
+
+            if is_android:
+                tags.update(["android", "mobile", "kotlin", "java"])
+            else:
+                tags.update(["java", "kotlin", "backend"])
             if "kts" in base or "kt" in base:
                 tags.add("kotlin")
+        elif base == "AndroidManifest.xml" or "androidmanifest.xml" in base.lower():
+            tags.update(["android", "mobile", "kotlin", "java"])
+            tags.discard("backend")
         elif base == "composer.json":
             tags.update(["php", "backend"])
         elif base in ["Dockerfile", "docker-compose.yml", "docker-compose.yaml"]:
@@ -600,9 +622,19 @@ def resolve_skill(intent_text="", workspace_dir=None, registry=None, top_k=3, af
         score += SCOPE_PRIORITY.get(s["source_type"], 5)
 
         # Cloud/Vendor penalty if specific vendor/service is NOT requested
-        for vendor in ["gcs", "firebase", "gcp", "aws", "azure", "bigquery", "bigtable", "composer", "datastore"]:
-            if vendor in name and vendor not in query_tokens and vendor not in stack_tags:
-                score -= 40
+        CLOUD_INFRA_VENDORS = [
+            "gcs", "firebase", "gcp", "aws", "azure", "bigquery", "bigtable",
+            "composer", "datastore", "bucket", "cloud-storage", "google-cloud",
+            "terraform", "kubernetes", "k8s", "lambda", "s3"
+        ]
+        is_cloud_intent = any(cv in query_tokens for cv in ["cloud", "gcp", "aws", "azure", "bucket", "storage", "gcs", "gcloud"])
+        is_cloud_stack = any(st in ["cloud", "devops", "kubernetes"] for st in stack_tags)
+
+        if not is_cloud_intent and not is_cloud_stack:
+            for vendor in CLOUD_INFRA_VENDORS:
+                if vendor in name:
+                    score -= 60
+                    break
 
         # Quality bonus
         score += (s.get("quality_score", 50) / 10.0)
