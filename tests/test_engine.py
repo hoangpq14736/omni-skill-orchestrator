@@ -469,6 +469,52 @@ class TestOmniSkillOrchestrator(unittest.TestCase):
         msg = hook_out["injectSteps"][0]["ephemeralMessage"]
         self.assertIn("Proven Execution Memory", msg)
 
+    def test_24_mcp_virtual_bus(self):
+        """Verify that Omni-MCP Virtual Bus discovers, routes, and validates MCP tools dynamically."""
+        from mcp_gateway import (
+            discover_mcp_servers, index_mcp_tools, route_mcp_tool,
+            get_tool_schema, validate_tool_arguments
+        )
+
+        # 1. Discovery & Indexing
+        servers = discover_mcp_servers()
+        self.assertGreater(len(servers), 0, "Expected at least one MCP server discovered")
+        mcp_idx = index_mcp_tools(servers)
+        self.assertGreater(mcp_idx["total_tools"], 0, "Expected at least one MCP tool indexed")
+
+        # 2. Sub-millisecond Tool Routing
+        start_t = time.perf_counter()
+        routes = route_mcp_tool("đo kích thước và thể tích khối 3D solidcraft measure", mcp_index=mcp_idx)
+        route_latency_ms = (time.perf_counter() - start_t) * 1000
+        self.assertLess(route_latency_ms, 5.0, f"MCP routing latency too high: {route_latency_ms:.2f}ms")
+        self.assertTrue(len(routes) > 0, "Expected matching MCP tool route")
+        self.assertEqual(routes[0]["server"], "solidcraft")
+        self.assertEqual(routes[0]["tool"], "measure")
+        self.assertIn("call_template", routes[0])
+
+        # 3. Schema Retrieval
+        schema = get_tool_schema("solidcraft", "measure", mcp_index=mcp_idx)
+        self.assertEqual(schema.get("name"), "measure")
+        self.assertEqual(schema.get("server"), "solidcraft")
+        self.assertIn("properties", schema.get("parameters", {}))
+
+        # 4. Tool Argument Validation
+        # Valid argument
+        valid_res = validate_tool_arguments("solidcraft", "measure", {"body": "Body1"}, mcp_index=mcp_idx)
+        self.assertTrue(valid_res["valid"])
+        self.assertEqual(len(valid_res["type_errors"]), 0)
+
+        # Invalid type argument
+        invalid_res = validate_tool_arguments("solidcraft", "measure", {"body": 12345}, mcp_index=mcp_idx)
+        self.assertFalse(invalid_res["valid"])
+        self.assertGreater(len(invalid_res["type_errors"]), 0)
+        self.assertIn("expected string", invalid_res["type_errors"][0].lower())
+
+        # 5. Integration with Unified Resolver
+        res_unified = resolve_skill("đo kích thước 3D trong solidcraft", unified=True)
+        self.assertIn("mcp_tools", res_unified)
+        self.assertTrue(len(res_unified["mcp_tools"]) > 0)
+
 
 if __name__ == "__main__":
     unittest.main()

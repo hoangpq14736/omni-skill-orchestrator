@@ -56,12 +56,17 @@ def build_preflight_message(resolution: dict) -> str:
         for r in rules:
             lines.append(f"  - {r}")
             
-    # 3. Suggested MCP Tool Drivers
+    # 3. Suggested MCP Tool Drivers & Dynamic Virtual Bus
     mcps = resolution.get("suggested_mcp", [])
-    if mcps:
-        lines.append("\n🔌 Suggested MCP Tool Drivers:")
+    mcp_tools = resolution.get("mcp_tools", [])
+    if mcps or mcp_tools:
+        lines.append("\n🔌 Omni-MCP Virtual Bus (Tool Gateway):")
         for m in mcps:
-            lines.append(f"  - {m}")
+            lines.append(f"  - Server Driver: {m}")
+        for mt in mcp_tools:
+            lines.append(f"  * Dynamic Tool: {mt['server']}:{mt['tool']} -> {mt['description']}")
+            if mt.get("properties"):
+                lines.append(f"    Parameters: {', '.join(mt['properties'])}")
             
     # 4. Cognitive Pre-Flight Assessment (Lợi - Hại - Đủ - Thiếu)
     cpf = resolution.get("cognitive_pre_flight", {})

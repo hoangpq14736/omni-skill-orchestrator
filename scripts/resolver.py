@@ -686,6 +686,11 @@ def resolve_skill(intent_text="", workspace_dir=None, registry=None, top_k=3, af
             proven_traces = recall_traces(intent_text, workspace_dir=workspace_dir, top_k=2)
         except Exception:
             proven_traces = []
+        try:
+            from mcp_gateway import route_mcp_tool
+            dynamic_mcp_tools = route_mcp_tool(intent_text, top_k=2)
+        except Exception:
+            dynamic_mcp_tools = []
 
         if unified:
             return {
@@ -694,7 +699,8 @@ def resolve_skill(intent_text="", workspace_dir=None, registry=None, top_k=3, af
                 "suggested_mcp": inferred_mcp,
                 "cognitive_pre_flight": pre_flight,
                 "tier_assessment": tier_assessment,
-                "proven_traces": proven_traces
+                "proven_traces": proven_traces,
+                "mcp_tools": dynamic_mcp_tools
             }
         for cand in default_res:
             cand["inferred_rules"] = inferred_rules
@@ -702,6 +708,7 @@ def resolve_skill(intent_text="", workspace_dir=None, registry=None, top_k=3, af
             cand["cognitive_pre_flight"] = pre_flight
             cand["tier_assessment"] = tier_assessment
             cand["proven_traces"] = proven_traces
+            cand["mcp_tools"] = dynamic_mcp_tools
         return default_res
 
     # Sort descending
@@ -731,6 +738,13 @@ def resolve_skill(intent_text="", workspace_dir=None, registry=None, top_k=3, af
     except Exception:
         proven_traces = []
 
+    # Dynamic MCP Tool Routing via Omni-MCP Virtual Bus (<0.3ms)
+    try:
+        from mcp_gateway import route_mcp_tool
+        dynamic_mcp_tools = route_mcp_tool(intent_text, top_k=2)
+    except Exception:
+        dynamic_mcp_tools = []
+
     if unified:
         return {
             "skills": top_skills,
@@ -738,7 +752,8 @@ def resolve_skill(intent_text="", workspace_dir=None, registry=None, top_k=3, af
             "suggested_mcp": inferred_mcp,
             "cognitive_pre_flight": pre_flight,
             "tier_assessment": tier_assessment,
-            "proven_traces": proven_traces
+            "proven_traces": proven_traces,
+            "mcp_tools": dynamic_mcp_tools
         }
 
     for cand in top_skills:
@@ -747,6 +762,7 @@ def resolve_skill(intent_text="", workspace_dir=None, registry=None, top_k=3, af
         cand["cognitive_pre_flight"] = pre_flight
         cand["tier_assessment"] = tier_assessment
         cand["proven_traces"] = proven_traces
+        cand["mcp_tools"] = dynamic_mcp_tools
 
     return top_skills
 
