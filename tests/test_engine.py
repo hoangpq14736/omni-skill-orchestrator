@@ -6,6 +6,7 @@ Tests indexer performance, resolver accuracy, stack detection, and version arbit
 import os
 import sys
 import time
+import json
 import unittest
 
 sys.path.append(os.path.join(os.path.dirname(__file__), "..", "scripts"))
@@ -187,6 +188,88 @@ class TestOmniSkillOrchestrator(unittest.TestCase):
         finally:
             if os.path.exists(temp_lib):
                 shutil.rmtree(temp_lib)
+
+    def test_12_cross_model_json_contract(self):
+        """Verify strict schema compatibility and JSON serializability for Gemini, Claude, and GPT models."""
+        import json
+        res = resolve_skill("thiết kế api microservice docker", unified=True, registry=self.reg)
+        self.assertIsInstance(res, dict)
+        self.assertIn("skills", res)
+        self.assertIn("inferred_rules", res)
+        self.assertIn("suggested_mcp", res)
+        self.assertIn("cognitive_pre_flight", res)
+
+        # Cross-model JSON serialization test (no non-serializable objects)
+        serialized = json.dumps(res, ensure_ascii=False)
+        self.assertIsInstance(serialized, str)
+        deserialized = json.loads(serialized)
+        self.assertEqual(len(deserialized["skills"]), len(res["skills"]))
+
+    def test_13_mixed_stack_detection(self):
+        """Verify stack detector correctly identifies multiple simultaneous technologies."""
+        import tempfile
+        import shutil
+
+        temp_ws = tempfile.mkdtemp(prefix="omni_mixed_stack_")
+        try:
+            # Create Next.js package.json
+            with open(os.path.join(temp_ws, "package.json"), "w", encoding="utf-8") as f:
+                json.dump({"dependencies": {"next": "14.2.0", "react": "18.3.0", "tailwind": "3.4.0"}}, f)
+            # Create FastAPI requirements.txt
+            with open(os.path.join(temp_ws, "requirements.txt"), "w", encoding="utf-8") as f:
+                f.write("fastapi>=0.110.0\npydantic>=2.7.0\n")
+            # Create Dockerfile
+            with open(os.path.join(temp_ws, "Dockerfile"), "w", encoding="utf-8") as f:
+                f.write("FROM python:3.11-slim\n")
+
+            stack = detect_workspace_stack(temp_ws)
+            self.assertIn("nextjs", stack)
+            self.assertIn("react", stack)
+            self.assertIn("fastapi", stack)
+            self.assertIn("python", stack)
+            self.assertIn("docker", stack)
+        finally:
+            if os.path.exists(temp_ws):
+                shutil.rmtree(temp_ws)
+
+    def test_14_bilingual_unaccented_resilience(self):
+        """Verify that unaccented Vietnamese queries resolve equivalently to accented queries."""
+        accented_res = resolve_skill("tối ưu câu lệnh truy vấn cơ sở dữ liệu sql postgres", top_k=3, registry=self.reg)
+        unaccented_res = resolve_skill("toi uu cau lenh truy van co so du lieu sql postgres", top_k=3, registry=self.reg)
+
+        self.assertTrue(len(accented_res) > 0)
+        self.assertTrue(len(unaccented_res) > 0)
+        top_accented = accented_res[0]["skill"]["name"]
+        top_unaccented = unaccented_res[0]["skill"]["name"]
+        self.assertEqual(top_accented, top_unaccented, f"Expected {top_accented} == {top_unaccented}")
+
+    def test_15_non_existent_workspace_and_boundary_fallback(self):
+        """Verify graceful fallback without exceptions when workspace is invalid or intent is empty."""
+        # Non-existent directory
+        res_invalid_ws = resolve_skill("test", workspace_dir="Z:/invalid/path/does_not_exist_999", registry=self.reg)
+        self.assertIsInstance(res_invalid_ws, list)
+
+        # Empty intent
+        res_empty = resolve_skill("", workspace_dir=None, registry=self.reg)
+        self.assertTrue(len(res_empty) > 0)
+        self.assertIn(res_empty[0]["skill"]["name"], ["ponytail", "coding-standards"])
+
+        # Punctuation only
+        res_symbols = resolve_skill("??? !!! @@@ ### $$$", workspace_dir=None, registry=self.reg)
+        self.assertTrue(len(res_symbols) > 0)
+
+    def test_16_synthesizer_timeout_and_syntax_containment(self):
+        """Verify that synthesizer sandbox handles execution timeouts and syntax errors safely."""
+        # Syntax error
+        success_syntax, _, err_syntax = run_sandbox_validation("def invalid_syntax(: pass")
+        self.assertFalse(success_syntax)
+        self.assertTrue(len(err_syntax) > 0)
+
+        # Timeout containment
+        timeout_code = "import time\ntime.sleep(10)"
+        success_timeout, _, err_timeout = run_sandbox_validation(timeout_code, timeout_sec=1)
+        self.assertFalse(success_timeout)
+        self.assertIn("timed out", err_timeout)
 
 
 if __name__ == "__main__":

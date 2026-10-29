@@ -9,6 +9,7 @@ import json
 import sys
 import argparse
 import datetime
+import unicodedata
 
 REGISTRY_PATH = os.path.join(os.path.dirname(__file__), "registry.json")
 LEARNED_PATH = os.path.join(os.path.dirname(__file__), "learned_affinities.json")
@@ -488,15 +489,30 @@ def compare_versions(v1, v2):
     return 0
 
 
+def strip_accents(text):
+    """Normalizes and strips Vietnamese diacritics for cross-lingual query resilience."""
+    if not text:
+        return ""
+    text_nfd = unicodedata.normalize('NFD', text)
+    text_clean = ''.join(c for c in text_nfd if unicodedata.category(c) != 'Mn')
+    text_clean = text_clean.replace('đ', 'd').replace('Đ', 'D')
+    return unicodedata.normalize('NFC', text_clean)
+
+
 def extract_query_tokens(text):
-    """Extracts Unicode words, compound phrases, and adds English technical synonyms."""
+    """Extracts Unicode words, compound phrases, strips accents, and expands technical synonyms."""
+    if not text:
+        return set()
     text_lower = text.lower()
+    text_unaccented = strip_accents(text_lower)
     raw_words = re.findall(r'\b[\w\-]+\b', text_lower, re.UNICODE)
-    tokens = set([w for w in raw_words if len(w) >= 2])
+    raw_words_unaccented = re.findall(r'\b[\w\-]+\b', text_unaccented, re.UNICODE)
+    tokens = set([w for w in raw_words + raw_words_unaccented if len(w) >= 2])
     
-    # Expand with synonyms
+    # Expand with synonyms (matches both accented and unaccented variations)
     for phrase, syns in VI_EN_SYNONYMS.items():
-        if phrase in text_lower:
+        phrase_unaccented = strip_accents(phrase)
+        if phrase in text_lower or phrase_unaccented in text_unaccented:
             tokens.update(syns)
             
     return tokens
