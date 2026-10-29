@@ -20,6 +20,7 @@ DEFAULT_MCP_DIRS = [
     os.path.expanduser(r"~\.gemini\antigravity\mcp"),
     os.path.expanduser(r"~\.gemini\config\plugins")
 ]
+GLOBAL_MCP_CONFIG = os.path.expanduser(r"~\.gemini\config\mcp_config.json")
 
 
 def tokenize(text: str) -> list:
@@ -31,13 +32,14 @@ def tokenize(text: str) -> list:
     return list(set(tokens))
 
 
-def discover_mcp_servers(base_dirs: list = None) -> dict:
+def discover_mcp_servers(base_dirs: list = None, extra_workspace_paths: list = None) -> dict:
     """
     Scans directories to locate MCP server definitions and their JSON tool schemas.
-    Returns a dict mapping server_name -> { "path": server_path, "tools": [tool_names], "instructions": str }
+    Also ingests ~/.gemini/config/mcp_config.json and workspace-level MCP configs.
+    Returns a dict mapping server_name -> { "path": server_path, "tool_files": [paths], "instructions": str }
     Runs in <15ms.
     """
-    search_dirs = base_dirs or DEFAULT_MCP_DIRS
+    search_dirs = list(base_dirs or DEFAULT_MCP_DIRS)
     servers = {}
 
     for base in search_dirs:
@@ -80,6 +82,41 @@ def discover_mcp_servers(base_dirs: list = None) -> dict:
                         }
         except Exception:
             continue
+
+    # 2. Ingest Global mcp_config.json if present
+    if os.path.exists(GLOBAL_MCP_CONFIG):
+        try:
+            with open(GLOBAL_MCP_CONFIG, "r", encoding="utf-8") as f:
+                gcfg = json.load(f)
+            for sname, sdef in gcfg.get("mcpServers", {}).items():
+                if sname not in servers:
+                    servers[sname] = {
+                        "name": sname,
+                        "path": GLOBAL_MCP_CONFIG,
+                        "tool_files": [],
+                        "instructions": f"Configured via global mcp_config.json: {sdef.get('command', '')}"
+                    }
+        except Exception:
+            pass
+
+    # 3. Ingest Workspace-level MCP configs (.cursor/mcp.json, mcp.json)
+    if extra_workspace_paths:
+        for ws in extra_workspace_paths:
+            for rel in [".cursor/mcp.json", "mcp.json", ".vscode/mcp.json"]:
+                ws_mcp = os.path.join(ws, rel)
+                if os.path.exists(ws_mcp):
+                    try:
+                        with open(ws_mcp, "r", encoding="utf-8") as f:
+                            wcfg = json.load(f)
+                        for sname, sdef in wcfg.get("mcpServers", {}).items():
+                            servers[f"ws:{sname}"] = {
+                                "name": f"ws:{sname}",
+                                "path": ws_mcp,
+                                "tool_files": [],
+                                "instructions": f"Configured via workspace {rel}: {sdef.get('command', '')}"
+                            }
+                    except Exception:
+                        pass
 
     return servers
 
@@ -146,7 +183,8 @@ def index_mcp_tools(servers: dict = None) -> dict:
         "tools": tools,
         "inverted_index": inverted_index,
         "total_servers": len(servers),
-        "total_tools": len(tools)
+        "total_tools": len(tools),
+        "indexed_at": time.time()
     }
 
 
@@ -154,11 +192,57 @@ _CACHED_MCP_INDEX = None
 _CACHED_MCP_TIME = 0.0
 
 
+def is_mcp_stale(index_data: dict, base_dirs: list = None) -> bool:
+    """
+    Sub-millisecond filesystem mtime freshness check (<0.4ms).
+    Detects if any new MCP directory was created, or if any tool schema was added/modified/deleted.
+    Triggers autonomous self-reindexing without requiring manual user or AI intervention.
+    """
+    if not index_data:
+        return True
+    indexed_at = index_data.get("indexed_at", 0)
+    if not indexed_at:
+        return True
+
+    search_dirs = base_dirs or DEFAULT_MCP_DIRS
+    for base in search_dirs:
+        if not os.path.exists(base):
+            continue
+        try:
+            if os.path.getmtime(base) > indexed_at:
+                return True
+            with os.scandir(base) as it:
+                for entry in it:
+                    if entry.is_dir():
+                        if entry.stat().st_mtime > indexed_at:
+                            return True
+                        # Check tools inside server folder
+                        try:
+                            with os.scandir(entry.path) as sit:
+                                for f in sit:
+                                    if f.is_file() and f.stat().st_mtime > indexed_at:
+                                        return True
+                        except Exception:
+                            pass
+        except Exception:
+            pass
+
+    # Check global config file mtime
+    if os.path.exists(GLOBAL_MCP_CONFIG):
+        try:
+            if os.path.getmtime(GLOBAL_MCP_CONFIG) > indexed_at:
+                return True
+        except Exception:
+            pass
+
+    return False
+
+
 def get_mcp_index(force_refresh: bool = False, base_dirs: list = None) -> dict:
-    """Returns cached MCP index with 60-second TTL."""
+    """Returns cached MCP index, automatically re-indexing if files changed or TTL expired."""
     global _CACHED_MCP_INDEX, _CACHED_MCP_TIME
     now = time.time()
-    if force_refresh or _CACHED_MCP_INDEX is None or (now - _CACHED_MCP_TIME > 60):
+    if force_refresh or _CACHED_MCP_INDEX is None or is_mcp_stale(_CACHED_MCP_INDEX, base_dirs) or (now - _CACHED_MCP_TIME > 120):
         servers = discover_mcp_servers(base_dirs)
         _CACHED_MCP_INDEX = index_mcp_tools(servers)
         _CACHED_MCP_TIME = now

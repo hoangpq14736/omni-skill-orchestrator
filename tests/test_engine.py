@@ -515,6 +515,64 @@ class TestOmniSkillOrchestrator(unittest.TestCase):
         self.assertIn("mcp_tools", res_unified)
         self.assertTrue(len(res_unified["mcp_tools"]) > 0)
 
+    def test_25_mcp_auto_discovery_and_stale_detection(self):
+        """Verify that newly added MCP servers or tools are detected and indexed automatically without manual inspect."""
+        import tempfile
+        from mcp_gateway import get_mcp_index, is_mcp_stale, route_mcp_tool
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            server_dir = os.path.join(tmp_dir, "custom_printer_mcp")
+            os.makedirs(server_dir, exist_ok=True)
+
+            tool_1_path = os.path.join(server_dir, "print_filament.json")
+            with open(tool_1_path, "w", encoding="utf-8") as f:
+                json.dump({
+                    "name": "print_filament",
+                    "description": "Prints 3D model using specified filament temperature",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "temperature": {"type": "integer"}
+                        },
+                        "required": ["temperature"]
+                    }
+                }, f)
+
+            # 1. Initial Discovery
+            idx1 = get_mcp_index(force_refresh=True, base_dirs=[tmp_dir])
+            custom_tools_1 = [t for t in idx1["tools"] if t["server"] == "custom_printer_mcp"]
+            self.assertEqual(len(custom_tools_1), 1)
+            self.assertFalse(is_mcp_stale(idx1, base_dirs=[tmp_dir]))
+
+            # 2. Add second tool to folder (simulating user installing new tool or plugin)
+            time.sleep(0.05)
+            tool_2_path = os.path.join(server_dir, "slice_gcode.json")
+            with open(tool_2_path, "w", encoding="utf-8") as f:
+                json.dump({
+                    "name": "slice_gcode",
+                    "description": "Slices CAD model into printer gcode instructions",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "layer_height": {"type": "number"}
+                        }
+                    }
+                }, f)
+
+            # 3. Freshness check immediately flags index as stale
+            self.assertTrue(is_mcp_stale(idx1, base_dirs=[tmp_dir]))
+
+            # 4. get_mcp_index automatically self-heals and reindexes
+            idx2 = get_mcp_index(base_dirs=[tmp_dir])
+            custom_tools_2 = [t for t in idx2["tools"] if t["server"] == "custom_printer_mcp"]
+            self.assertEqual(len(custom_tools_2), 2)
+
+            # 5. Route dynamically finds newly added tool
+            routed = route_mcp_tool("slice cad model into gcode", mcp_index=idx2)
+            self.assertTrue(len(routed) > 0)
+            self.assertEqual(routed[0]["tool"], "slice_gcode")
+            self.assertEqual(routed[0]["server"], "custom_printer_mcp")
+
 
 if __name__ == "__main__":
     unittest.main()
