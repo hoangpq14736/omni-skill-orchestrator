@@ -3,7 +3,7 @@
 [![Agent Plugins 1.0.0](https://img.shields.io/badge/Spec-Agent%20Plugins%201.0.0-blue.svg)](https://agent-plugins.org)
 [![Python 3.10+](https://img.shields.io/badge/Python-3.10%2B-green.svg)](https://python.org)
 [![Zero Dependency](https://img.shields.io/badge/Dependencies-0%20(Pure%20Stdlib)-brightgreen.svg)]()
-[![Tests](https://img.shields.io/badge/Tests-22%2F22%20Passing-success.svg)]()
+[![Tests](https://img.shields.io/badge/Tests-23%2F23%20Passing-success.svg)]()
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 [English](README.md) • [Tiếng Việt](README.vi.md)
@@ -127,6 +127,7 @@ python scripts/resolver.py --learn-stats
 |---|---|---|
 | **PreInvocation Hook** | `scripts/hook_runner.py` | Intercepts turns in <45ms. Injects ephemeral cognitive pre-flight directives without bloating `transcript.jsonl`. |
 | **Dual-Tier Router** | `scripts/dual_tier.py` | Computes task complexity (0-100). Enforces Quota Guard on simple queries (L1) and elevates to L2 Strategist only when needed. |
+| **Experiential Memory** | `scripts/experiential_memory.py` | Cross-session memory recalling proven code fixes and verified CLI execution traces in <0.3ms without re-reasoning. |
 | **Workspace Assimilator** | `scripts/assimilator.py` | Non-destructively scans any repository for `.cursorrules`, `GEMINI.md`, `CLAUDE.md`, and local skills, prioritizing them with `SCOPE_PRIORITY = 40`. |
 | **Unified Resolver** | `scripts/resolver.py` | Sub-millisecond arbitration engine for Skills, Inferred Rules, MCP Drivers, and Cognitive Assessment. |
 | **Skill Synthesizer** | `scripts/synthesizer.py` | Autonomous skill authoring pipeline with subprocess sandbox execution and auto-promotion. |
@@ -144,9 +145,9 @@ python tests/test_engine.py
 ```
 
 ```text
-......................
+.......................
 ----------------------------------------------------------------------
-Ran 22 tests in 1.82s
+Ran 23 tests in 1.85s
 
 OK
 ```

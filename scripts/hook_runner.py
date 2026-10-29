@@ -82,7 +82,19 @@ def build_preflight_message(resolution: dict) -> str:
             if mand:
                 lines.append(f"  * Thiếu (Implicit Needs): Enforce {len(mand)} mandatory guardrails.")
 
-    # 5. Dual-Tier Cognitive Routing & Quota Guard
+    # 5. Proven Execution Traces (Cross-Session Experiential Memory)
+    traces = resolution.get("proven_traces", [])
+    if traces:
+        lines.append("\n💡 Proven Execution Memory (Ký ức Thực nghiệm Đã kiểm chứng):")
+        for item in traces:
+            tr = item.get("trace", {})
+            sol = tr.get("proven_solution", "")
+            sig = tr.get("problem_signature", "")
+            score = int(item.get("score", 0) * 100)
+            lines.append(f"  * Proven Fix: {sol}")
+            lines.append(f"    (Verified fix for '{sig}', Match: {score}%)")
+
+    # 6. Dual-Tier Cognitive Routing & Quota Guard
     tier_info = resolution.get("tier_assessment", {})
     tier = tier_info.get("tier", 1)
     tier_name = tier_info.get("tier_name", "L1 Reflex")
@@ -94,13 +106,15 @@ def build_preflight_message(resolution: dict) -> str:
     else:
         lines.append("\n⚡ Dual-Tier Routing: Tier 1 (Fast Reflex) | Quota Guard Active (0-Token Mode)")
 
-    # 6. Model Transparency & User Observability Directive
+    # 7. Model Transparency & User Observability Directive
     top_skill_name = skills[0].get("skill", {}).get("name", "generic") if skills else "generic"
     rule_count = len(rules)
     mcp_count = len(mcps)
+    trace_count = len(traces)
+    trace_badge = f" | Traces: [{trace_count} recalled]" if trace_count > 0 else ""
     lines.append("\n📢 Transparency Directive:")
     lines.append("Render a compact 1-line badge at the very beginning of your technical response:")
-    lines.append(f"`⚡ Omni-Kernel: [{tier_name}] | Skill: [{top_skill_name}] | Rules: [{rule_count} active] | MCP: [{mcp_count} suggested]`")
+    lines.append(f"`⚡ Omni-Kernel: [{tier_name}] | Skill: [{top_skill_name}] | Rules: [{rule_count} active] | MCP: [{mcp_count} suggested]{trace_badge}`")
 
     return "\n".join(lines)
 
@@ -154,7 +168,8 @@ def process_hook(payload: dict) -> dict:
             "inferred_rules": resolution.get("inferred_rules", []),
             "suggested_mcp": resolution.get("suggested_mcp", []),
             "cognitive_pre_flight": resolution.get("cognitive_pre_flight", {}),
-            "tier_assessment": resolution.get("tier_assessment", {})
+            "tier_assessment": resolution.get("tier_assessment", {}),
+            "proven_traces": resolution.get("proven_traces", [])
         }
         with open(LAST_ACTIVATION_PATH, "w", encoding="utf-8") as f:
             json.dump(record, f, indent=2, ensure_ascii=False)

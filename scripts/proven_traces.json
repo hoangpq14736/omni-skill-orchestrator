@@ -1,0 +1,122 @@
+{
+  "version": "3.0.0",
+  "updated_at": "2026-10-30 00:43:42",
+  "traces": [
+    {
+      "id": "4c77aec4ac",
+      "problem_signature": "Docker port already in use / bind address in use",
+      "proven_solution": "fuser -k <port>/tcp || lsof -ti:<port> | xargs kill -9",
+      "action_type": "command",
+      "tags": [
+        "docker",
+        "port",
+        "networking",
+        "kill",
+        "bind"
+      ],
+      "workspace_context": "General Linux / Server",
+      "tokens": [
+        "in",
+        "bind",
+        "docker",
+        "port",
+        "use",
+        "kill",
+        "networking",
+        "already",
+        "address"
+      ],
+      "success_count": 1,
+      "created_at": "2026-10-30 00:38:37",
+      "last_recalled": "2026-10-30 00:43:36"
+    },
+    {
+      "id": "3418bad769",
+      "problem_signature": "pip install externally managed environment error on modern Linux",
+      "proven_solution": "python3 -m venv .venv && source .venv/bin/activate || pip install --break-system-packages",
+      "action_type": "command",
+      "tags": [
+        "python",
+        "pip",
+        "venv",
+        "externally-managed",
+        "linux"
+      ],
+      "workspace_context": "Python / Ubuntu",
+      "tokens": [
+        "pip",
+        "linux",
+        "python",
+        "error",
+        "modern",
+        "managed",
+        "venv",
+        "externally",
+        "externally-managed",
+        "on",
+        "install",
+        "environment"
+      ],
+      "success_count": 1,
+      "created_at": "2026-10-30 00:38:37",
+      "last_recalled": "2026-10-30 00:38:37"
+    },
+    {
+      "id": "cd40d879cd",
+      "problem_signature": "FastAPI CORS wildcard allow origins with credentials forbidden",
+      "proven_solution": "allow_origins=['http://localhost:3000'] (Explicit origins required when allow_credentials=True)",
+      "action_type": "code_snippet",
+      "tags": [
+        "fastapi",
+        "cors",
+        "credentials",
+        "middleware",
+        "security"
+      ],
+      "workspace_context": "FastAPI / Backend",
+      "tokens": [
+        "credentials",
+        "with",
+        "origins",
+        "middleware",
+        "allow",
+        "cors",
+        "security",
+        "wildcard",
+        "forbidden",
+        "fastapi"
+      ],
+      "success_count": 1,
+      "created_at": "2026-10-30 00:38:37",
+      "last_recalled": "2026-10-30 00:38:37"
+    },
+    {
+      "id": "74cf026a0a",
+      "problem_signature": "Git push hang on Windows Credential Manager non-interactive subshell",
+      "proven_solution": "git config --global credential.helper manager && git push --dry-run",
+      "action_type": "command",
+      "tags": [
+        "git",
+        "push",
+        "credential",
+        "windows",
+        "hang"
+      ],
+      "workspace_context": "Git / Windows",
+      "tokens": [
+        "subshell",
+        "git",
+        "windows",
+        "credential",
+        "manager",
+        "hang",
+        "push",
+        "on",
+        "non-interactive"
+      ],
+      "success_count": 1,
+      "created_at": "2026-10-30 00:38:37",
+      "last_recalled": "2026-10-30 00:43:42"
+    }
+  ]
+}

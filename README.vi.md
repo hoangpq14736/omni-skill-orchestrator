@@ -3,7 +3,7 @@
 [![Agent Plugins 1.0.0](https://img.shields.io/badge/Spec-Agent%20Plugins%201.0.0-blue.svg)](https://agent-plugins.org)
 [![Python 3.10+](https://img.shields.io/badge/Python-3.10%2B-green.svg)](https://python.org)
 [![Zero Dependency](https://img.shields.io/badge/Dependencies-0%20(Pure%20Stdlib)-brightgreen.svg)]()
-[![Tests](https://img.shields.io/badge/Tests-22%2F22%20Passing-success.svg)]()
+[![Tests](https://img.shields.io/badge/Tests-23%2F23%20Passing-success.svg)]()
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 [English](README.md) • [Tiếng Việt](README.vi.md)
@@ -127,6 +127,7 @@ python scripts/resolver.py --learn-stats
 |---|---|---|
 | **PreInvocation Hook** | `scripts/hook_runner.py` | Bắt sự kiện trước lượt chat trong <45ms. Tiêm chỉ dẫn Pre-Flight tạm thời (`ephemeralMessage`) không làm phình lịch sử chat. |
 | **Dual-Tier Router** | `scripts/dual_tier.py` | Tính điểm độ phức tạp (0-100). Khóa Quota Guard cho task đơn giản (L1) và chỉ kích hoạt Subagent L2 khi cần thiết. |
+| **Experiential Memory** | `scripts/experiential_memory.py` | Bộ nhớ thực nghiệm đa phiên truy hồi giải pháp code và lệnh CLI đã kiểm chứng trong <0.3ms không cần suy luận lại. |
 | **Workspace Assimilator** | `scripts/assimilator.py` | Đồng hóa không phá hủy các quy tắc `.cursorrules`, `GEMINI.md`, `CLAUDE.md`, và skills nội bộ của bất kỳ repo nào với ưu tiên cao nhất (`SCOPE_PRIORITY = 40`). |
 | **Unified Resolver** | `scripts/resolver.py` | Lõi phân xử tốc độ sub-millisecond cho Kỹ năng, Quy tắc Miền, Công cụ MCP và Đánh giá Nhận thức. |
 | **Skill Synthesizer** | `scripts/synthesizer.py` | Quy trình tự động phác thảo kỹ năng, chạy thử nghiệm sandbox và thăng hạng vào thư viện. |
@@ -137,16 +138,16 @@ python scripts/resolver.py --learn-stats
 
 ## 🧪 Kiểm thử Tự động
 
-Omni-Kernel duy trì bộ kiểm thử tự động với **tỷ lệ đạt 100% (22/22 tests)**:
+Omni-Kernel duy trì bộ kiểm thử tự động với **tỷ lệ đạt 100% (23/23 tests)**:
 
 ```bash
 python tests/test_engine.py
 ```
 
 ```text
-......................
+.......................
 ----------------------------------------------------------------------
-Ran 22 tests in 1.82s
+Ran 23 tests in 1.85s
 
 OK
 ```

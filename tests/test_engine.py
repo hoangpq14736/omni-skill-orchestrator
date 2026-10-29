@@ -412,6 +412,63 @@ class TestOmniSkillOrchestrator(unittest.TestCase):
         self.assertIn("tier_assessment", res_unified)
         self.assertEqual(res_unified["tier_assessment"]["tier"], 2)
 
+    def test_23_experiential_memory_engine(self):
+        """Verify that Cross-Session Experiential Memory records, recalls, and injects traces in <1ms."""
+        import tempfile
+        from experiential_memory import (
+            record_trace, recall_traces, load_traces, save_traces, seed_canonical_traces
+        )
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_traces_path = os.path.join(tmp_dir, "test_traces.json")
+
+            # 1. Seed canonical traces
+            seeded = seed_canonical_traces(tmp_traces_path)
+            self.assertGreaterEqual(seeded, 5)
+
+            # 2. Recall matching trace
+            start_t = time.perf_counter()
+            recalled = recall_traces("lỗi docker port conflict 8080", traces_path=tmp_traces_path)
+            latency_ms = (time.perf_counter() - start_t) * 1000
+            self.assertLess(latency_ms, 5.0, f"Memory recall took too long: {latency_ms:.2f}ms")
+            self.assertTrue(len(recalled) > 0)
+            self.assertIn("docker", recalled[0]["trace"]["problem_signature"].lower())
+
+            # 3. Record new trace and verify success count increment
+            new_tr = record_trace(
+                problem_signature="git rebase conflict in merge branch",
+                proven_solution="git rebase --abort && git status",
+                action_type="command",
+                tags=["git", "rebase"],
+                traces_path=tmp_traces_path
+            )
+            self.assertEqual(new_tr["success_count"], 1)
+
+            # Record again with same signature -> increments count
+            updated_tr = record_trace(
+                problem_signature="git rebase conflict in merge branch",
+                proven_solution="git rebase --abort && git status",
+                traces_path=tmp_traces_path
+            )
+            self.assertEqual(updated_tr["success_count"], 2)
+
+            # 4. Recall newly recorded trace
+            git_recalled = recall_traces("git rebase conflict", traces_path=tmp_traces_path)
+            self.assertTrue(len(git_recalled) > 0)
+            self.assertEqual(git_recalled[0]["trace"]["id"], new_tr["id"])
+
+        # 5. Integration with Unified Resolver and Hook Runner
+        res_unified = resolve_skill("lỗi docker port đang bị chiếm dụng", unified=True)
+        self.assertIn("proven_traces", res_unified)
+
+        hook_payload = {
+            "lastUserInput": "sửa lỗi docker container port 8080 conflict",
+            "workspacePaths": ["d:/Antigravity/Skill management"]
+        }
+        hook_out = process_hook(hook_payload)
+        msg = hook_out["injectSteps"][0]["ephemeralMessage"]
+        self.assertIn("Proven Execution Memory", msg)
+
 
 if __name__ == "__main__":
     unittest.main()

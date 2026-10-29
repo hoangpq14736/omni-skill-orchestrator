@@ -681,19 +681,27 @@ def resolve_skill(intent_text="", workspace_dir=None, registry=None, top_k=3, af
                 "score": 0, "tier": 1, "tier_name": "L1 Reflex",
                 "recommend_subagent": False, "subagent_role": None, "factors": []
             }
+        try:
+            from experiential_memory import recall_traces
+            proven_traces = recall_traces(intent_text, workspace_dir=workspace_dir, top_k=2)
+        except Exception:
+            proven_traces = []
+
         if unified:
             return {
                 "skills": default_res,
                 "inferred_rules": inferred_rules,
                 "suggested_mcp": inferred_mcp,
                 "cognitive_pre_flight": pre_flight,
-                "tier_assessment": tier_assessment
+                "tier_assessment": tier_assessment,
+                "proven_traces": proven_traces
             }
         for cand in default_res:
             cand["inferred_rules"] = inferred_rules
             cand["suggested_mcp"] = inferred_mcp
             cand["cognitive_pre_flight"] = pre_flight
             cand["tier_assessment"] = tier_assessment
+            cand["proven_traces"] = proven_traces
         return default_res
 
     # Sort descending
@@ -716,13 +724,21 @@ def resolve_skill(intent_text="", workspace_dir=None, registry=None, top_k=3, af
             "recommend_subagent": False, "subagent_role": None, "factors": []
         }
 
+    # Cross-Session Experiential Memory Recall (<0.3ms)
+    try:
+        from experiential_memory import recall_traces
+        proven_traces = recall_traces(intent_text, workspace_dir=workspace_dir, top_k=2)
+    except Exception:
+        proven_traces = []
+
     if unified:
         return {
             "skills": top_skills,
             "inferred_rules": inferred_rules,
             "suggested_mcp": inferred_mcp,
             "cognitive_pre_flight": pre_flight,
-            "tier_assessment": tier_assessment
+            "tier_assessment": tier_assessment,
+            "proven_traces": proven_traces
         }
 
     for cand in top_skills:
@@ -730,6 +746,7 @@ def resolve_skill(intent_text="", workspace_dir=None, registry=None, top_k=3, af
         cand["suggested_mcp"] = inferred_mcp
         cand["cognitive_pre_flight"] = pre_flight
         cand["tier_assessment"] = tier_assessment
+        cand["proven_traces"] = proven_traces
 
     return top_skills
 
