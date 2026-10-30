@@ -636,6 +636,47 @@ class TestOmniSkillOrchestrator(unittest.TestCase):
                 self.assertFalse("bucket" in name, f"Unexpected cloud bucket skill: {name}")
                 self.assertFalse("cloud-storage" in name, f"Unexpected cloud storage skill: {name}")
 
+    def test_28_omni_weekly_reporter(self):
+        """Verify that Omni Weekly Reporter aggregates operational KPIs and experiential growth correctly."""
+        import tempfile
+        from datetime import datetime
+        from reporter import generate_report, format_markdown_report, format_terminal_summary
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_history = os.path.join(tmp_dir, "test_history.jsonl")
+            with open(tmp_history, "w", encoding="utf-8") as f:
+                now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                f.write(json.dumps({
+                    "timestamp": now_str,
+                    "user_input": "xây dựng giao diện web react",
+                    "workspace_dir": "test_workspace",
+                    "top_skill": "modern-web-guidance",
+                    "tier": 1,
+                    "tier_name": "L1 Reflex",
+                    "rules_count": 5,
+                    "mcp_count": 1,
+                    "traces_count": 0
+                }) + "\n")
+
+            # 1. Generate Report
+            rep_data = generate_report(days=7, history_file=tmp_history)
+            self.assertIn("kpi", rep_data)
+            self.assertIn("growth", rep_data)
+            self.assertGreaterEqual(rep_data["kpi"]["total_activations"], 1)
+            self.assertGreater(rep_data["kpi"]["estimated_tokens_saved"], 0)
+
+            # 2. Markdown Formatting
+            md = format_markdown_report(rep_data)
+            self.assertIn("Omni-Kernel v3.0: Báo Cáo Tiến Trình", md)
+            self.assertIn("Executive KPI Dashboard", md)
+            self.assertIn("Những Gì Omni Đã Làm Được", md)
+            self.assertIn("Những Gì Omni Đã Học & Tiến Hóa Được", md)
+
+            # 3. Terminal Summary
+            summary = format_terminal_summary(rep_data)
+            self.assertIn("Omni-Kernel Summary", summary)
+            self.assertIn("Tokens Saved", summary)
+
 
 if __name__ == "__main__":
     unittest.main()

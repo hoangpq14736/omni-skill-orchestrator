@@ -3,7 +3,7 @@
 [![Agent Plugins 1.0.0](https://img.shields.io/badge/Spec-Agent%20Plugins%201.0.0-blue.svg)](https://agent-plugins.org)
 [![Python 3.10+](https://img.shields.io/badge/Python-3.10%2B-green.svg)](https://python.org)
 [![Zero Dependency](https://img.shields.io/badge/Dependencies-0%20(Pure%20Stdlib)-brightgreen.svg)]()
-[![Tests](https://img.shields.io/badge/Tests-27%2F27%20Passing-success.svg)]()
+[![Tests](https://img.shields.io/badge/Tests-28%2F28%20Passing-success.svg)]()
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 [English](README.md) • [Tiếng Việt](README.vi.md)
@@ -128,6 +128,7 @@ python scripts/resolver.py --learn-stats
 | **PreInvocation Hook** | `scripts/hook_runner.py` | Bắt sự kiện trước lượt chat trong <45ms. Tiêm chỉ dẫn Pre-Flight tạm thời (`ephemeralMessage`) không làm phình lịch sử chat. |
 | **Dual-Tier Router** | `scripts/dual_tier.py` | Tính điểm độ phức tạp (0-100). Khóa Quota Guard cho task đơn giản (L1) và chỉ kích hoạt Subagent L2 khi cần thiết. |
 | **Experiential Memory** | `scripts/experiential_memory.py` | Bộ nhớ thực nghiệm đa phiên truy hồi giải pháp code và lệnh CLI đã kiểm chứng trong <0.3ms không cần suy luận lại. |
+| **Progress & Growth Reporter** | `scripts/reporter.py` | Tạo báo cáo tiến trình Markdown & JSON chi tiết các chỉ số KPI, tokens tiết kiệm, top skills và tri thức tích lũy. |
 | **Omni-MCP Virtual Bus** | `scripts/mcp_gateway.py` | Cổng phân luồng & định tuyến MCP JIT. Lập chỉ mục 80+ công cụ qua 25 máy chủ MCP trong <25ms, định tuyến trong <0.3ms và kiểm định tham số. |
 | **Workspace Assimilator** | `scripts/assimilator.py` | Đồng hóa không phá hủy các quy tắc `.cursorrules`, `GEMINI.md`, `CLAUDE.md`, và skills nội bộ của bất kỳ repo nào với ưu tiên cao nhất (`SCOPE_PRIORITY = 40`). |
 | **Unified Resolver** | `scripts/resolver.py` | Lõi phân xử tốc độ sub-millisecond cho Kỹ năng, Quy tắc Miền, Công cụ MCP và Đánh giá Nhận thức. |
@@ -139,16 +140,16 @@ python scripts/resolver.py --learn-stats
 
 ## 🧪 Kiểm thử Tự động
 
-Omni-Kernel duy trì bộ kiểm thử tự động với **tỷ lệ đạt 100% (27/27 tests)**:
+Omni-Kernel duy trì bộ kiểm thử tự động với **tỷ lệ đạt 100% (28/28 tests)**:
 
 ```bash
 python tests/test_engine.py
 ```
 
 ```text
-...........................
+............................
 ----------------------------------------------------------------------
-Ran 27 tests in 1.97s
+Ran 28 tests in 2.02s
 
 OK
 ```

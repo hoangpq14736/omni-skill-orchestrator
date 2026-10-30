@@ -3,7 +3,7 @@
 [![Agent Plugins 1.0.0](https://img.shields.io/badge/Spec-Agent%20Plugins%201.0.0-blue.svg)](https://agent-plugins.org)
 [![Python 3.10+](https://img.shields.io/badge/Python-3.10%2B-green.svg)](https://python.org)
 [![Zero Dependency](https://img.shields.io/badge/Dependencies-0%20(Pure%20Stdlib)-brightgreen.svg)]()
-[![Tests](https://img.shields.io/badge/Tests-27%2F27%20Passing-success.svg)]()
+[![Tests](https://img.shields.io/badge/Tests-28%2F28%20Passing-success.svg)]()
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 [English](README.md) • [Tiếng Việt](README.vi.md)
@@ -128,6 +128,7 @@ python scripts/resolver.py --learn-stats
 | **PreInvocation Hook** | `scripts/hook_runner.py` | Intercepts turns in <45ms. Injects ephemeral cognitive pre-flight directives without bloating `transcript.jsonl`. |
 | **Dual-Tier Router** | `scripts/dual_tier.py` | Computes task complexity (0-100). Enforces Quota Guard on simple queries (L1) and elevates to L2 Strategist only when needed. |
 | **Experiential Memory** | `scripts/experiential_memory.py` | Cross-session memory recalling proven code fixes and verified CLI execution traces in <0.3ms without re-reasoning. |
+| **Progress & Growth Reporter** | `scripts/reporter.py` | Generates executive Markdown & JSON reports detailing operational KPIs, token savings, top skills, and knowledge growth. |
 | **Omni-MCP Virtual Bus** | `scripts/mcp_gateway.py` | Dynamic Tool Multiplexer & JIT Gateway. Indexes 80+ tools across 25 MCP servers, routes queries in <0.3ms, and validates parameters. |
 | **Workspace Assimilator** | `scripts/assimilator.py` | Non-destructively scans any repository for `.cursorrules`, `GEMINI.md`, `CLAUDE.md`, and local skills, prioritizing them with `SCOPE_PRIORITY = 40`. |
 | **Unified Resolver** | `scripts/resolver.py` | Sub-millisecond arbitration engine for Skills, Inferred Rules, MCP Drivers, and Cognitive Assessment. |
@@ -146,9 +147,9 @@ python tests/test_engine.py
 ```
 
 ```text
-...........................
+............................
 ----------------------------------------------------------------------
-Ran 27 tests in 1.97s
+Ran 28 tests in 2.02s
 
 OK
 ```

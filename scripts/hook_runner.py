@@ -19,6 +19,7 @@ if _SCRIPT_DIR not in sys.path:
     sys.path.insert(0, _SCRIPT_DIR)
 
 LAST_ACTIVATION_PATH = os.path.join(_SCRIPT_DIR, "last_activation.json")
+ACTIVATIONS_HISTORY_PATH = os.path.join(_SCRIPT_DIR, "activations_history.jsonl")
 
 # Conversational fillers that do not require full pre-flight injection
 TRIVIAL_FILLERS = {
@@ -178,6 +179,21 @@ def process_hook(payload: dict) -> dict:
         }
         with open(LAST_ACTIVATION_PATH, "w", encoding="utf-8") as f:
             json.dump(record, f, indent=2, ensure_ascii=False)
+
+        # Append compact event to activations_history.jsonl
+        history_entry = {
+            "timestamp": record["timestamp"],
+            "user_input": record["user_input"][:150],
+            "workspace_dir": record["workspace_dir"],
+            "top_skill": record["top_skill"],
+            "tier": record.get("tier_assessment", {}).get("tier", 1),
+            "tier_name": record.get("tier_assessment", {}).get("tier_name", "L1 Reflex"),
+            "rules_count": len(record.get("inferred_rules", [])),
+            "mcp_count": len(record.get("suggested_mcp", [])),
+            "traces_count": len(record.get("proven_traces", []))
+        }
+        with open(ACTIVATIONS_HISTORY_PATH, "a", encoding="utf-8") as hf:
+            hf.write(json.dumps(history_entry, ensure_ascii=False) + "\n")
     except Exception:
         pass
 

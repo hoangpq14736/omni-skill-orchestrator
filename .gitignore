@@ -5,6 +5,8 @@ __pycache__/
 
 # Local dynamic registries and caches
 scripts/registry.json
+scripts/activations_history.jsonl
+reports/
 *.tmp
 *.log
 
