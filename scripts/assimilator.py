@@ -93,6 +93,7 @@ def find_workspace_rules(workspace_dir: str) -> list:
         (".gemini/GEMINI.md", os.path.normpath(os.path.join(workspace_dir, ".gemini", "GEMINI.md"))),
         (".gemini/AGENTS.md", os.path.normpath(os.path.join(workspace_dir, ".gemini", "AGENTS.md"))),
         (".specify/constitution.md", os.path.normpath(os.path.join(workspace_dir, ".specify", "constitution.md"))),
+        (".specify/memory/constitution.md", os.path.normpath(os.path.join(workspace_dir, ".specify", "memory", "constitution.md"))),
         ("constitution.md", os.path.normpath(os.path.join(workspace_dir, "constitution.md"))),
     ]
 
