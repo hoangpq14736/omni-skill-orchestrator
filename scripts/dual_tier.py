@@ -20,7 +20,8 @@ COMPLEXITY_PATTERNS = {
         "keywords": [
             "lập kế hoạch", "lap ke hoach", "kế hoạch tổng thể", "/plan",
             "thiết kế kiến trúc", "thiet ke kien truc", "system architecture",
-            "thiết kế hệ thống", "thiet ke he thong", "roadmap", "spec-driven"
+            "thiết kế hệ thống", "thiet ke he thong", "roadmap", "spec-driven",
+            "spec-driven-development", "speckit", "sdd", "/speckit"
         ],
         "weight": 50,
         "description": "Explicit Strategic Planning"

@@ -677,6 +677,79 @@ class TestOmniSkillOrchestrator(unittest.TestCase):
             self.assertIn("Omni-Kernel Summary", summary)
             self.assertIn("Tokens Saved", summary)
 
+    def test_29_spec_driven_development_skill(self):
+        """Verify GitHub Spec Kit (spec-driven-development) is recognized, scored with high specificity, and elevates complex plans."""
+        root_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+
+        # 1. Skill existence and structure
+        sdd_path = os.path.join(root_dir, "skills", "spec-driven-development", "SKILL.md")
+        self.assertTrue(os.path.exists(sdd_path), f"Missing {sdd_path}")
+        with open(sdd_path, "r", encoding="utf-8") as f:
+            content = f.read()
+        self.assertIn("spec-driven-development", content)
+        self.assertIn("Specification-Driven Development", content)
+        self.assertIn("constitution", content)
+        self.assertIn("converge", content)
+
+        # 2. Intent resolution ranks spec-driven-development at #1
+        res = resolve_skill("lập đặc tả spec-driven-development và quy cách kỹ thuật speckit", workspace_dir=root_dir, top_k=3, registry=self.reg)
+        self.assertTrue(len(res) > 0)
+        top_skill = res[0]["skill"]["name"]
+        self.assertEqual(top_skill, "spec-driven-development")
+
+        # 3. Inferred domain rules attached
+        inferred, _ = infer_domain_rules_and_mcp(["spec-driven-development", "sdd"])
+        self.assertTrue(any("Specification Invariance" in r for r in inferred))
+        self.assertTrue(any("Zero-Drift Convergence" in r for r in inferred))
+
+        # 4. Dual-tier cognitive elevation for complex SDD planning
+        from dual_tier import calculate_task_complexity
+        elev_res = calculate_task_complexity("/speckit-plan thiết kế kiến trúc hệ thống phân tán microservice")
+        self.assertEqual(elev_res["tier"], 2)
+        self.assertTrue(elev_res["recommend_subagent"])
+
+    def test_30_spec_kit_workspace_assimilation(self):
+        """Verify that workspaces with .specify and specs/ hierarchies are automatically assimilated."""
+        import tempfile
+        from assimilator import assimilate_workspace, find_workspace_skills, find_workspace_rules
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            # Create mock Spec Kit directory hierarchy
+            specify_dir = os.path.join(tmp_dir, ".specify")
+            specs_dir = os.path.join(tmp_dir, "specs", "001-payment-gateway")
+            os.makedirs(specify_dir, exist_ok=True)
+            os.makedirs(specs_dir, exist_ok=True)
+
+            # Write constitution and feature spec
+            with open(os.path.join(specify_dir, "constitution.md"), "w", encoding="utf-8") as f:
+                f.write("# Project Constitution\n## Invariant 1: No breaking changes\n")
+            with open(os.path.join(specs_dir, "spec.md"), "w", encoding="utf-8") as f:
+                f.write("# Feature Specification: Payment Gateway\n## User Scenarios\n")
+            with open(os.path.join(specs_dir, "plan.md"), "w", encoding="utf-8") as f:
+                f.write("# Implementation Plan\n## Tech Stack\n")
+
+            # Write local skill in .specify/skills/
+            custom_skill_dir = os.path.join(specify_dir, "skills", "custom-crypto")
+            os.makedirs(custom_skill_dir, exist_ok=True)
+            with open(os.path.join(custom_skill_dir, "SKILL.md"), "w", encoding="utf-8") as f:
+                f.write("---\nname: custom-crypto\ndescription: Cryptographic signature helper\n---\n# Custom Crypto\n")
+
+            # 1. Rules assimilation
+            rules = find_workspace_rules(tmp_dir)
+            rule_sources = [r["source"] for r in rules]
+            self.assertTrue(any(".specify" in s and "constitution" in s for s in rule_sources))
+            self.assertTrue(any("001-payment-gateway" in s and "spec.md" in s for s in rule_sources))
+
+            # 2. Skills assimilation
+            skills = find_workspace_skills(tmp_dir)
+            skill_names = [s["name"] for s in skills]
+            self.assertIn("custom-crypto", skill_names)
+
+            # 3. Full assimilation report
+            assimilated = assimilate_workspace(tmp_dir)
+            self.assertGreaterEqual(assimilated["rules_count"], 2)
+            self.assertGreaterEqual(assimilated["skills_count"], 1)
+
 
 if __name__ == "__main__":
     unittest.main()

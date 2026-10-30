@@ -71,6 +71,13 @@ VI_EN_SYNONYMS = {
     "faq": ["faq", "knowledge", "guide", "manual", "curator"],
     "hướng dẫn sử dụng": ["guide", "manual", "faq", "knowledge"],
     "sop": ["sop", "procedure", "knowledge", "faq"],
+    # Specification-Driven Development & Spec Kit
+    "spec": ["spec", "speckit", "sdd", "specification", "spec-driven-development"],
+    "speckit": ["speckit", "spec-driven-development", "spec", "sdd"],
+    "sdd": ["spec-driven-development", "speckit", "spec", "sdd"],
+    "quy cách": ["spec", "speckit", "specification", "spec-driven-development"],
+    "đặc tả": ["spec", "speckit", "specification", "spec-driven-development"],
+    "constitution": ["constitution", "spec-driven-development", "speckit", "sdd"],
 }
 
 # Domain hierarchy for specificity scoring
@@ -93,6 +100,8 @@ SPECIFICITY_MAP = {
     "gslides": 4, "slides": 3, "gsheets": 4, "sheets": 3, "gdocs": 4, "docs": 2, "gcalendar": 4, "calendar": 3,
     # Accessibility & Quality
     "a11y": 4, "accessibility": 4,
+    # Specification & Architecture (Spec Kit / SDD)
+    "spec-driven-development": 5, "speckit": 5, "sdd": 5, "specify": 4, "specification": 3,
 }
 
 # Scope priority bonus
@@ -143,6 +152,15 @@ DOMAIN_INFERRED_RULES = {
     "cad": [
         "Design for Additive Manufacturing (Check overhangs, wall thickness, manifold geometry)",
         "Parametric Constraint Integrity"
+    ],
+    "spec-driven-development": [
+        "Specification Invariance (Never write code before spec.md, plan.md, and tasks.md are approved)",
+        "Zero-Drift Convergence (Code changes must trace directly to a task in tasks.md; unbuilt scope appends to tasks.md)",
+        "Constitution Precedence (No feature plan may violate principles defined in constitution.md)"
+    ],
+    "sdd": [
+        "Specification Invariance (Never write code before spec.md, plan.md, and tasks.md are approved)",
+        "Zero-Drift Convergence (Code changes must trace directly to a task in tasks.md; unbuilt scope appends to tasks.md)"
     ]
 }
 
@@ -152,11 +170,15 @@ DOMAIN_INFERRED_MCP = {
     "frontend": ["chrome-devtools (Console & Element inspector)"],
     "cad": ["solidcraft (Parametric 3D CAD engine)", "text-to-cad_cad"],
     "cloud": ["gcloud (Cloud platform CLI validation & guardrails)"],
-    "api": ["gemini-api_gemini-api-docs (Upstream live documentation inspection)"]
+    "api": ["gemini-api_gemini-api-docs (Upstream live documentation inspection)"],
+    "spec-driven-development": ["specify_mcp (GitHub Spec Kit virtual MCP bus)"],
+    "sdd": ["specify_mcp (GitHub Spec Kit virtual MCP bus)"]
 }
 
 
 RULE_DOMAIN_ALIASES = {
+    "spec-driven-development": ["spec", "speckit", "sdd", "constitution", "specify", "plan", "tasks", "converge"],
+    "sdd": ["spec", "speckit", "sdd", "specification"],
     "web": ["web", "html", "css", "frontend", "dom", "browser", "lcp", "a11y", "chrome"],
     "frontend": ["frontend", "ui", "react", "vue", "svelte", "nextjs", "component"],
     "python": ["python", "py", "fastapi", "django", "flask"],

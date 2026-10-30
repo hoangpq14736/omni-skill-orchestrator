@@ -99,10 +99,10 @@ def discover_mcp_servers(base_dirs: list = None, extra_workspace_paths: list = N
         except Exception:
             pass
 
-    # 3. Ingest Workspace-level MCP configs (.cursor/mcp.json, mcp.json)
+    # 3. Ingest Workspace-level MCP configs (.cursor/mcp.json, mcp.json, .specify/mcp.json)
     if extra_workspace_paths:
         for ws in extra_workspace_paths:
-            for rel in [".cursor/mcp.json", "mcp.json", ".vscode/mcp.json"]:
+            for rel in [".cursor/mcp.json", "mcp.json", ".vscode/mcp.json", ".specify/mcp.json"]:
                 ws_mcp = os.path.join(ws, rel)
                 if os.path.exists(ws_mcp):
                     try:

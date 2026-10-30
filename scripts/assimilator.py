@@ -38,6 +38,7 @@ def find_workspace_skills(workspace_dir: str) -> list:
         os.path.normpath(os.path.join(workspace_dir, ".agents", "skills", "*", "SKILL.md")),
         os.path.normpath(os.path.join(workspace_dir, ".gemini", "skills", "*", "SKILL.md")),
         os.path.normpath(os.path.join(workspace_dir, "skills", "*", "SKILL.md")),
+        os.path.normpath(os.path.join(workspace_dir, ".specify", "skills", "*", "SKILL.md")),
     ]
 
     seen_paths = set()
@@ -91,6 +92,8 @@ def find_workspace_rules(workspace_dir: str) -> list:
         ("rules/AGENTS.md", os.path.normpath(os.path.join(workspace_dir, "rules", "AGENTS.md"))),
         (".gemini/GEMINI.md", os.path.normpath(os.path.join(workspace_dir, ".gemini", "GEMINI.md"))),
         (".gemini/AGENTS.md", os.path.normpath(os.path.join(workspace_dir, ".gemini", "AGENTS.md"))),
+        (".specify/constitution.md", os.path.normpath(os.path.join(workspace_dir, ".specify", "constitution.md"))),
+        ("constitution.md", os.path.normpath(os.path.join(workspace_dir, "constitution.md"))),
     ]
 
     for label, path in rule_candidates:
@@ -119,6 +122,8 @@ def find_workspace_rules(workspace_dir: str) -> list:
         os.path.normpath(os.path.join(workspace_dir, ".agents", "rules", "*.md")),
         os.path.normpath(os.path.join(workspace_dir, ".gemini", "rules", "*.md")),
         os.path.normpath(os.path.join(workspace_dir, "rules", "*.md")),
+        os.path.normpath(os.path.join(workspace_dir, ".specify", "*.md")),
+        os.path.normpath(os.path.join(workspace_dir, "specs", "*", "*.md")),
     ]
     for pattern in dir_patterns:
         for r_file in glob.glob(pattern):
