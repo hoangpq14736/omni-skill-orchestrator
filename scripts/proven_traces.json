@@ -1,6 +1,6 @@
 {
   "version": "3.0.0",
-  "updated_at": "2026-11-04 02:39:56",
+  "updated_at": "2026-11-04 02:56:01",
   "traces": [
     {
       "id": "4c77aec4ac",
@@ -422,6 +422,35 @@
       "success_count": 2,
       "created_at": "2026-11-04 00:35:00",
       "last_recalled": "2026-11-04 02:30:55"
+    },
+    {
+      "id": "404786cca2",
+      "problem_signature": "dual worker fleet delegation and transparency card badge invariant",
+      "proven_solution": "Always render Omni-Kernel badge at top and delegate code/test gen to groq_worker_cloud and in-place edits to local_worker_mi50",
+      "action_type": "command",
+      "tags": [
+        "worker",
+        "fleet",
+        "transparency",
+        "kernel",
+        "invariant"
+      ],
+      "workspace_context": "",
+      "tokens": [
+        "badge",
+        "kernel",
+        "dual",
+        "card",
+        "fleet",
+        "and",
+        "invariant",
+        "transparency",
+        "delegation",
+        "worker"
+      ],
+      "success_count": 1,
+      "created_at": "2026-11-04 02:56:01",
+      "last_recalled": "2026-11-04 02:56:01"
     }
   ]
 }
