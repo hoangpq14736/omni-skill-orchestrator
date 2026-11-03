@@ -65,7 +65,7 @@ MAX_TIMEOUT = 120.0
 MIN_INFER_WINDOW = 8.0         # FLAW-004: Minimum viable inference window for DeepSeek (seconds)
 MAX_FILE_SIZE = 4.5 * 1024 * 1024  # 4.5 MB context ceiling
 DEFAULT_API_BASE = "https://api.deepseek.com"
-DEFAULT_MODEL = os.environ.get("DEEPSEEK_MODEL", "deepseek-chat")
+DEFAULT_MODEL = os.environ.get("DEEPSEEK_MODEL", "deepseek-flash")
 
 
 class StrictArgumentParser(argparse.ArgumentParser):
@@ -449,6 +449,9 @@ def execute_critic_request(
             "temperature": temperature,
             "response_format": {"type": "json_object"}
         }
+        if "flash" in current_model.lower():
+            payload["reasoning_effort"] = "high"
+            payload["thinking"] = {"type": "enabled"}
 
         payload_bytes = json.dumps(payload).encode("utf-8")
         req = urllib.request.Request(
