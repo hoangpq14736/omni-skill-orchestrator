@@ -78,6 +78,57 @@ VI_EN_SYNONYMS = {
     "quy cách": ["spec", "speckit", "specification", "spec-driven-development"],
     "đặc tả": ["spec", "speckit", "specification", "spec-driven-development"],
     "constitution": ["constitution", "spec-driven-development", "speckit", "sdd"],
+    # Memory & Performance (Leak, OOM, Latency)
+    "rò rỉ": ["leak", "memory-leak", "leakage", "heap"],
+    "rò rỉ bộ nhớ": ["memory-leak", "leak", "heap", "memory"],
+    "bộ nhớ": ["memory", "ram", "heap", "cache"],
+    "tràn bộ nhớ": ["oom", "memory", "leak", "heap", "overflow"],
+    "tải chậm": ["performance", "slow", "lcp", "optimize", "speed"],
+    "hiệu năng": ["performance", "optimize", "optimization", "speed", "tuning"],
+    "tốc độ": ["speed", "performance", "fast", "latency"],
+    # CAD & 3D Printing
+    "in 3d": ["cad", "3d", "stl", "gcode", "slicer", "dfam", "bambu"],
+    "in 3mf": ["bambu", "3mf", "gcode", "slicer"],
+    "cắt laser": ["dxf", "laser", "sendcutsend", "cutting"],
+    "mô hình 3d": ["cad", "3d", "step", "stl", "modeling"],
+    "bản vẽ kỹ thuật": ["drawing", "engineering-drawing", "dxf", "cad", "pdf"],
+    # AI & Generation
+    "mô hình ngôn ngữ": ["llm", "gemini", "model", "ai", "generative"],
+    "sinh văn bản": ["gemini", "generate", "text", "llm", "api"],
+    "sinh hình ảnh": ["image", "generate", "vision", "imagen"],
+    "chuyển giọng nói": ["tts", "speech", "voice", "audio"],
+    "giọng nói": ["voice", "speech", "audio", "tts"],
+    # Calendar & Schedule
+    "lịch": ["calendar", "gcalendar", "schedule", "events"],
+    "lịch họp": ["calendar", "gcalendar", "meeting", "events", "schedule"],
+    "cuộc hẹn": ["calendar", "gcalendar", "schedule", "meeting"],
+    "thời khóa biểu": ["calendar", "schedule", "gcalendar"],
+    # Docs & Sheets
+    "văn bản google": ["gdocs", "docs", "document"],
+    "tài liệu google": ["gdocs", "docs", "document"],
+    "trang tính": ["gsheets", "sheets", "spreadsheet", "excel"],
+    "bảng tính google": ["gsheets", "sheets", "spreadsheet"],
+    "slide": ["gslides", "slides", "presentation"],
+    # Cloud & DevOps
+    "đám mây": ["cloud", "gcp", "gcloud", "aws"],
+    "hạ tầng": ["infrastructure", "terraform", "devops", "cloud", "docker"],
+    "vùng chứa": ["container", "docker", "dockerfile", "kubernetes"],
+    "cụm": ["cluster", "kubernetes", "gke"],
+    "máy ảo": ["vm", "compute", "gce", "vps", "server"],
+    # Database
+    "kho dữ liệu": ["warehouse", "bigquery", "lakehouse", "database"],
+    "bảng dữ liệu": ["table", "schema", "database", "sheets"],
+    # Architecture & Clean Code
+    "kiến trúc": ["architecture", "design", "system-design", "spec"],
+    "tái cấu trúc": ["refactor", "refactoring", "clean", "minimal", "ponytail"],
+    "mã sạch": ["clean-code", "refactor", "ponytail", "quality"],
+    "đơn giản hóa": ["ponytail", "minimal", "clean", "simplify"],
+    "xóa code": ["ponytail", "delete", "cleanup", "prune"],
+    "code lười": ["ponytail", "lazy", "minimal"],
+    # Web & UI
+    "giao diện web": ["frontend", "web", "ui", "css", "html", "modern-web"],
+    "chuẩn web": ["modern-web-guidance", "web", "standards"],
+    "thành phần web": ["web-components", "component", "frontend"],
 }
 
 # Domain hierarchy for specificity scoring

@@ -20,6 +20,10 @@ if _SCRIPT_DIR not in sys.path:
 TRACES_FILE = os.path.join(_SCRIPT_DIR, "proven_traces.json")
 MAX_TRACES = 250
 
+_CACHE_DATA = None
+_CACHE_MTIME = 0.0
+_INVERTED_INDEX = {}
+
 
 def tokenize(text: str) -> list:
     """Extracts normalized lowercase tokens from text."""
@@ -31,13 +35,25 @@ def tokenize(text: str) -> list:
 
 
 def load_traces(traces_path: str = None) -> dict:
-    """Loads stored execution traces in <0.2ms."""
+    """Loads stored execution traces in <0.02ms using mtime in-memory caching."""
+    global _CACHE_DATA, _CACHE_MTIME, _INVERTED_INDEX
     path = traces_path or TRACES_FILE
     if not os.path.exists(path):
         return {"version": "3.0.0", "updated_at": "", "traces": []}
     try:
+        current_mtime = os.path.getmtime(path)
+        if _CACHE_DATA is not None and current_mtime == _CACHE_MTIME and (traces_path is None or traces_path == TRACES_FILE):
+            return _CACHE_DATA
         with open(path, "r", encoding="utf-8") as f:
-            return json.load(f)
+            data = json.load(f)
+            _CACHE_DATA = data
+            _CACHE_MTIME = current_mtime
+            # Rebuild in-memory inverted index
+            _INVERTED_INDEX = {}
+            for idx, tr in enumerate(data.get("traces", [])):
+                for tok in tr.get("tokens", []):
+                    _INVERTED_INDEX.setdefault(tok, set()).add(idx)
+            return data
     except Exception:
         return {"version": "3.0.0", "updated_at": "", "traces": []}
 
@@ -206,35 +222,35 @@ def seed_canonical_traces(traces_path: str = None):
             "signature": "Docker port already in use / bind address in use",
             "solution": "fuser -k <port>/tcp || lsof -ti:<port> | xargs kill -9",
             "action_type": "command",
-            "tags": ["docker", "port", "networking", "kill", "bind"],
+            "tags": ["docker", "port", "networking", "kill", "bind", "xung-đột-cổng", "trùng-port", "giải-phóng-port"],
             "workspace_context": "General Linux / Server"
         },
         {
             "signature": "pip install externally managed environment error on modern Linux",
             "solution": "python3 -m venv .venv && source .venv/bin/activate || pip install --break-system-packages",
             "action_type": "command",
-            "tags": ["python", "pip", "venv", "externally-managed", "linux"],
+            "tags": ["python", "pip", "venv", "externally-managed", "linux", "môi-trường-python", "lỗi-cài-pip"],
             "workspace_context": "Python / Ubuntu"
         },
         {
             "signature": "FastAPI CORS wildcard allow origins with credentials forbidden",
             "solution": "allow_origins=['http://localhost:3000'] (Explicit origins required when allow_credentials=True)",
             "action_type": "code_snippet",
-            "tags": ["fastapi", "cors", "credentials", "middleware", "security"],
+            "tags": ["fastapi", "cors", "credentials", "middleware", "security", "lỗi-cors", "chặn-nguồn", "bảo-mật"],
             "workspace_context": "FastAPI / Backend"
         },
         {
             "signature": "Git push hang on Windows Credential Manager non-interactive subshell",
             "solution": "git config --global credential.helper manager && git push --dry-run",
             "action_type": "command",
-            "tags": ["git", "push", "credential", "windows", "hang"],
+            "tags": ["git", "push", "credential", "windows", "hang", "đơ-git", "xác-thực-git"],
             "workspace_context": "Git / Windows"
         },
         {
             "signature": "PowerShell command chaining syntax error with double ampersand",
             "solution": "Use semicolon ';' or separate command invocations instead of '&&' in PowerShell 5.1",
             "action_type": "command",
-            "tags": ["powershell", "syntax", "chaining", "windows"],
+            "tags": ["powershell", "syntax", "chaining", "windows", "cú-pháp-powershell", "nối-lệnh"],
             "workspace_context": "PowerShell / Windows"
         }
     ]

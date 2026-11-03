@@ -82,15 +82,15 @@ def calculate_quality_score(content, meta):
 
 
 def extract_tokens(text):
-    """Extracts both individual words and hyphenated compounds."""
+    """Extracts both individual words and hyphenated compounds (Unicode / Vietnamese aware)."""
     tokens = set()
     # Individual words
-    words = re.findall(r'[a-zA-Z0-9]+', text.lower())
+    words = re.findall(r'[\w]+', text.lower(), re.UNICODE)
     for w in words:
-        if len(w) >= 2:
+        if len(w) >= 2 and not w.isdigit():
             tokens.add(w)
     # Hyphenated compounds
-    compounds = re.findall(r'[a-zA-Z0-9]+(?:-[a-zA-Z0-9]+)+', text.lower())
+    compounds = re.findall(r'[\w]+(?:-[\w]+)+', text.lower(), re.UNICODE)
     for c in compounds:
         tokens.add(c)
     return list(tokens)

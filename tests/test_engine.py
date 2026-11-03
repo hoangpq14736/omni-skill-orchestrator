@@ -582,7 +582,7 @@ class TestOmniSkillOrchestrator(unittest.TestCase):
         self.assertTrue(os.path.exists(pjson_path))
         with open(pjson_path, "r", encoding="utf-8") as f:
             pj = json.load(f)
-        self.assertEqual(pj.get("version"), "3.0.0")
+        self.assertEqual(pj.get("version"), "4.0.0")
         self.assertEqual(pj.get("name"), "omni-skill-orchestrator")
 
         # 2. hooks.json
@@ -608,7 +608,7 @@ class TestOmniSkillOrchestrator(unittest.TestCase):
         self.assertTrue(os.path.exists(rules_path))
         with open(rules_path, "r", encoding="utf-8") as f:
             rc = f.read()
-        self.assertIn("Omni-Kernel v3.0", rc)
+        self.assertIn("Omni-Kernel v4.0", rc)
 
     def test_27_android_workspace_stack_and_cloud_penalty(self):
         """Verify that Android mobile repos are not misidentified as backend, and cloud skills are penalized."""

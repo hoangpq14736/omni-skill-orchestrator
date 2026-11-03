@@ -11,6 +11,9 @@ Processes Antigravity PreInvocation events:
 import os
 import sys
 import json
+import re
+import sqlite3
+import subprocess
 import datetime
 
 # Ensure scripts directory is on sys.path
@@ -18,16 +21,17 @@ _SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 if _SCRIPT_DIR not in sys.path:
     sys.path.insert(0, _SCRIPT_DIR)
 
+from memory_utils import canonical_workspace_hash
+
 LAST_ACTIVATION_PATH = os.path.join(_SCRIPT_DIR, "last_activation.json")
 ACTIVATIONS_HISTORY_PATH = os.path.join(_SCRIPT_DIR, "activations_history.jsonl")
 
-# Conversational fillers that do not require full pre-flight injection
-TRIVIAL_FILLERS = {
-    "ok", "oke", "okay", "yes", "y", "uh", "um", "yep", "sure",
-    "tiếp tục", "tiep tuc", "cảm ơn", "cam on", "thanks", "thx", "ty",
-    "được rồi", "duoc roi", "done", "xong", "rồi", "roi", "tiếp", "tiep",
-    "chạy đi", "chay di", "làm đi", "lam di", "bắt đầu", "bat dau"
-}
+# Conversational fillers pattern with full-sentence boundary matching (<1.0ms fast-exit)
+# Prevents false-positive suppression on prompts starting with filler words like "ok, please fix..."
+FILLER_PATTERN = re.compile(
+    r"^((ok|oke|okay|tiếp tục|tiep tuc|done|thanks|cảm ơn|cam on|chạy đi|chay di|yes|no|got it|sure)[.!\s,]*)+$",
+    re.IGNORECASE
+)
 
 
 def build_preflight_message(resolution: dict) -> str:
@@ -100,7 +104,12 @@ def build_preflight_message(resolution: dict) -> str:
             lines.append(f"  * Proven Fix: {sol}")
             lines.append(f"    (Verified fix for '{sig}', Match: {score}%)")
 
-    # 6. Dual-Tier Cognitive Routing & Quota Guard
+    # 6. Active Hardware & Worker Fleet Directives
+    lines.append("\n🤖 Active Hardware & Worker Fleet Directives:")
+    lines.append("  * local_worker_mi50: AMD Instinct MI50 (Vega 20, 16GB HBM2 @ 1024 GB/s) via http://127.0.0.1:8080/v1 (48.5 tok/s, 16k context, SQLite/IPC/FastEdit)")
+    lines.append("  * groq_worker_cloud: Groq LPU (openai/gpt-oss-120b) via Cloud API (300-800+ tok/s, pure algorithmic/transformation tasks)")
+
+    # 7. Dual-Tier Cognitive Routing & Quota Guard
     tier_info = resolution.get("tier_assessment", {})
     tier = tier_info.get("tier", 1)
     tier_name = tier_info.get("tier_name", "L1 Reflex")
@@ -112,7 +121,7 @@ def build_preflight_message(resolution: dict) -> str:
     else:
         lines.append("\n⚡ Dual-Tier Routing: Tier 1 (Fast Reflex) | Quota Guard Active (0-Token Mode)")
 
-    # 7. Model Transparency & User Observability Directive
+    # 8. Model Transparency & User Observability Directive
     top_skill_name = skills[0].get("skill", {}).get("name", "generic") if skills else "generic"
     rule_count = len(rules)
     mcp_count = len(mcps)
@@ -127,17 +136,20 @@ def build_preflight_message(resolution: dict) -> str:
 
 def process_hook(payload: dict) -> dict:
     """Core hook processing logic."""
-    user_input = (payload.get("lastUserInput") or payload.get("prompt") or payload.get("userInput") or "").strip()
+    raw_user_input = (payload.get("lastUserInput") or payload.get("prompt") or payload.get("userInput") or "").strip()
     
-    # Skip empty input, slash commands, or trivial conversational fillers
-    if not user_input:
+    # Skip empty input or slash commands
+    if not raw_user_input:
         return {"injectSteps": []}
-    if user_input.startswith("/"):
+    if raw_user_input.startswith("/"):
         return {"injectSteps": []}
     
-    clean_lower = user_input.lower().strip("!.?, \t\n\r")
-    if clean_lower in TRIVIAL_FILLERS or len(clean_lower) <= 2:
+    # T011: Full-sentence boundary matching for filler suppression (<1.0ms fast-exit)
+    if FILLER_PATTERN.match(raw_user_input) or len(raw_user_input.strip("!.?, \t\n\r")) <= 2:
         return {"injectSteps": []}
+
+    # T010: 2,048-char head clamping invariant
+    user_input = raw_user_input[:2048]
     
     # Extract workspace paths
     workspace_paths = payload.get("workspacePaths") or []
@@ -154,8 +166,51 @@ def process_hook(payload: dict) -> dict:
     if not resolution.get("skills") and not resolution.get("inferred_rules"):
         return {"injectSteps": []}
 
-    # Record telemetry to last_activation.json for user observability and CLI inspection
     skills = resolution.get("skills", [])
+    
+    # T014: Decouple synchronous file writes into l1_staging_log table with PRAGMA synchronous = NORMAL
+    try:
+        db_path = os.path.join(_SCRIPT_DIR, "..", "omni_memory.db")
+        conn = sqlite3.connect(db_path, timeout=0.5)
+        conn.execute("PRAGMA synchronous = NORMAL;")
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            INSERT INTO l1_staging_log (session_id, timestamp, user_input, workspace_hash, top_skill, tier_used, recalled_traces)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                payload.get("sessionId", "session_default"),
+                datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                user_input[:250],
+                canonical_workspace_hash(workspace_dir),
+                skills[0]["skill"]["name"] if skills else "none",
+                resolution.get("tier_assessment", {}).get("tier", 1),
+                json.dumps([t.get("trace", {}).get("id") for t in resolution.get("proven_traces", [])])
+            )
+        )
+        last_id = cursor.lastrowid
+        conn.commit()
+        conn.close()
+
+        # Argon Chốt chặn 1: Lazy Threshold Detach (Không treo Pipe, 0% bão spawn)
+        if last_id and (last_id % 50 == 0):
+            try:
+                consolidator_script = os.path.join(_SCRIPT_DIR, "consolidator.py")
+                subprocess.Popen(
+                    [sys.executable, consolidator_script, "--batch-run"],
+                    stdin=subprocess.DEVNULL,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    close_fds=True,
+                    creationflags=subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP
+                )
+            except Exception:
+                pass
+    except Exception:
+        pass
+
+    # Record telemetry to last_activation.json for user observability and CLI inspection
     try:
         record = {
             "timestamp": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),

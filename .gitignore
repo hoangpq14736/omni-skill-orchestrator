@@ -10,6 +10,12 @@ reports/
 *.tmp
 *.log
 
+# Runtime database and WAL files
+omni_memory.db*
+
+# Subagent teamwork runtime logs
+.agents/
+
 # OS generated files
 .DS_Store
 Thumbs.db

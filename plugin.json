@@ -1,8 +1,8 @@
 {
   "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
   "name": "omni-skill-orchestrator",
-  "version": "3.0.0",
-  "description": "Universal Autonomous AI Cognitive Kernel: Dual-Tier Cognitive Routing, PreInvocation lifecycle hook, Cross-Session Experiential Memory, Omni-MCP Virtual Bus, workspace virtualization (Cursor/Claude/Gemini assimilation), unified skill & rule resolution, and self-bootstrapping synthesis.",
+  "version": "4.0.0",
+  "description": "Universal Autonomous AI Cognitive Kernel: Tri-Tier Cognitive Hierarchy (L1 Reflex, L2 Hybrid SQLite-WAL with Dual-Column FTS5 BM25 & Host CPU ONNX Embeddings, L3 Ebbinghaus Background Consolidator), Omni-MCP Virtual Bus, workspace virtualization, and self-bootstrapping synthesis.",
   "author": {
     "name": "Antigravity Engineering Pair Programmer"
   },

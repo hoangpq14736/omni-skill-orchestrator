@@ -1,5 +1,5 @@
 {
-  "timestamp": "2026-10-30 20:04:20",
+  "timestamp": "2026-11-03 14:37:44",
   "user_input": "sửa lỗi docker container port 8080 conflict",
   "workspace_dir": "d:/Antigravity/Skill management",
   "top_skill": "troubleshooting",
@@ -12,18 +12,18 @@
       "arbitration_reason": "Optimal candidate for domain 'troubleshooting'"
     },
     {
-      "name": "memory-leak-debugging",
-      "version": "1.10.1",
-      "source_type": "plugin",
-      "raw_score": 123.5,
-      "arbitration_reason": "Optimal candidate for domain 'memory'"
-    },
-    {
       "name": "dart-fix-runtime-errors",
       "version": "1.0.7",
       "source_type": "plugin",
       "raw_score": 123.5,
       "arbitration_reason": "Optimal candidate for domain 'dart'"
+    },
+    {
+      "name": "memory-leak-debugging",
+      "version": "1.10.1",
+      "source_type": "plugin",
+      "raw_score": 123.5,
+      "arbitration_reason": "Optimal candidate for domain 'memory'"
     }
   ],
   "inferred_rules": [
@@ -34,7 +34,11 @@
     "Standard Library Precedence (Zero-dependency first; YAGNI)",
     "Least Privilege Container (Run as non-root user; minimal base images)",
     "Multi-Stage Build (Zero build tools or secrets left in final production image)",
-    "Workspace Rule (rules/AGENTS.md): Omni-Kernel v3.0 Autonomous Protocol | You have access to the **Omni-Kernel v3.0 Orchestrator**, a unified autonomous intelligence engine governing Skills, Infe"
+    "Workspace Rule (rules/AGENTS.md): Omni-Kernel v4.0 Autonomous Protocol | You have access to the **Omni-Kernel v4.0 Orchestrator**, a unified autonomous intelligence engine governing Skills, Infe",
+    "Workspace Rule (.specify/constitution.md): Omni-Memory v4.0 Constitution | <! | Sync Impact Report:",
+    "Workspace Rule (specs/001-omni-memory-v4/plan.md): Implementation Plan: Omni-Memory v4.0 Production Upgrade | Branch**: `001-omni-memory-v4` | **Date**: 2026-11-02 | **Spec**: [specs/001-omni-memory-v4/spec.md](",
+    "Workspace Rule (specs/001-omni-memory-v4/spec.md): Feature Specification: Omni-Memory v4.0 Production Upgrade | Feature Branch**: `001-omni-memory-v4`",
+    "Workspace Rule (specs/001-omni-memory-v4/tasks.md):  | description: \"Granular, dependency-ordered task breakdown for Omni-Memory v4.0 production upgrade\""
   ],
   "suggested_mcp": [],
   "cognitive_pre_flight": {
@@ -71,34 +75,93 @@
   "proven_traces": [
     {
       "trace": {
+        "id": "e9faab150e",
+        "problem_signature": "Lỗi bind address: cổng 8080 đang bị chiếm dụng bởi docker container, làm sao giải phóng port conflict?",
+        "proven_solution": "Verified fix for Lỗi bind address: cổng 8080 đang bị chiếm dụng bởi docker container, làm sao giải phóng port conflic",
+        "action_type": "command",
+        "tags": [
+          "port conflict",
+          "bind address",
+          "xung dot cong",
+          "loi cong dang dung"
+        ],
+        "workspace_context": "a37db9ae74c8f2eb963e9a967e241af1",
+        "tokens": [
+          "container",
+          "cong",
+          "chiếm",
+          "bởi",
+          "bind",
+          "loi",
+          "đang",
+          "dot",
+          "phóng",
+          "port",
+          "dung",
+          "sao",
+          "cổng",
+          "address",
+          "dang",
+          "conflict",
+          "docker",
+          "giải",
+          "8080",
+          "xung",
+          "bị",
+          "làm",
+          "dụng",
+          "lỗi"
+        ],
+        "success_count": 3,
+        "created_at": "2026-11-03 13:02:46",
+        "last_recalled": "2026-11-03 14:37:44"
+      },
+      "score": 0.76,
+      "matched_tokens": [
+        "container",
+        "conflict",
+        "port",
+        "lỗi",
+        "8080",
+        "docker"
+      ]
+    },
+    {
+      "trace": {
         "id": "4c77aec4ac",
         "problem_signature": "Docker port already in use / bind address in use",
         "proven_solution": "fuser -k <port>/tcp || lsof -ti:<port> | xargs kill -9",
         "action_type": "command",
         "tags": [
-          "docker",
           "port",
-          "networking",
           "kill",
+          "networking",
+          "trùng-port",
+          "giải-phóng-port",
+          "docker",
+          "xung-đột-cổng",
           "bind"
         ],
         "workspace_context": "General Linux / Server",
         "tokens": [
           "in",
-          "bind",
-          "docker",
-          "port",
           "use",
+          "port",
           "kill",
           "networking",
+          "trùng-port",
+          "giải-phóng-port",
+          "docker",
+          "address",
           "already",
-          "address"
+          "xung-đột-cổng",
+          "bind"
         ],
-        "success_count": 1,
+        "success_count": 2,
         "created_at": "2026-10-30 00:38:37",
-        "last_recalled": "2026-10-30 20:04:20"
+        "last_recalled": "2026-11-03 14:37:44"
       },
-      "score": 0.279,
+      "score": 0.318,
       "matched_tokens": [
         "port",
         "docker"
