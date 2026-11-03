@@ -15,6 +15,7 @@ import re
 import sqlite3
 import subprocess
 import datetime
+import hashlib
 
 # Ensure scripts directory is on sys.path
 _SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -67,6 +68,23 @@ def verify_critic_artifact(workspace_dir: str, target_file: str = None) -> tuple
 
     clean_target = os.path.basename(target_file) if target_file else None
 
+    # Locate target_file path on disk if specified for anti-TOCTOU validation
+    target_full_path = None
+    if target_file:
+        if os.path.isabs(target_file) and os.path.isfile(target_file):
+            target_full_path = target_file
+        else:
+            cand = os.path.join(workspace_dir, target_file)
+            if os.path.isfile(cand):
+                target_full_path = cand
+            else:
+                specs_dir = os.path.join(workspace_dir, "specs")
+                if os.path.isdir(specs_dir):
+                    for root, _, files in os.walk(specs_dir):
+                        if clean_target in files:
+                            target_full_path = os.path.join(root, clean_target)
+                            break
+
     for c_path in candidate_paths:
         if not os.path.isfile(c_path):
             continue
@@ -86,6 +104,26 @@ def verify_critic_artifact(workspace_dir: str, target_file: str = None) -> tuple
             if clean_target and clean_meta_target:
                 if clean_target != clean_meta_target and clean_meta_target != "inline_prompt":
                     continue
+
+            # Anti-TOCTOU Freshness & Hash Validation:
+            # If target_file physically exists on disk, ensure it was not modified after review
+            if target_full_path and os.path.isfile(target_full_path):
+                # 1. Modification time check with 1.0s filesystem tolerance
+                target_mtime = os.path.getmtime(target_full_path)
+                review_mtime = os.path.getmtime(c_path)
+                if target_mtime > review_mtime + 1.0:
+                    meta["stale_reason"] = "target_file was modified after audit review generation"
+                    return "STALE_REVIEW", meta
+
+                # 2. Cryptographic input_hash match
+                meta_hash = meta.get("input_hash", "")
+                if meta_hash:
+                    with open(target_full_path, "rb") as tf:
+                        current_hash = hashlib.sha256(tf.read()).hexdigest()
+                    expected_hash = meta_hash.replace("sha256:", "").strip()
+                    if current_hash != expected_hash:
+                        meta["stale_reason"] = "target_file content hash mismatch (modified since audit)"
+                        return "STALE_REVIEW", meta
 
             verdict = meta.get("verdict", "UNREVIEWED")
             return verdict, meta

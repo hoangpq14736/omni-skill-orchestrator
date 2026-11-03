@@ -37,7 +37,7 @@ You have access to the **Omni-Kernel v4.1 Orchestrator**, a unified autonomous i
 
 6. **Architectural Gatekeeper & Council Protocol**:
    - When designing major systems, starting new projects, or drafting RFC/FRC specifications:
-     Execute: `python "d:/Antigravity/Skill management/scripts/consult_critic.py" --file "<path_to_rfc>" --out "<path_to_review>"` (powered by DeepSeek-V4.1-Flash).
+     Execute: `python "C:/Users/vuhuu/.gemini/config/plugins/omni-skill-orchestrator/scripts/consult_critic.py" --file "<path_to_rfc>" --out "<path_to_review>"` (powered by DeepSeek-V4.1-Flash).
      Incorporate independent red-teaming critique and edge-case mitigations into the final blueprint before dispatching implementation tasks to worker fleet.
      Enforces strict POSIX exit codes (0=Approved, 1=Critique generated, 2=Auth/Quota, 3=Timeout/Network, 4=Usage/Config, 5=Strict rejection).
      Strictly prohibits internal self-review ("echo chamber") with duplicate Gemini subagents.

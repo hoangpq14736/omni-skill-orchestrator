@@ -12,7 +12,7 @@
 - **Phiên bản hiện tại**: **Omni-Kernel v4.1.0** (Release FRC-2026-004 & DeepSeek Auditor Upgrade).
 - **Trạng thái Git**: Sẵn sàng đồng bộ với `origin/main` (`hoangpq14736/omni-skill-orchestrator`).
 - **Tổng số Skill trong thư viện**: 507+ skills (Đã index trong `scripts/registry.json`).
-- **Bộ kiểm thử tự động**: **108/108 Tests PASS (100%)** — gồm 31 Engine Tests + 34 Omni-Memory v4 Tests + 43 DeepSeek Auditor Tests.
+- **Bộ kiểm thử tự động**: **110/110 Tests PASS (100%)** — gồm 31 Engine Tests + 34 Omni-Memory v4 Tests + 45 DeepSeek Auditor Tests.
 
 ---
 

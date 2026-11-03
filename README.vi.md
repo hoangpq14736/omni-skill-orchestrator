@@ -3,7 +3,7 @@
 [![Agent Plugins 1.0.0](https://img.shields.io/badge/Spec-Agent%20Plugins%201.0.0-blue.svg)](https://agent-plugins.org)
 [![Python 3.10+](https://img.shields.io/badge/Python-3.10%2B-green.svg)](https://python.org)
 [![Zero Dependency Kernel](https://img.shields.io/badge/Dependencies-0%20(Pure%20Stdlib%20Kernel)-brightgreen.svg)]()
-[![Tests](https://img.shields.io/badge/Tests-108%2F108%20Passing-success.svg)]()
+[![Tests](https://img.shields.io/badge/Tests-110%2F110%20Passing-success.svg)]()
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 [English](README.md) • [Tiếng Việt](README.vi.md)
@@ -111,7 +111,7 @@ Toàn bộ tri thức, giải pháp khắc phục lỗi đã được chứng th
 
 ## 🧪 Kiểm thử Tự động Toàn diện
 
-Omni-Kernel v4.1 duy trì bộ kiểm thử tự động toàn diện với **100% tỷ lệ đỗ (108/108 Tests PASS)**:
+Omni-Kernel v4.1 duy trì bộ kiểm thử tự động toàn diện với **100% tỷ lệ đỗ (110/110 Tests PASS)**:
 
 ```bash
 # 1. Kiểm thử Lõi Động cơ & Router (31 tests)

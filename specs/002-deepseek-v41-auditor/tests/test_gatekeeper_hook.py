@@ -153,6 +153,56 @@ class TestGatekeeperHook(unittest.TestCase):
             self.assertIn("GATEKEEPER VERIFIED", ephemeral)
             self.assertIn("APPROVED", ephemeral)
 
+    def test_verify_critic_artifact_stale_when_target_modified_after_review(self):
+        """TOCTOU Defense: If target_file mtime > review mtime + 1s, return STALE_REVIEW."""
+        with tempfile.TemporaryDirectory() as tmp_ws:
+            review_file = os.path.join(tmp_ws, "CRITIC_REVIEW.md")
+            target_file = os.path.join(tmp_ws, "spec.md")
+
+            # Create review file with older timestamp
+            meta = {
+                "verdict": "APPROVED",
+                "target_file": "spec.md",
+                "input_hash": "sha256:dummy",
+                "model": "deepseek-chat"
+            }
+            with open(review_file, "w", encoding="utf-8") as f:
+                f.write(f"<!-- OMNI_AUDIT_META: {json.dumps(meta)} -->\n# Approved Report")
+            os.utime(review_file, (1000000, 1000000))
+
+            # Create target file with newer timestamp (+10s)
+            with open(target_file, "w", encoding="utf-8") as f:
+                f.write("# Modified spec after review")
+            os.utime(target_file, (1000010, 1000010))
+
+            verdict, parsed_meta = hook_runner.verify_critic_artifact(tmp_ws, target_file="spec.md")
+            self.assertEqual(verdict, "STALE_REVIEW")
+            self.assertIn("stale_reason", parsed_meta)
+
+    def test_verify_critic_artifact_stale_when_hash_mismatches(self):
+        """TOCTOU Defense: If target_file content hash does not match input_hash in review, return STALE_REVIEW."""
+        import hashlib
+        with tempfile.TemporaryDirectory() as tmp_ws:
+            review_file = os.path.join(tmp_ws, "CRITIC_REVIEW.md")
+            target_file = os.path.join(tmp_ws, "spec.md")
+
+            with open(target_file, "w", encoding="utf-8") as f:
+                f.write("# Genuine content")
+
+            # Review with different hash
+            meta = {
+                "verdict": "APPROVED",
+                "target_file": "spec.md",
+                "input_hash": "sha256:badhash12345",
+                "model": "deepseek-chat"
+            }
+            with open(review_file, "w", encoding="utf-8") as f:
+                f.write(f"<!-- OMNI_AUDIT_META: {json.dumps(meta)} -->\n# Approved Report")
+
+            verdict, parsed_meta = hook_runner.verify_critic_artifact(tmp_ws, target_file="spec.md")
+            self.assertEqual(verdict, "STALE_REVIEW")
+            self.assertIn("hash mismatch", parsed_meta.get("stale_reason", ""))
+
 
 if __name__ == "__main__":
     unittest.main()

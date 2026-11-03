@@ -1,5 +1,5 @@
 {
-  "timestamp": "2026-11-04 00:45:59",
+  "timestamp": "2026-11-04 01:21:16",
   "user_input": "sửa lỗi docker container port 8080 conflict",
   "workspace_dir": "d:/Antigravity/Skill management",
   "top_skill": "troubleshooting",
@@ -12,18 +12,18 @@
       "arbitration_reason": "Optimal candidate for domain 'troubleshooting'"
     },
     {
-      "name": "memory-leak-debugging",
-      "version": "1.10.1",
-      "source_type": "plugin",
-      "raw_score": 123.5,
-      "arbitration_reason": "Optimal candidate for domain 'memory'"
-    },
-    {
       "name": "dart-fix-runtime-errors",
       "version": "1.0.7",
       "source_type": "plugin",
       "raw_score": 123.5,
       "arbitration_reason": "Optimal candidate for domain 'dart'"
+    },
+    {
+      "name": "memory-leak-debugging",
+      "version": "1.10.1",
+      "source_type": "plugin",
+      "raw_score": 123.5,
+      "arbitration_reason": "Optimal candidate for domain 'memory'"
     }
   ],
   "inferred_rules": [
@@ -85,42 +85,42 @@
         "proven_solution": "Verified fix for sửa lỗi docker container port 8080 conflict",
         "action_type": "command",
         "tags": [
-          "xung dot cong",
-          "loi cong dang dung",
           "port conflict",
-          "bind address"
+          "xung dot cong",
+          "bind address",
+          "loi cong dang dung"
         ],
         "workspace_context": "a37db9ae74c8f2eb963e9a967e241af1",
         "tokens": [
           "xung",
-          "lỗi",
           "port",
-          "docker",
-          "sửa",
-          "8080",
           "conflict",
-          "loi",
-          "dot",
-          "dung",
           "container",
+          "sửa",
+          "cong",
+          "8080",
+          "dang",
           "bind",
           "address",
-          "cong",
-          "dang"
+          "docker",
+          "dung",
+          "loi",
+          "lỗi",
+          "dot"
         ],
-        "success_count": 2,
+        "success_count": 3,
         "created_at": "2026-11-03 19:11:34",
-        "last_recalled": "2026-11-04 00:45:59"
+        "last_recalled": "2026-11-04 01:21:16"
       },
-      "score": 0.887,
+      "score": 0.937,
       "matched_tokens": [
         "8080",
+        "container",
+        "lỗi",
         "conflict",
         "docker",
-        "container",
         "port",
-        "sửa",
-        "lỗi"
+        "sửa"
       ]
     },
     {
@@ -164,16 +164,16 @@
         ],
         "success_count": 3,
         "created_at": "2026-11-03 13:02:46",
-        "last_recalled": "2026-11-04 00:45:59"
+        "last_recalled": "2026-11-04 01:21:16"
       },
       "score": 0.76,
       "matched_tokens": [
         "8080",
+        "container",
+        "lỗi",
         "conflict",
         "docker",
-        "container",
-        "port",
-        "lỗi"
+        "port"
       ]
     }
   ]

@@ -690,8 +690,11 @@ def main() -> None:
             out_dir = os.path.dirname(out_path)
             if out_dir and not os.path.exists(out_dir):
                 os.makedirs(out_dir, exist_ok=True)
-            with open(out_path, "w", encoding="utf-8") as f:
+            # Atomic file persistence: write to unique temp file then replace atomically
+            temp_out = f"{out_path}.tmp.{os.getpid()}_{random.randint(1000, 9999)}"
+            with open(temp_out, "w", encoding="utf-8") as f:
                 f.write(output_text)
+            os.replace(temp_out, out_path)
             print(f"[+] Đã lưu kết quả phản biện vào: {out_path} (hoàn thành trong {elapsed:.1f}s)")
         except Exception as e:
             sys.stderr.write(f"[!] LỖI GHI FILE: Không thể ghi artifact vào '{args.out}': {e}\n")
