@@ -205,9 +205,10 @@ def build_preflight_message(resolution: dict, gatekeeper_text: str = None, drift
             lines.append(f"    (Verified fix for '{sig}', Match: {score}%)")
 
     # 6. Active Hardware & Worker Fleet Directives
-    lines.append("\n🤖 Active Hardware & Worker Fleet Directives:")
+    lines.append("\n🤖 Active Hardware & Worker Fleet Directives (MANDATORY DELEGATION INVARIANT):")
     lines.append("  * local_worker_mi50: AMD Instinct MI50 (Vega 20, 16GB HBM2 @ 1024 GB/s) via http://127.0.0.1:8080/v1 (48.5 tok/s, 16k context, SQLite/IPC/FastEdit)")
     lines.append("  * groq_worker_cloud: Groq LPU (openai/gpt-oss-120b) via Cloud API (300-800+ tok/s, pure algorithmic/transformation tasks)")
+    lines.append("  * DELEGATION MANDATE: Do NOT generate large code or tests in Cloud context. Delegate code generation and unit tests to 'groq_worker_cloud' (groq_code_gen, groq_generate_tests) and local edits to 'local_worker_mi50' (fast_edit, execute_code_task). Cloud agent acts strictly as Architect & Gatekeeper.")
 
     # 7. Dual-Tier Cognitive Routing & Quota Guard
     tier_info = resolution.get("tier_assessment", {})
@@ -227,8 +228,8 @@ def build_preflight_message(resolution: dict, gatekeeper_text: str = None, drift
     mcp_count = len(mcps)
     trace_count = len(traces)
     trace_badge = f" | Traces: [{trace_count} recalled]" if trace_count > 0 else ""
-    lines.append("\n📢 Transparency Directive:")
-    lines.append("Render a compact 1-line badge at the very beginning of your technical response:")
+    lines.append("\n📢 Transparency Directive (IMMUTABLE INVARIANT):")
+    lines.append("You MUST ALWAYS render the compact 1-line badge at the very first line of EVERY response, regardless of prompt phrasing or brevity:")
     lines.append(f"`⚡ Omni-Kernel: [{tier_name}] | Skill: [{top_skill_name}] | Rules: [{rule_count} active] | MCP: [{mcp_count} suggested]{trace_badge}`")
 
     if drift_text:
