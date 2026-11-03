@@ -65,7 +65,7 @@ MAX_TIMEOUT = 120.0
 MIN_INFER_WINDOW = 8.0         # FLAW-004: Minimum viable inference window for DeepSeek (seconds)
 MAX_FILE_SIZE = 4.5 * 1024 * 1024  # 4.5 MB context ceiling
 DEFAULT_API_BASE = "https://api.deepseek.com"
-DEFAULT_MODEL = "deepseek-chat"
+DEFAULT_MODEL = os.environ.get("DEEPSEEK_MODEL", "deepseek-chat")
 
 
 class StrictArgumentParser(argparse.ArgumentParser):
