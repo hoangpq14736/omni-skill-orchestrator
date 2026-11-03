@@ -3,13 +3,13 @@
 [![Agent Plugins 1.0.0](https://img.shields.io/badge/Spec-Agent%20Plugins%201.0.0-blue.svg)](https://agent-plugins.org)
 [![Python 3.10+](https://img.shields.io/badge/Python-3.10%2B-green.svg)](https://python.org)
 [![Zero Dependency](https://img.shields.io/badge/Dependencies-0%20(Pure%20Stdlib)-brightgreen.svg)]()
-[![Tests](https://img.shields.io/badge/Tests-30%2F30%20Passing-success.svg)]()
+[![Tests](https://img.shields.io/badge/Tests-108%2F108%20Passing-success.svg)]()
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 [English](README.md) • [Tiếng Việt](README.vi.md)
 
 > **Universal Autonomous AI Cognitive Kernel for Google Antigravity, Claude Code, Cursor, and Agentic Frameworks.**  
-> *Features Dual-Tier Cognitive Routing (L1 Reflex vs. L2 Strategist Subagent), PreInvocation Lifecycle Hook Automation, Non-Destructive Workspace Virtualization (Cursor/Claude/Gemini assimilation), JIT Skills, Inferred Rules, Dynamic MCP Tool Drivers, and Self-Bootstrapping Skill Synthesis with zero static token overhead.*
+> *Equipped with Tri-Tier Omni-Memory v4.1 Hierarchy, Independent Architecture Gatekeeper Omni-Auditor (DeepSeek-V4.1-Flash), Dual Worker Fleet (Groq Cloud LPU + Local MI50 GPU), Native GitHub Spec Kit (Spec-Driven Development), and JIT Cognitive Routing with zero static token bloat.*
 
 ---
 
@@ -20,152 +20,113 @@ Traditional AI agent configurations suffer from static context bloat, fragile ha
 | Dimension | Traditional Agents & Static Skills | Omni-Kernel v4.1 |
 |---|---|---|
 | **Context Overhead** | Injects 50–120 skills & static rules into System Prompt (**15,000–25,000 tokens**), hitting context ceilings and degrading model IQ. | **< 300 Tokens at idle!** Ring 0 Invariants stay lean; domain rules, skills, and tools are resolved Just-In-Time (JIT). |
-| **Cognitive Routing** | Single monolithic execution loop. Burns premium model tokens on trivial commands. | **Dual-Tier Cognitive Routing**: L1 Fast Reflex (0-token, <1ms) handles ~85% of tasks; L2 Strategist Subagent activates only for complex architecture/debugging. |
-| **Security & Invariants** | Unreliable: Security constraints only activate if the user explicitly mentions "security". | **Cognitive Entailment Graph**: Automatically infers mandatory security invariants per domain (Web $\rightarrow$ XSS/CORS; DB $\rightarrow$ Parameterized SQL; Docker $\rightarrow$ Non-root user). |
-| **Workspace Portability** | Requires manual reconfiguration for every repository and different IDE conventions. | **Workspace Assimilator**: Non-destructively scans and ingests `.cursorrules`, `GEMINI.md`, `CLAUDE.md`, and local skills in <1ms without touching source files. |
-| **Adaptability & Learning** | Static hardcoded skills. Fails when facing novel frameworks or custom hardware. | **Self-Bootstrapping Synthesizer**: Generates candidate skills, validates them in an isolated subprocess sandbox, and auto-promotes them to the library. |
-| **Speed & Dependencies** | Heavy external vector databases, embedding APIs, or fragile runtime wrappers. | **0 External Dependencies (Pure Python Stdlib)**. Scans 500+ skills in **0.10s**, resolves in **~1ms** at **1,000+ QPS**. |
+| **Long-Term Memory** | Flat JSON files or heavy vector DBs that corrupt easily or introduce unacceptable chat latency (>500ms). | **Tri-Tier Omni-Memory**: Tier 1 RAM Reflex (<0.3ms); Tier 2 Embedded SQLite WAL with Dual-Column FTS5 BM25 + CPU ONNX Embeddings (<15ms); Tier 3 Consolidator with Ebbinghaus decay. |
+| **Architectural Gatekeeping** | Internal subagents create an "Echo Chamber", blindly approving each other's hallucinations. | **Omni-Auditor Gatekeeper (DeepSeek-V4.1-Flash)**: Independent external Red-Teaming Devil's Advocate (1M context), strictly enforced via `hook_runner.py`. |
+| **Code Execution Fleet** | Primary model wastes expensive tokens typing boilerplate, slowing down turnaround. | **Specialized Dual Worker Fleet**: Groq Cloud LPU (300-800+ tok/s for tests & boilerplate) paired with Local AMD Instinct MI50 GPU (100% offline, local fast edit, SQLite WAL). |
+| **Engineering Rigor (SDD)** | Coding without formal specifications, causing architectural regressions and drift. | **Native GitHub Spec Kit Integration**: Standardized 10-phase lifecycle (Constitution, Specify, Clarify, Plan, Tasks, Implement, Converge...). |
+| **Speed & Dependencies** | Relies on external dependencies and fragile runtime wrappers. | **0 External Dependencies (100% Python Standard Library)**. Indexes 500+ skills in **0.12s**, resolves in **~1ms** at **1,000+ QPS**. |
 
 ---
 
-## 🏗️ Architecture
+## 🏗️ System Architecture
 
-Omni-Kernel operates as a deterministic, sub-millisecond **Cognitive Middleware** beneath any LLM:
+Omni-Kernel v4.1 operates with a deterministic layered structure:
 
 ```text
-                      ┌────────────────────────────────────┐
-                      │    USER PROMPT & REPO WORKSPACE   │
-                      └─────────────────┬──────────────────┘
-                                        │
-                         Dual-Channel Autonomous Detection
-                                        │
-              ┌──────────────────────────┴───────────────────────────┐
-              ▼                                                       ▼
-     [CHANNEL 1: STATIC]                                    [CHANNEL 2: DYNAMIC]
-     Workspace Stack Markers                                Semantic Intent & Synonyms
-     (package.json, Cargo.toml,                             (Bilingual EN-VI Mapper,
-      requirements.txt, etc.)                                Task Keywords, Error Traces)
-              │                                                       │
-              └──────────────────────────┬───────────────────────────┘
-                                         ▼
-                      ┌────────────────────────────────────┐
-                      │    COGNITIVE ENTAILMENT GRAPH      │
-                      │  - Inferred Domain Rules (Ring 3)  │
-                      │  - Suggested MCP Tool Drivers      │
-                      │  - 4-Tier Arbitration Matrix       │
-                      │  - Complexity Score (0-100)        │
-                      └─────────────────┬──────────────────┘
-                                         │
-                 ┌───────────────────────┴───────────────────────┐
-                 ▼ (Score < 50)                                  ▼ (Score >= 50)
-      ┌────────────────────────┐                     ┌────────────────────────┐
-      │ TIER 1: L1 FAST REFLEX │                     │ TIER 2: L2 STRATEGIST  │
-      │ ⚡ Quota Guard Locked   │                     │ 🧠 Subagent Delegation │
-      │ 0 Extra Tokens, <50ms  │                     │ 'omni-strategist' live │
-      │ Ephemeral Pre-Flight   │                     │ Deep System 2 Planning │
-      └────────────────────────┘                     └────────────────────────┘
+                      ┌────────────────────────────────────────────────────────┐
+                      │              COMMANDER: ANTIGRAVITY                    │
+                      │             (Planning, UI, Orchestration)              │
+                      └───────────────────────────┬────────────────────────────┘
+                                                  │
+                                                  ▼
+                      ┌────────────────────────────────────────────────────────┐
+                      │          HARD GATEKEEPER HOOK (hook_runner.py)         │
+                      │  - Tier 1: L1 Reflex RAM Cache (<0.3ms, 0 Token)       │
+                      │  - Hard Gating for RFC / SDD / Major Git Diffs         │
+                      └───────────────────────────┬────────────────────────────┘
+                                                  │
+                                                  ▼
+                                  ┌────────────────────────────────┐
+                                  │   DEEPSEEK-V4.1-FLASH AUDITOR  │
+                                  │   (Strict Architecture Critic) │
+                                  │   - 1M Tokens Context Window   │
+                                  │   - Red-Teaming Persona        │
+                                  │   - Zero Echo-Chamber          │
+                                  └───────────────┬────────────────┘
+                                                  │
+                         ┌────────────────────────┴────────────────────────┐
+                         ▼ (Approved)                                      ▼ (Reject / Góp ý)
+            ┌───────────────────────────┐                         ┌──────────────────┐
+            │    DUAL WORKER FLEET      │                         │ Return Critique  │
+            ├─────────────┬─────────────┤                         │ Require Planner  │
+            │  Local MI50 │  Groq Cloud │                         │ Refinement       │
+            │  (AMD 16GB) │  (LPU 120B) │                         └──────────────────┘
+            │ SQLite WAL  │ Test Suite &│
+            │ 100% Offline│ Boilerplate │
+            └─────────────┴─────────────┘
 ```
 
 ---
 
-## 🚀 Performance Benchmarks
+## 🧠 Tri-Tier Omni-Memory v4.1 Architecture
 
-Measured on a standard developer workstation (AMD/Intel, Windows/Linux/macOS):
+All verified solutions, execution traces, and episodic experiences are governed through three tiers:
 
-* **Inverted Indexing:** 501+ skills across 4 sources indexed in **0.10s** (`indexer.py`).
-* **Cache Freshness Check:** Stale cache detection via filesystem `mtime` in **0.42ms** (`is_registry_stale()`).
-* **Intent & Stack Resolution:** Bilingual query to ranked skill candidate in **0.92ms** (`resolver.py`).
-* **Lifecycle Hook Latency:** Process spawn, stdin parse, resolution, and stdout injection in **< 45ms** (`hook_runner.py`).
-* **Throughput:** **1,078 Queries / Second** on a single thread.
-* **Accuracy:** **85.0%** Top-1 Accuracy, **95.0%** Top-3 Accuracy, **100%** Inferred Rule Alignment across 20 technical domains.
+1. **Tier 1 (L1 Ephemeral Reflex - <0.3ms reflex, <25ms hook turnaround)**:
+   - PreInvocation hook written in 100% Python Standard Library in `scripts/hook_runner.py`.
+   - Reads lightning-fast RAM cache from `scripts/proven_traces.json` in <0.02ms.
+   - Logs events asynchronously into `l1_staging_log` in SQLite without blocking user interaction.
 
----
+2. **Tier 2 (L2 Hybrid Episodic Memory - <15ms retrieval)**:
+   - Embedded SQLite database at `omni_memory.db` operating in **WAL mode** (`PRAGMA synchronous = NORMAL;`, `busy_timeout = 5000;`).
+   - Hybrid search combining **Dual-Column FTS5 BM25** (`content_exact` weight 10.0 vs `content_folded` weight 1.0) with **CPU ONNX Embeddings** (`paraphrase-multilingual-MiniLM-L12-v2`, INT8 quantization, 0MB VRAM, ~7ms) via Reciprocal Rank Fusion ($k=20$).
 
-## 📦 Installation
-
-### Method 1: Google Antigravity Plugin (Recommended)
-
-1. Clone this repository into your customizations plugin directory:
-   ```bash
-   git clone https://github.com/hoangpq14736/omni-skill-orchestrator.git ~/.gemini/config/plugins/omni-skill-orchestrator
-   ```
-2. Enable the plugin via Antigravity CLI or UI:
-   ```bash
-   agy plugin enable omni-skill-orchestrator
-   ```
-3. *Zero configuration needed.* The global `PreInvocation` hook automatically activates before each turn.
-
-### Method 2: Standalone CLI & Cross-Platform Middleware
-
-Omni-Kernel runs anywhere Python 3.10+ is installed:
-
-```bash
-# Query optimal skills for an intent
-python scripts/resolver.py --intent "optimize postgresql queries and add migration"
-
-# Query with workspace stack detection
-python scripts/resolver.py --workspace "./my-rust-project" --intent "write integration test"
-
-# Inspect the most recent hook activation (telemetry dashboard)
-python scripts/resolver.py --last
-
-# Reinforce feedback (Self-Learning / Meta-Evolution)
-python scripts/resolver.py --intent "canvas game" --workspace "./my-game" --feedback generative_ui
-
-# Synthesize & sandbox-test a new skill candidate
-python scripts/synthesizer.py --name "modbus-rtu-reader" --desc "Serial protocol reader for industrial sensors" --test "assert True"
-
-# View meta-learning statistics
-python scripts/resolver.py --learn-stats
-```
+3. **Tier 3 (L3 Background Consolidator Daemon)**:
+   - Out-of-band daemon `scripts/consolidator.py` consumes pending staging records.
+   - Auto-promotes multi-hit patterns ($\ge 2$ successes) with automated bilingual tags.
+   - Applies Ebbinghaus stability decay, soft-archives stale records, and manages superseded invariants.
 
 ---
 
-## 🛠️ Included Components
+## 🛠️ Core Module Registry
 
 | Component | Path | Description |
 |---|---|---|
-| **PreInvocation Hook** | `scripts/hook_runner.py` | Intercepts turns in <45ms. Injects ephemeral cognitive pre-flight directives without bloating `transcript.jsonl`. |
-| **Dual-Tier Router** | `scripts/dual_tier.py` | Computes task complexity (0-100). Enforces Quota Guard on simple queries (L1) and elevates to L2 Strategist only when needed. |
-| **Experiential Memory** | `scripts/experiential_memory.py` | Cross-session memory recalling proven code fixes and verified CLI execution traces in <0.3ms without re-reasoning. |
-| **Progress & Growth Reporter** | `scripts/reporter.py` | Generates executive Markdown & JSON reports detailing operational KPIs, token savings, top skills, and knowledge growth. |
-| **Omni-MCP Virtual Bus** | `scripts/mcp_gateway.py` | Dynamic Tool Multiplexer & JIT Gateway. Indexes 80+ tools across 25 MCP servers, routes queries in <0.3ms, and validates parameters. |
-| **Workspace Assimilator** | `scripts/assimilator.py` | Non-destructively scans any repository for `.cursorrules`, `GEMINI.md`, `CLAUDE.md`, and local skills, prioritizing them with `SCOPE_PRIORITY = 40`. |
-| **Unified Resolver** | `scripts/resolver.py` | Sub-millisecond arbitration engine for Skills, Inferred Rules, MCP Drivers, and Cognitive Assessment. |
-| **Skill Synthesizer** | `scripts/synthesizer.py` | Autonomous skill authoring pipeline with subprocess sandbox execution and auto-promotion. |
-| **Inverted Indexer** | `scripts/indexer.py` | High-speed YAML frontmatter parser and inverted index generator. |
-| **Subagent Definition** | `agents/omni-strategist.json` | Dedicated autonomous strategic planning and systematic debugging subagent archetype. |
+| **Omni-Auditor Gatekeeper** | `scripts/consult_critic.py` | 100% stdlib REST client connecting to DeepSeek-V4.1-Flash API for architecture critique (1M context, 30s timeout, jittered backoff). |
+| **Auditor MCP Server** | `d:\Antigravity\DeepSeek Worker\deepseek_worker_mcp.py` | JSON-RPC 2.0 stdio server providing `deepseek_audit_spec` and `deepseek_audit_diff` tools. |
+| **Tri-Tier Memory Engine** | `scripts/memory_engine.py` | Hybrid memory search engine combining FTS5 BM25 + ONNX Dense Vector Embeddings with RRF ranking. |
+| **Memory Consolidator** | `scripts/consolidator.py` | Daemon consuming staging logs, promoting multi-hit knowledge, decaying stability, and compacting SQLite. |
+| **PreInvocation Hook** | `scripts/hook_runner.py` | Deterministic hard gatekeeper & JIT L1 Reflex injector executing in <25ms before every chat turn. |
+| **Spec-Driven Development** | `skills/spec-driven-development/` | Native GitHub Spec Kit SDD engine implementing the 10-phase lifecycle (Constitution, Spec, Plan, Tasks, Implement...). |
+| **Dual-Tier Router** | `scripts/dual_tier.py` | Computes task complexity (0-100), applies Quota Guard to simple tasks, and delegates to L2 Strategist. |
+| **Weekly Reporter** | `scripts/reporter.py` | Generates executive reports detailing operational KPIs, token savings, top skills, and system health. |
+| **Workspace Assimilator** | `scripts/assimilator.py` | Non-destructively scans and ingests `.cursorrules`, `GEMINI.md`, `CLAUDE.md`, and `.specify/` rules. |
+| **Kernel Synchronizer** | `scripts/kernel_sync.py` | Detects and auto-heals Version Drift across Workspace, Plugins, and Library skills. |
 
 ---
 
-## 🧪 Testing
+## 🧪 Comprehensive Automated Testing
 
-Omni-Kernel maintains a comprehensive automated test suite with **100% pass rate**:
+Omni-Kernel v4.1 maintains an exhaustive automated test suite with **100% pass rate (108/108 Tests PASS)**:
 
 ```bash
-python tests/test_engine.py
-```
+# 1. Engine & Router Core Tests (31 tests)
+python -m pytest tests/test_engine.py
 
-```text
-............................
-----------------------------------------------------------------------
-Ran 28 tests in 2.02s
+# 2. Tri-Tier Omni-Memory v4.1 Tests (34 tests)
+python -m pytest specs/001-omni-memory-v4/tests/
 
-OK
-```
-
-Run the pre-release benchmark suite:
-```bash
-python tests/benchmark_suite.py
+# 3. Omni-Auditor DeepSeek Gatekeeper Tests (43 tests)
+python -m pytest specs/002-deepseek-v41-auditor/tests/
 ```
 
 ---
 
-## 🤝 Philosophy: Built on Ponytail
+## 🤝 Engineering Philosophy: Built on Ponytail
 
-Omni-Kernel strictly adheres to the **Ponytail Engineering Philosophy**:
-* **The best code is the code never written.** Smallest complete working diff wins.
-* Zero unnecessary external dependencies (100% Python Standard Library: `os`, `json`, `re`, `time`, `urllib`).
+Omni-Kernel v4.1 strictly adheres to the **Ponytail Engineering Philosophy**:
+* **The best code is the code never written.** The smallest complete working diff wins.
+* Zero external dependencies (100% Python Standard Library: `os`, `sqlite3`, `urllib`, `re`, `json`).
 * Immutability first, fail loudly with diagnostic context, and never silently swallow exceptions.
 * JIT ephemeral context injection over permanent static prompt bloat.
 

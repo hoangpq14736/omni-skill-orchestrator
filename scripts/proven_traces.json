@@ -1,6 +1,6 @@
 {
   "version": "3.0.0",
-  "updated_at": "2026-11-04 00:45:59",
+  "updated_at": "2026-11-04 01:06:55",
   "traces": [
     {
       "id": "4c77aec4ac",
@@ -219,15 +219,15 @@
       "tags": [],
       "workspace_context": "a37db9ae74c8f2eb963e9a967e241af1",
       "tokens": [
-        "api",
-        "viết",
+        "fastapi",
         "và",
         "postgresql",
-        "fastapi"
+        "api",
+        "viết"
       ],
-      "success_count": 2,
+      "success_count": 3,
       "created_at": "2026-11-03 19:11:34",
-      "last_recalled": "2026-11-04 00:45:58"
+      "last_recalled": "2026-11-04 01:06:55"
     },
     {
       "id": "5b8fac15bd",
@@ -235,32 +235,32 @@
       "proven_solution": "Verified fix for triển khai docker compose container",
       "action_type": "command",
       "tags": [
-        "xung dot cong",
-        "loi cong dang dung",
         "port conflict",
-        "bind address"
+        "xung dot cong",
+        "bind address",
+        "loi cong dang dung"
       ],
       "workspace_context": "a37db9ae74c8f2eb963e9a967e241af1",
       "tokens": [
         "xung",
         "port",
-        "khai",
-        "docker",
         "conflict",
-        "loi",
-        "triển",
-        "compose",
-        "dot",
-        "dung",
         "container",
+        "compose",
+        "cong",
+        "dang",
         "bind",
         "address",
-        "cong",
-        "dang"
+        "docker",
+        "dung",
+        "loi",
+        "triển",
+        "khai",
+        "dot"
       ],
-      "success_count": 2,
+      "success_count": 3,
       "created_at": "2026-11-03 19:11:34",
-      "last_recalled": "2026-11-04 00:45:59"
+      "last_recalled": "2026-11-04 01:06:55"
     },
     {
       "id": "245a8e5fef",
@@ -268,32 +268,32 @@
       "proven_solution": "Verified fix for sửa lỗi docker container port 8080 conflict",
       "action_type": "command",
       "tags": [
-        "xung dot cong",
-        "loi cong dang dung",
         "port conflict",
-        "bind address"
+        "xung dot cong",
+        "bind address",
+        "loi cong dang dung"
       ],
       "workspace_context": "a37db9ae74c8f2eb963e9a967e241af1",
       "tokens": [
         "xung",
-        "lỗi",
         "port",
-        "docker",
-        "sửa",
-        "8080",
         "conflict",
-        "loi",
-        "dot",
-        "dung",
         "container",
+        "sửa",
+        "cong",
+        "8080",
+        "dang",
         "bind",
         "address",
-        "cong",
-        "dang"
+        "docker",
+        "dung",
+        "loi",
+        "lỗi",
+        "dot"
       ],
-      "success_count": 2,
+      "success_count": 3,
       "created_at": "2026-11-03 19:11:34",
-      "last_recalled": "2026-11-04 00:45:59"
+      "last_recalled": "2026-11-04 01:06:55"
     },
     {
       "id": "6b2d59d962",
@@ -413,15 +413,15 @@
       "workspace_context": "a37db9ae74c8f2eb963e9a967e241af1",
       "tokens": [
         "vào",
-        "sdd",
-        "tay",
-        "bắt",
         "làm",
-        "spec.md"
+        "spec.md",
+        "bắt",
+        "tay",
+        "sdd"
       ],
-      "success_count": 1,
+      "success_count": 2,
       "created_at": "2026-11-04 00:35:00",
-      "last_recalled": "2026-11-04 00:39:49"
+      "last_recalled": "2026-11-04 01:06:55"
     }
   ]
 }
