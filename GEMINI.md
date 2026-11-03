@@ -6,4 +6,5 @@
 # 4. Bilingual Native Parity: First-class English & Tiếng Việt reasoning and indexing.
 # 5. Dual Worker Fleet: local_worker_mi50 (AMD MI50 16GB) & groq_worker_cloud (Groq LPU).
 # 6. Tri-Tier Memory: L1 Reflex (<0.3ms), L2 WAL FTS5+ONNX (<15ms), L3 Consolidator.
+# 7. Mandatory Transparency: Always render Omni-Kernel badge at the head of every response.
 <!-- OMNI-KERNEL-END -->
