@@ -285,7 +285,7 @@ class TestOmniSkillOrchestrator(unittest.TestCase):
         step = output["injectSteps"][0]
         self.assertIn("ephemeralMessage", step)
         msg = step["ephemeralMessage"]
-        self.assertIn("[OMNI-KERNEL v3.0 PRE-FLIGHT ACTIVATION]", msg)
+        self.assertIn("[OMNI-KERNEL v4.1 PRE-FLIGHT ACTIVATION]", msg)
         self.assertIn("fastapi", msg.lower())
         self.assertIn("Inferred Domain Rules", msg)
         self.assertIn("SQL Injection Immunity", msg)
@@ -582,7 +582,7 @@ class TestOmniSkillOrchestrator(unittest.TestCase):
         self.assertTrue(os.path.exists(pjson_path))
         with open(pjson_path, "r", encoding="utf-8") as f:
             pj = json.load(f)
-        self.assertEqual(pj.get("version"), "4.0.0")
+        self.assertEqual(pj.get("version"), "4.1.0")
         self.assertEqual(pj.get("name"), "omni-skill-orchestrator")
 
         # 2. hooks.json
@@ -608,7 +608,7 @@ class TestOmniSkillOrchestrator(unittest.TestCase):
         self.assertTrue(os.path.exists(rules_path))
         with open(rules_path, "r", encoding="utf-8") as f:
             rc = f.read()
-        self.assertIn("Omni-Kernel v4.0", rc)
+        self.assertIn("Omni-Kernel v4.1", rc)
 
     def test_27_android_workspace_stack_and_cloud_penalty(self):
         """Verify that Android mobile repos are not misidentified as backend, and cloud skills are penalized."""
@@ -667,7 +667,7 @@ class TestOmniSkillOrchestrator(unittest.TestCase):
 
             # 2. Markdown Formatting
             md = format_markdown_report(rep_data)
-            self.assertIn("Omni-Kernel v3.0: Báo Cáo Tiến Trình", md)
+            self.assertIn("Omni-Kernel v4.1: Báo Cáo Tiến Trình", md)
             self.assertIn("Executive KPI Dashboard", md)
             self.assertIn("Những Gì Omni Đã Làm Được", md)
             self.assertIn("Những Gì Omni Đã Học & Tiến Hóa Được", md)
@@ -749,6 +749,20 @@ class TestOmniSkillOrchestrator(unittest.TestCase):
             assimilated = assimilate_workspace(tmp_dir)
             self.assertGreaterEqual(assimilated["rules_count"], 2)
             self.assertGreaterEqual(assimilated["skills_count"], 1)
+
+    def test_31_kernel_skill_synchronizer(self):
+        """Verify that kernel_sync auto-detects and aligns all core skills to Constitution v4.1.0."""
+        root_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+        sys.path.insert(0, os.path.join(root_dir, "scripts"))
+        import kernel_sync
+
+        target_v = kernel_sync.get_canonical_kernel_version(root_dir)
+        self.assertEqual(target_v, "4.1.0")
+
+        report = kernel_sync.audit_kernel_skills(target_v, root_dir)
+        self.assertGreaterEqual(len(report), 3)
+        drifted = [r for r in report if r.get("is_drifted")]
+        self.assertEqual(len(drifted), 0, f"Found drifted skills: {drifted}")
 
 
 if __name__ == "__main__":

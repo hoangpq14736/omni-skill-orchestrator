@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Omni-Kernel v3.0: Omni-MCP Virtual Bus (Dynamic Tool Multiplexer & Gateway)
+Omni-Kernel v4.1: Omni-MCP Virtual Bus (Dynamic Tool Multiplexer & Gateway)
 Discovers, indexes, routes, and validates MCP tools Just-In-Time (JIT) across all installed MCP servers.
 Eliminates static tool schema prompt bloat (saving 1,000+ tokens) and provides sub-millisecond tool routing.
 100% Python Standard Library (Pure Ponytail Invariant, 0 dependencies).

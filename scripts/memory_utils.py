@@ -1,5 +1,5 @@
 """
-Memory Utilities Module for Omni-Memory v4.0.
+Memory Utilities Module for Omni-Memory v4.1.
 Provides diacritic folding, defensive FTS5 query sanitization, and workspace hashing.
 """
 

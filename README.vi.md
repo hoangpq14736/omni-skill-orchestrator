@@ -1,4 +1,4 @@
-# 🧠 Omni-Kernel v3.0: Hệ điều hành Nhận thức Tự trị Toàn năng
+# 🧠 Omni-Kernel v4.1: Hệ điều hành Nhận thức Tự trị Toàn năng
 
 [![Agent Plugins 1.0.0](https://img.shields.io/badge/Spec-Agent%20Plugins%201.0.0-blue.svg)](https://agent-plugins.org)
 [![Python 3.10+](https://img.shields.io/badge/Python-3.10%2B-green.svg)](https://python.org)
@@ -17,7 +17,7 @@
 
 Các hệ thống tác tử AI truyền thống thường đối mặt với vấn đề phình to ngữ cảnh (Context Bloat), luật lệ cứng nhắc, hao tổn hạn ngạch token nhanh chóng và thiếu khả năng thích ứng trước các công nghệ lạ.
 
-| Tiêu chí | Hệ thống Kỹ năng Tĩnh Truyền thống | Omni-Kernel v3.0 |
+| Tiêu chí | Hệ thống Kỹ năng Tĩnh Truyền thống | Omni-Kernel v4.1 |
 |---|---|---|
 | **Dung lượng Ngữ cảnh (Tokens)** | Nhồi 50–120 kỹ năng & quy tắc tĩnh vào System Prompt (**15.000–25.000 tokens**), gây tràn ngữ cảnh và suy giảm IQ của mô hình. | **< 300 Tokens ở trạng thái chờ!** Giữ nguyên tắc Ring 0 tinh gọn; kỹ năng, quy tắc miền và công cụ được phân giải Đúng Lúc (JIT). |
 | **Điều phối Nhận thức (Routing)** | Luồng thực thi đơn khối. Đốt token của mô hình cao cấp cho các câu lệnh đơn giản. | **Điều phối 2 Tầng (Dual-Tier Routing)**: Tầng L1 Fast Reflex (0-token, <1ms) xử lý 85% tác vụ; Tầng L2 Subagent chỉ kích hoạt khi gặp kiến trúc hoặc debug phức tạp. |

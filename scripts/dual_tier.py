@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Omni-Kernel v3.0: Dual-Tier Cognitive Routing & Quota Guard
+Omni-Kernel v4.1: Dual-Tier Cognitive Routing & Quota Guard
 Implements System 1 (Fast Reflex) vs System 2 (Deep Deliberation):
 - Tier 1: Sub-millisecond deterministic resolution for ~85% of daily tasks (0 extra tokens).
 - Tier 2: Threshold-gated elevation to 'omni-strategist' Subagent for complex architectural/debugging tasks.

@@ -1,5 +1,5 @@
 """
-SQLite Schema and DDL Configuration Module for Omni-Memory v4.0.
+SQLite Schema and DDL Configuration Module for Omni-Memory v4.1.
 Provides database initialization, WAL pragmas, dual-column FTS5 virtual tables,
 triggers, and staging tables.
 """

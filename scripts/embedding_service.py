@@ -1,5 +1,5 @@
 """
-Topology A Host CPU Embedding Generator for Omni-Memory v4.0.
+Topology A Host CPU Embedding Generator for Omni-Memory v4.1.
 Provides dense vector generation using intfloat/multilingual-e5-small (INT8 quantized)
 with mandatory asymmetric prefixes ("passage: " for indexing, "query: " for queries).
 Gracefully falls back to None if onnxruntime/fastembed is not installed.

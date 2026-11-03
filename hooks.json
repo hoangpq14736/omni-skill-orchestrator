@@ -1,12 +1,5 @@
 {
   "omni-kernel-gatekeeper": {
-    "SessionStart": [
-      {
-        "type": "command",
-        "command": "python scripts/ensure_bridge.py",
-        "timeout": 3
-      }
-    ],
     "PreInvocation": [
       {
         "type": "command",

@@ -1,5 +1,5 @@
 """
-Backend Client and Inter-Process Mutex Module for Omni-Memory v4.0.
+Backend Client and Inter-Process Mutex Module for Omni-Memory v4.1.
 Provides atomic file locking with 30s stale recovery and socket liveness polling.
 Cross-platform compatible (Windows and Unix) using 100% Python Standard Library.
 """

@@ -938,7 +938,7 @@ def format_resolution_output(results, is_json=False):
         return "No matching resources found."
 
     lines = []
-    lines.append("⚡ OMNI-KERNEL v3.0 UNIFIED RESOURCE RESOLUTION\n" + "=" * 65)
+    lines.append("⚡ OMNI-KERNEL v4.1 UNIFIED RESOURCE RESOLUTION\n" + "=" * 65)
 
     # If results is unified dict
     if isinstance(results, dict):
@@ -985,7 +985,7 @@ def format_resolution_output(results, is_json=False):
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Omni-Kernel v3.0 Unified Resource Resolver CLI")
+    parser = argparse.ArgumentParser(description="Omni-Kernel v4.1 Unified Resource Resolver CLI")
     parser.add_argument("--intent", "-i", type=str, default="", help="User prompt or intent")
     parser.add_argument("--workspace", "-w", type=str, default="", help="Workspace directory")
     parser.add_argument("--json", action="store_true", help="Output in JSON format")

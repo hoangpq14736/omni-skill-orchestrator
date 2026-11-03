@@ -1,5 +1,5 @@
 """
-Tier 3 Background Memory Consolidator for Omni-Memory v4.0.
+Tier 3 Background Memory Consolidator for Omni-Memory v4.1.
 Operates out-of-band to cluster activation logs, promote proven patterns with bilingual tags,
 apply bounded Ebbinghaus decay, manage soft-archiving, and perform WAL maintenance.
 100% Python Standard Library.
@@ -354,7 +354,7 @@ class ConsolidatorEngine:
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Omni-Memory v4.0 Background Consolidator")
+    parser = argparse.ArgumentParser(description="Omni-Memory v4.1 Background Consolidator")
     parser.add_argument("--workspace", default=os.getcwd(), help="Target workspace root path")
     parser.add_argument("--batch-run", action="store_true", help="Run batch consolidation cycle")
     parser.add_argument("--dry-run", action="store_true", help="Simulate consolidation without persisting")

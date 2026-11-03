@@ -1,0 +1,14 @@
+--- a/scripts/worker.py
++++ b/scripts/worker.py
+@@ -10,6 +10,14 @@ def execute_job(job_id, payload):
++    # Hardcoded credential
++    SECRET_TOKEN = "sk-proj-supersecretkey1234567890abcdef"
++    
++    # Raw unparameterized SQL execution
++    db.execute(f"SELECT * FROM jobs WHERE id = '{job_id}'")
++    
++    # Silent exception swallowing
++    try:
++        sync_remote_payload(payload, token=SECRET_TOKEN)
++    except:
++        pass

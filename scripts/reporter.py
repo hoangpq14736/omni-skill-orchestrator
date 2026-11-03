@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Omni-Kernel v3.0: Autonomous Weekly Progress & Intelligence Growth Reporter
+Omni-Kernel v4.1: Autonomous Weekly Progress & Intelligence Growth Reporter
 Generates comprehensive executive reports on what Omni-Kernel accomplished and learned over a fixed time period.
 Analyzes task volume, token savings, tier routing, top skills, enforced invariants, proven execution traces,
 meta-learned affinities, and newly synthesized skills.
@@ -350,9 +350,9 @@ def format_markdown_report(data: dict) -> str:
     recent = data["recent_tasks"]
 
     lines = []
-    lines.append(f"# 📊 Omni-Kernel v3.0: Báo Cáo Tiến Trình & Trí Tuệ Tích Lũy")
+    lines.append(f"# 📊 Omni-Kernel v4.1: Báo Cáo Tiến Trình & Trí Tuệ Tích Lũy")
     lines.append(f"> **Khoảng thời gian khảo sát:** `{p['start_date']}` đến `{p['end_date']}` ({p['days']} ngày qua)  ")
-    lines.append(f"> **Thời điểm xuất báo cáo:** `{p['generated_at']}` | **Hệ điều hành:** `Omni-Kernel v3.0`\n")
+    lines.append(f"> **Thời điểm xuất báo cáo:** `{p['generated_at']}` | **Hệ điều hành:** `Omni-Kernel v4.1`\n")
 
     lines.append("---")
     lines.append("## ⚡ 1. Bảng Chỉ Số Điều Hành Cốt Lõi (Executive KPI Dashboard)\n")

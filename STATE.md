@@ -8,38 +8,53 @@
 ## 📌 1. Thông Tin Không Gian Làm Việc (Workspace)
 - **Tên Workspace**: `Skill management`
 - **Đường dẫn**: `d:\Antigravity\Skill management`
-- **Vai trò**: **Trụ sở Chỉ huy Tối cao của Omni-Kernel v4.0 & Quản lý Thư viện Kỹ năng AI**.
-- **Phiên bản hiện tại**: **Omni-Kernel v4.0.0** (Release FRC-2026-004).
-- **Trạng thái Git**: Đồng bộ với `origin/main` (`hoangpq14736/omni-skill-orchestrator`), commit `3c23ae5`.
-- **Tổng số Skill trong thư viện**: 504+ skills (Đã index trong `scripts/registry.json`).
-- **Bộ kiểm thử tự động**: **64/64 Tests PASS (100%)** — gồm 30 Engine Tests + 34 Omni-Memory v4 Tests, chạy toàn bộ trong 2.97s.
+- **Vai trò**: **Trụ sở Chỉ huy Tối cao của Omni-Kernel v4.1 & Quản lý Thư viện Kỹ năng AI**.
+- **Phiên bản hiện tại**: **Omni-Kernel v4.1.0** (Release FRC-2026-004 & DeepSeek Auditor Upgrade).
+- **Trạng thái Git**: Sẵn sàng đồng bộ với `origin/main` (`hoangpq14736/omni-skill-orchestrator`).
+- **Tổng số Skill trong thư viện**: 507+ skills (Đã index trong `scripts/registry.json`).
+- **Bộ kiểm thử tự động**: **108/108 Tests PASS (100%)** — gồm 31 Engine Tests + 34 Omni-Memory v4 Tests + 43 DeepSeek Auditor Tests.
 
 ---
 
 ## ✅ 2. Những Gì Đã Hoàn Thành (Milestones Reached)
 
-### A. Nâng Cấp Toàn Diện Omni-Kernel v4.0 & Omni-Memory v4.0 Tri-Tier Architecture (FRC-2026-004)
+### A. Giám Sát Kiến Trúc Độc Lập Omni-Auditor v4.1 (DeepSeek-V4.1-Flash Gatekeeper)
+- **Khai tử Echo Chamber & Argon Bridge**:
+  - Triệt tiêu hoàn toàn sự phụ thuộc vào trình duyệt (`consult_argon.py`), thay bằng kết nối Cloud API trực tiếp.
+  - Cấm tiệt hiện tượng buồng vang tự kỷ (Antigravity tự sinh subagent Gemini để tự review chính mình).
+- **Milestone M1 (Core Client - `scripts/consult_critic.py`)**:
+  - Zero-dependency REST client viết bằng 100% Python stdlib (`urllib.request`).
+  - Timeout 30s, Full-jitter exponential backoff, Red-Teaming "Devil's Advocate" persona.
+  - Tích hợp bộ lọc bảo mật Zero-Trust trong `scripts/sanitizer.py` khử sạch API keys trước khi gửi ra ngoài.
+- **Milestone M2 (MCP Server - `deepseek_worker_mcp.py`)**:
+  - Server JSON-RPC 2.0 stdio đặt tại `d:\Antigravity\DeepSeek Worker\deepseek_worker_mcp.py`.
+  - Đăng ký và kích hoạt trong `~/.gemini/config/mcp_config.json` với 2 tool: `deepseek_audit_spec` và `deepseek_audit_diff`.
+- **Milestone M3 (Deterministic Hard Gate - `scripts/hook_runner.py` & Rule 6)**:
+  - Pre-flight hook tự động quét intent RFC/SDD/diff, xác thực 2 trạng thái file hệ thống (freshness & verdict).
+  - Cưỡng chế tiêm chỉ thị `[CRITICAL REVIEW FROM DEEPSEEK-V4.1-FLASH]` hoặc `[CRITICAL ARCHITECTURE GATEKEEPER DIRECTIVE]`.
+  - Chuẩn hóa Điều 6 (Council Protocol) trong `rules/AGENTS.md`.
+- **Milestone M4 (Adversarial Simulation & Cross-Cutting Test Suite)**:
+  - 40/40 task trong bundle `specs/002-deepseek-v41-auditor/tasks.md` hoàn thành 100%.
+  - 43/43 tests PASS: kiểm tra fail-closed khi thiếu key (exit code 2), zero credential leakage, và phát hiện ít nhất 3 lỗi kiến trúc nghiêm trọng trong bài test RFC giả lập.
+
+### B. Nâng Cấp Toàn Diện Omni-Kernel v4.0 & Omni-Memory v4.0 Tri-Tier Architecture (FRC-2026-004)
 - **Tri-Tier Cognitive Memory Hierarchy**:
   - **Tier 1 (L1 Reflex - <25ms Turnaround, <0.3ms Reflex)**: Ephemeral PreInvocation hook trong `scripts/hook_runner.py` viết bằng 100% Python Standard Library (Zero-Dependency), clamp input an toàn 2,048 ký tự, khử filler patterns qua boundary matching, truy vấn in-memory traces trong <0.02ms, lazy batch detaching kích hoạt consolidator trên Windows bằng `DETACHED_PROCESS` không bao giờ treo pipe stdout/stderr.
   - **Tier 2 (L2 Hybrid Memory - <15ms Retrieval)**: Database SQLite nhúng (`omni_memory.db`) kích hoạt WAL mode (`PRAGMA synchronous = NORMAL;`, `busy_timeout = 5000;`, `auto_vacuum = INCREMENTAL;`). Tìm kiếm hỗn hợp kết hợp **Dual-Column FTS5 BM25** (`content_exact` trọng số 10.0 vs `content_folded` trọng số 1.0) song song với **Topology A Host CPU ONNX Embeddings** (`sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2`, 384 dimensions, INT8 quantization, 0 MB GPU VRAM, 7.02ms latency) thông qua thuật toán Reciprocal Rank Fusion ($k=20$).
   - **Tier 3 (L3 Background Consolidator)**: Out-of-band consolidation daemon trong `scripts/consolidator.py`. Tự động tiêu thụ bản ghi từ `l1_staging_log`, thăng hạng multi-hit patterns ($\ge 2$ lần thành công) kèm gán nhãn song ngữ tự động, áp dụng suy giảm ổn định Ebbinghaus, tự động soft-archive các bản ghi hết hạn (`status = 'Archived'`), và quản lý phiên bản quy tắc bất biến (`status = 'Superseded'`, `superseded_by`).
-- **Hội đồng Thẩm định Kiến trúc Gemini 4 Argon (Council Protocol)**:
-  - Cầu nối tích hợp tự động qua `scripts/consult_argon.py` và `scripts/argon_bridge.py`.
-  - Bộ tài liệu lưu trữ: `docs/rfcs/RFC-004-omni-memory-v4.md`, `docs/rfcs/ARGON_CRITIQUE.md`, `docs/rfcs/ARGON_REVIEW.md`.
 - **Thực thi Đặc tả SDD & Kiểm thử Chặt chẽ**:
   - Hoàn thiện 100% 6 Phase trong bundle `specs/001-omni-memory-v4/` (`constitution.md`, `spec.md`, `plan.md`, `tasks.md`).
-  - Đạt 34/34 bài test Omni-Memory + 30/30 bài test Engine = **64/64 bài test tuyệt đối PASS**.
-  - Đã đồng bộ 100% sang global plugin `C:\Users\vuhuu\.gemini\config\plugins\omni-skill-orchestrator\`.
+  - 34/34 bài test Omni-Memory tuyệt đối PASS.
 
-### B. Nền Tảng Kế Thừa Từ Omni-Kernel v3.0
+### C. Nền Tảng Kế Thừa Từ Omni-Kernel v3.0
 - **Dual-Tier Cognitive Routing**: Phân tầng L1 Reflex (<1ms, 0 token cho 85% tác vụ) và L2 Strategist Subagent (`omni-strategist` cho tác vụ lớn).
 - **Virtual MCP Bus**: Tự động định tuyến công cụ MCP động qua `mcp_gateway.py`.
 - **Non-Destructive Workspace Assimilator**: Đồng hóa quy tắc dự án từ `.cursorrules`, `GEMINI.md`, `CLAUDE.md`, `specs/`, `.specify/` trong <1ms.
 - **Bộ Báo Cáo Tiến Trình & Tăng Trưởng Hàng Tuần (Weekly Reporter)**: Script `scripts/reporter.py` tự động tổng hợp KPI, ước tính token tiết kiệm, thống kê tỷ lệ phân tầng L1/L2.
 
-### C. Tích Hợp Toàn Diện GitHub Spec Kit (Spec-Driven Development - SDD)
+### D. Tích Hợp Toàn Diện GitHub Spec Kit (Spec-Driven Development - SDD)
 - Đóng gói toàn bộ 10 nguyên mẫu SDD (`constitution`, `specify`, `clarify`, `plan`, `tasks`, `implement`, `converge`, `checklist`, `analyze`, `taskstoissues`) thành **Global Skill bản địa** tại `skills/spec-driven-development/SKILL.md` và `~/.gemini/config/skills_library/`.
-- Hỗ trợ **cơ chế kép (Hybrid Mode)**: Native Zero-Dependency Mode (AppLocker-safe) và CLI Mode (tương thích `specify 1.2.5`).
+- Hỗ trợ **cơ chế kép (Hybrid Mode)**: Native Zero-Dependency Mode (AppLocker-safe) và CLI Mode (tương thích `specify 1.2.5`). 31/31 bài test Engine tuyệt đối PASS.
 
 ---
 
@@ -53,14 +68,12 @@
 ## 🚀 4. Trạng Thái Hiện Tại & Định Hướng Tiếp Theo (Current & Next)
 
 - **Hiện tại**: 
-  - **Omni-Kernel v4.0** đã chính thức hoàn thiện, nghiệm thu và đẩy lên GitHub (`3c23ae5`).
+  - **Omni-Kernel v4.1 & Omni-Auditor v4.1** đã hoàn thành 100% (cả M1, M2, M3, M4), toàn bộ 108/108 bài test tự động PASS.
   - Hệ thống trí nhớ đa tầng Tri-Tier Omni-Memory v4.0 đang bảo vệ và tối ưu hóa toàn bộ các turn chat trên máy.
-- **Dự án Trọng điểm Tiếp theo**:
-  - **Omni-Auditor v4.1**: Thay thế cơ chế Argon bridge bằng **DeepSeek-V4.1-Flash** làm Giám sát viên Kiến trúc & Cổng kiểm duyệt gắt gao (Strict Architecture Gatekeeper), kết hợp cùng Groq Worker và Local MI50.
-  - Toàn bộ đặc tả, lý do thiết kế và 4 Milestone thực thi đã được ghi nhận tại [`PROJECT_DEEPSEEK_V41_AUDITOR.md`](file:///d:/Antigravity/Skill%20management/PROJECT_DEEPSEEK_V41_AUDITOR.md).
-- **Định hướng chung**:
-  - Khi cần khảo sát, phân tích repo mới hoặc đóng gói kỹ năng mới $\rightarrow$ Làm việc trực tiếp tại workspace này.
-  - Khi bắt tay vào code dự án cụ thể $\rightarrow$ Mở một phiên riêng tại thư mục của dự án đó, dùng lệnh `/speckit-specify` để khởi động dự án theo chuẩn SDD.
+  - DeepSeek-V4.1-Flash đã trực chiến làm Cổng Kiểm duyệt Kiến trúc Độc lập thông qua `deepseek_worker_cloud` MCP và `hook_runner.py`.
+- **Định hướng tiếp theo**:
+  - Khi cần gọi audit live ra server DeepSeek bên ngoài: gán biến môi trường `DEEPSEEK_API_KEY` (mặc định nếu không có key sẽ fail-closed an toàn với exit code 2).
+  - Khi bắt tay vào dự án mới $\rightarrow$ Chạy `/speckit-specify` để tự động kích hoạt vòng đời SDD 10 phase dưới sự giám sát của Omni-Auditor v4.1.
 
 ---
 

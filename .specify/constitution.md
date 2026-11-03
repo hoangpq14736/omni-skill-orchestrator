@@ -1,4 +1,4 @@
-# Omni-Memory v4.0 Constitution
+# Omni-Kernel & Omni-Memory v4.1 Constitution
 
 <!--
   Sync Impact Report:

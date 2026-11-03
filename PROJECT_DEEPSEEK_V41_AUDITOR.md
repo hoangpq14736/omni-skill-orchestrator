@@ -114,17 +114,17 @@ Thay vì thêm thợ gõ code làm loãng hệ thống, **DeepSeek-V4.1-Flash** 
 
 | Milestone | Tác vụ cụ thể | Trạng thái |
 | :--- | :--- | :--- |
-| **M1: Core Client** | Viết `scripts/consult_critic.py` kết nối DeepSeek-V4.1-Flash API + Unit test kiểm tra độ trễ. | ⏳ Chờ phiên mới |
-| **M2: MCP Tooling** | Dựng `d:\Antigravity\DeepSeek Worker\deepseek_worker_mcp.py` và cấu hình `mcp_config.json`. | ⏳ Chờ phiên mới |
-| **M3: Kernel Hard Gate** | Tích hợp cổng chặn cưỡng chế vào `hook_runner.py` và cập nhật `rules/AGENTS.md`. | ⏳ Chờ phiên mới |
-| **M4: Validation Run** | Chạy thử nghiệm 1 bài test giả lập RFC/SDD để xác nhận V4.1-Flash bắt lỗi thành công mà AGY không thể né tránh. | ⏳ Chờ phiên mới |
+| **M1: Core Client** | Viết `scripts/consult_critic.py` kết nối DeepSeek-V4.1-Flash API (Zero-dependency stdlib, Devil's Advocate persona, timeout 30s, backoff full-jitter). | ✅ Hoàn thành 100% (T010-T017) |
+| **M2: MCP Tooling** | Dựng `d:\Antigravity\DeepSeek Worker\deepseek_worker_mcp.py` và cấu hình `mcp_config.json` (`deepseek_audit_spec`, `deepseek_audit_diff`). | ✅ Hoàn thành 100% (T018-T026) |
+| **M3: Kernel Hard Gate** | Tích hợp cổng chặn cưỡng chế vào `hook_runner.py` (2-state verification) và cập nhật Rule 6 trong `rules/AGENTS.md`. | ✅ Hoàn thành 100% (T027-T033) |
+| **M4: Validation Run** | Chạy thử nghiệm giả lập RFC/SDD flawed, kiểm tra fail-closed auth gate, zero credential leakage, 43/43 Pytest pass. | ✅ Hoàn thành 100% (T034-T040) |
 
 ---
 
-## 🚀 6. Hướng dẫn Kích hoạt cho Phiên Mới (Prompt for Next Session)
+## 🚀 6. Hướng dẫn Cho Phiên Mới (Prompt for Next Session)
 
-Khi bạn mở một phiên chat mới tại `d:\Antigravity\Skill management`, hãy sao chép dòng lệnh sau và gửi cho Agent:
+Khi bạn mở một phiên chat mới tại `d:\Antigravity\Skill management`, hệ thống Omni-Kernel v4.1 và Omni-Auditor đã sẵn sàng 100%. Bạn có thể gõ:
 
 ```text
-Hãy đọc file "PROJECT_DEEPSEEK_V41_AUDITOR.md" và bắt đầu triển khai Milestone 1: Viết module scripts/consult_critic.py kết nối API DeepSeek-V4.1-Flash.
+Đọc STATE.md và bắt đầu làm việc.
 ```

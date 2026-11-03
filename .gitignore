@@ -27,3 +27,8 @@ desktop.ini
 scratch/
 *.docx
 *.pdf
+
+# Environment variables and secrets
+.env
+*.env
+

@@ -1,7 +1,7 @@
 """
-Omni-Skill Orchestrator: Automated Upstream Skill Updater
+Omni-Skill Orchestrator: Automated Upstream Skill Updater and Kernel Synchronizer
 Monitors community repos, checks for updates via GitHub API, downloads new versions,
-and triggers automatic re-indexing without breaking local configurations.
+and triggers automatic internal version alignment and re-indexing without breaking local configurations.
 """
 
 import os
@@ -109,7 +109,6 @@ def sync_all(force=False):
     for name, st in status.items():
         if st["has_update"] or force:
             print(f"\n⚡ Upstream changes detected for [{name}] ({st['current_sha']} -> {st['latest_sha']})")
-            # Update manifest record
             if st["full_latest_sha"]:
                 manifest[name]["last_sha"] = st["full_latest_sha"]
                 manifest[name]["last_updated_at"] = int(time.time())
@@ -132,15 +131,34 @@ def sync_all(force=False):
         print("\n✔ All skill repositories are up to date. No action needed.")
 
 
+def sync_kernel(workspace=None):
+    """Invokes internal Kernel Skill Synchronizer to heal version drift."""
+    try:
+        sys.path.insert(0, os.path.dirname(__file__))
+        import kernel_sync
+        target_v = kernel_sync.get_canonical_kernel_version(workspace or os.path.dirname(__file__))
+        print(f"\n🧠 Synchronizing internal Omni-Kernel skills to v{target_v}...")
+        report, fixed = kernel_sync.sync_kernel_skills(target_v, workspace=workspace or os.path.dirname(__file__), auto_reindex=True)
+        for r in report:
+            status = "✔ FIXED" if r.get("fixed") else ("✔ ALIGNED" if not r.get("is_drifted") else "❌ FAILED")
+            print(f"  [{r['scope'].upper():9}] {r['skill_name']} ({r['current_version']} -> v{r['target_version']}) [{status}]")
+        print(f"✔ Kernel skill alignment complete ({fixed} updated).")
+    except Exception as e:
+        print(f"[!] Error running kernel sync: {e}", file=sys.stderr)
+
+
 if __name__ == "__main__":
     import argparse
-    parser = argparse.ArgumentParser(description="Omni-Skill Upstream Updater")
-    parser.add_argument("--check", action="store_true", help="Check for updates without applying")
+    parser = argparse.ArgumentParser(description="Omni-Skill Upstream Updater and Kernel Synchronizer")
+    parser.add_argument("--check", action="store_true", help="Check for upstream updates without applying")
     parser.add_argument("--sync", action="store_true", help="Sync and update skills from upstream")
+    parser.add_argument("--sync-kernel", action="store_true", help="Synchronize internal Omni-Kernel skills to Constitution v4.1.0")
     parser.add_argument("--force", action="store_true", help="Force sync regardless of commit status")
     args = parser.parse_args()
 
-    if args.check:
+    if args.sync_kernel:
+        sync_kernel()
+    elif args.check:
         st = check_updates()
         for k, v in st.items():
             flag = "🚨 UPDATE AVAILABLE" if v["has_update"] else "✔ Up to date"

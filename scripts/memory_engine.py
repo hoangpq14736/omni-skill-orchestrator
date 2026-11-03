@@ -1,5 +1,5 @@
 """
-Tier 2 SQLite Engine and Hybrid Semantic/Episodic Retrieval for Omni-Memory v4.0.
+Tier 2 SQLite Engine and Hybrid Semantic/Episodic Retrieval for Omni-Memory v4.1.
 Provides thread-safe Single-Writer queue, dual-column FTS5 search with runtime guardrails,
 vector similarity evaluation, and Reciprocal Rank Fusion (k=20).
 100% Python Standard Library.

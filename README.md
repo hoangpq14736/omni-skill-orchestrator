@@ -1,4 +1,4 @@
-# 🧠 Omni-Kernel v3.0: Universal Autonomous Cognitive Operating System
+# 🧠 Omni-Kernel v4.1: Universal Autonomous Cognitive Operating System
 
 [![Agent Plugins 1.0.0](https://img.shields.io/badge/Spec-Agent%20Plugins%201.0.0-blue.svg)](https://agent-plugins.org)
 [![Python 3.10+](https://img.shields.io/badge/Python-3.10%2B-green.svg)](https://python.org)
@@ -17,7 +17,7 @@
 
 Traditional AI agent configurations suffer from static context bloat, fragile hardcoded prompts, runaway token consumption, and an inability to adapt to unfamiliar technical stacks.
 
-| Dimension | Traditional Agents & Static Skills | Omni-Kernel v3.0 |
+| Dimension | Traditional Agents & Static Skills | Omni-Kernel v4.1 |
 |---|---|---|
 | **Context Overhead** | Injects 50–120 skills & static rules into System Prompt (**15,000–25,000 tokens**), hitting context ceilings and degrading model IQ. | **< 300 Tokens at idle!** Ring 0 Invariants stay lean; domain rules, skills, and tools are resolved Just-In-Time (JIT). |
 | **Cognitive Routing** | Single monolithic execution loop. Burns premium model tokens on trivial commands. | **Dual-Tier Cognitive Routing**: L1 Fast Reflex (0-token, <1ms) handles ~85% of tasks; L2 Strategist Subagent activates only for complex architecture/debugging. |

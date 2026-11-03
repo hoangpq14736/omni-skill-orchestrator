@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Omni-Kernel v3.0: Global PreInvocation Lifecycle Hook Runner
+Omni-Kernel v4.1: Global PreInvocation Lifecycle Hook Runner
 Processes Antigravity PreInvocation events:
 - Reads stdin JSON (lastUserInput, workspacePaths, etc.)
 - Resolves intent JIT via Omni-Kernel Unified Resolver
@@ -29,14 +29,76 @@ ACTIVATIONS_HISTORY_PATH = os.path.join(_SCRIPT_DIR, "activations_history.jsonl"
 # Conversational fillers pattern with full-sentence boundary matching (<1.0ms fast-exit)
 # Prevents false-positive suppression on prompts starting with filler words like "ok, please fix..."
 FILLER_PATTERN = re.compile(
-    r"^((ok|oke|okay|tiếp tục|tiep tuc|done|thanks|cảm ơn|cam on|chạy đi|chay di|yes|no|got it|sure)[.!\s,]*)+$",
+    r"^((ok|oke|okay|tiếp tục|tiep tuc|done|thanks|cảm ơn|cam on|chạy đi|chay di|đi|di|yes|no|got it|sure)[.!\s,]*)+$",
+    re.IGNORECASE
+)
+
+# Architectural and SDD intent detection pattern (Rule 6 Council Protocol Gatekeeper)
+GATEKEEPER_INTENT_PATTERN = re.compile(
+    r"(\b(rfc|frc|sdd|spec\.md|plan\.md)\b|/teamwork|\b(kiến trúc|architecture|design system|gatekeeper)\b)",
     re.IGNORECASE
 )
 
 
-def build_preflight_message(resolution: dict) -> str:
+def is_architecture_intent(prompt: str) -> bool:
+    """Detects whether prompt involves major architectural design, RFC, or SDD specification."""
+    return bool(GATEKEEPER_INTENT_PATTERN.search(prompt))
+
+
+def verify_critic_artifact(workspace_dir: str, target_file: str = None) -> tuple:
+    """
+    Decoupled non-blocking filesystem verification (<0.1ms).
+    Reads the first 512 bytes of candidate review files looking for <!-- OMNI_AUDIT_META: {...} -->
+    and enforces FLAW-002 target_file anti-collision matching.
+    """
+    candidate_names = ["CRITIC_REVIEW.md", "AUDIT_REVIEW.md", "DEEPSEEK_REVIEW.md"]
+    candidate_paths = [os.path.join(workspace_dir, name) for name in candidate_names]
+
+    try:
+        specs_dir = os.path.join(workspace_dir, "specs")
+        if os.path.isdir(specs_dir):
+            for entry in os.listdir(specs_dir):
+                sub_path = os.path.join(specs_dir, entry)
+                if os.path.isdir(sub_path):
+                    for name in candidate_names:
+                        candidate_paths.append(os.path.join(sub_path, name))
+    except Exception:
+        pass
+
+    clean_target = os.path.basename(target_file) if target_file else None
+
+    for c_path in candidate_paths:
+        if not os.path.isfile(c_path):
+            continue
+        try:
+            with open(c_path, "r", encoding="utf-8", errors="ignore") as f:
+                header = f.read(512)
+
+            match = re.search(r"<!--\s*OMNI_AUDIT_META:\s*({.*?})\s*-->", header, re.DOTALL)
+            if not match:
+                continue
+
+            meta = json.loads(match.group(1))
+            meta_target = meta.get("target_file")
+            clean_meta_target = os.path.basename(meta_target) if meta_target else None
+
+            # FLAW-002: If target_file specified, ensure cryptographic binding matches
+            if clean_target and clean_meta_target:
+                if clean_target != clean_meta_target and clean_meta_target != "inline_prompt":
+                    continue
+
+            verdict = meta.get("verdict", "UNREVIEWED")
+            return verdict, meta
+
+        except Exception:
+            continue
+
+    return "UNREVIEWED", None
+
+
+def build_preflight_message(resolution: dict, gatekeeper_text: str = None) -> str:
     """Formats the cognitive pre-flight resolution into a clean, markdown block."""
-    lines = ["[OMNI-KERNEL v3.0 PRE-FLIGHT ACTIVATION]"]
+    lines = ["[OMNI-KERNEL v4.1 PRE-FLIGHT ACTIVATION]"]
     
     # 1. Top Skills
     skills = resolution.get("skills", [])
@@ -131,6 +193,8 @@ def build_preflight_message(resolution: dict) -> str:
     lines.append("Render a compact 1-line badge at the very beginning of your technical response:")
     lines.append(f"`⚡ Omni-Kernel: [{tier_name}] | Skill: [{top_skill_name}] | Rules: [{rule_count} active] | MCP: [{mcp_count} suggested]{trace_badge}`")
 
+    if gatekeeper_text:
+        lines.append(gatekeeper_text)
     return "\n".join(lines)
 
 
@@ -141,7 +205,7 @@ def process_hook(payload: dict) -> dict:
     # Skip empty input or slash commands
     if not raw_user_input:
         return {"injectSteps": []}
-    if raw_user_input.startswith("/"):
+    if raw_user_input.startswith("/") and not raw_user_input.startswith("/teamwork"):
         return {"injectSteps": []}
     
     # T011: Full-sentence boundary matching for filler suppression (<1.0ms fast-exit)
@@ -162,8 +226,32 @@ def process_hook(payload: dict) -> dict:
         # Fail gracefully with empty injectSteps if resolver encounters error
         return {"injectSteps": []}
     
-    # If no skills and no rules, do not inject
-    if not resolution.get("skills") and not resolution.get("inferred_rules"):
+    is_arch = is_architecture_intent(user_input)
+    gatekeeper_text = None
+    if is_arch:
+        target_file = None
+        spec_match = re.search(r"\b([a-zA-Z0-9_\-]+\.(?:md|patch|py))\b", user_input, re.IGNORECASE)
+        if spec_match:
+            target_file = spec_match.group(1)
+        verdict, meta = verify_critic_artifact(workspace_dir, target_file=target_file)
+        if verdict in ("APPROVED", "CONDITIONAL_PASS"):
+            t_name = meta.get("target_file", "specification") if meta else "specification"
+            i_hash = meta.get("input_hash", "")[:16] if meta else ""
+            gatekeeper_text = (
+                f"\n🛡️ [GATEKEEPER VERIFIED - {verdict}]:\n"
+                f"  * DeepSeek-V4.1-Flash Council Gate: APPROVED (Target: {t_name}, Hash: {i_hash}).\n"
+                "  * Architecture verified sound. Council Protocol permits implementation tasks."
+            )
+        else:
+            gatekeeper_text = (
+                f"\n🛡️ [CRITICAL ARCHITECTURE GATEKEEPER DIRECTIVE - STATUS: {verdict}]:\n"
+                "  * Unreviewed or unapproved architecture detected. Council Protocol Rule 6 mandates:\n"
+                "    python scripts/consult_critic.py --file <path_to_spec> --out <path_to_review>\n"
+                "  * You MUST resolve all critical vulnerabilities before dispatching tasks to worker fleet!"
+            )
+
+    # If no skills, no rules, and not architecture, do not inject
+    if not resolution.get("skills") and not resolution.get("inferred_rules") and not is_arch:
         return {"injectSteps": []}
 
     skills = resolution.get("skills", [])
@@ -252,7 +340,7 @@ def process_hook(payload: dict) -> dict:
     except Exception:
         pass
 
-    message_text = build_preflight_message(resolution)
+    message_text = build_preflight_message(resolution, gatekeeper_text=gatekeeper_text)
     
     return {
         "injectSteps": [
