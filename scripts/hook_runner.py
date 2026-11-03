@@ -134,7 +134,7 @@ def verify_critic_artifact(workspace_dir: str, target_file: str = None) -> tuple
     return "UNREVIEWED", None
 
 
-def build_preflight_message(resolution: dict, gatekeeper_text: str = None) -> str:
+def build_preflight_message(resolution: dict, gatekeeper_text: str = None, drift_text: str = None) -> str:
     """Formats the cognitive pre-flight resolution into a clean, markdown block."""
     lines = ["[OMNI-KERNEL v4.1 PRE-FLIGHT ACTIVATION]"]
     
@@ -231,6 +231,8 @@ def build_preflight_message(resolution: dict, gatekeeper_text: str = None) -> st
     lines.append("Render a compact 1-line badge at the very beginning of your technical response:")
     lines.append(f"`⚡ Omni-Kernel: [{tier_name}] | Skill: [{top_skill_name}] | Rules: [{rule_count} active] | MCP: [{mcp_count} suggested]{trace_badge}`")
 
+    if drift_text:
+        lines.append(drift_text)
     if gatekeeper_text:
         lines.append(gatekeeper_text)
     return "\n".join(lines)
@@ -264,6 +266,28 @@ def process_hook(payload: dict) -> dict:
         # Fail gracefully with empty injectSteps if resolver encounters error
         return {"injectSteps": []}
     
+    # Sub-0.15ms Fast Workspace Rule Drift Sniffer (Session 1: Boundary-Aware Protection)
+    drift_text = None
+    try:
+        from kernel_sync import KernelSynchronizer, KERNEL_VERSION
+        for candidate_rule in [
+            os.path.join(workspace_dir, ".cursorrules"),
+            os.path.join(workspace_dir, "GEMINI.md"),
+            os.path.join(workspace_dir, "rules", "AGENTS.md")
+        ]:
+            if os.path.isfile(candidate_rule):
+                drift_v, is_missing = KernelSynchronizer.detect_workspace_drift(candidate_rule)
+                if drift_v:
+                    fname = os.path.basename(candidate_rule)
+                    drift_text = (
+                        f"\n⚠️ [Omni-Kernel Immune Warning] Workspace file '{fname}' is at v{drift_v} (Current: v{KERNEL_VERSION}).\n"
+                        f"  * JIT v{KERNEL_VERSION} In-Memory Patch active for this session.\n"
+                        f"  * To align on disk: python scripts/kernel_sync.py --fix"
+                    )
+                    break
+    except Exception:
+        pass
+
     is_arch = is_architecture_intent(user_input)
     gatekeeper_text = None
     if is_arch:
@@ -297,27 +321,31 @@ def process_hook(payload: dict) -> dict:
     # T014: Decouple synchronous file writes into l1_staging_log table with PRAGMA synchronous = NORMAL
     try:
         db_path = os.path.join(_SCRIPT_DIR, "..", "omni_memory.db")
-        conn = sqlite3.connect(db_path, timeout=0.5)
-        conn.execute("PRAGMA synchronous = NORMAL;")
-        cursor = conn.cursor()
-        cursor.execute(
-            """
-            INSERT INTO l1_staging_log (session_id, timestamp, user_input, workspace_hash, top_skill, tier_used, recalled_traces)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                payload.get("sessionId", "session_default"),
-                datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                user_input[:250],
-                canonical_workspace_hash(workspace_dir),
-                skills[0]["skill"]["name"] if skills else "none",
-                resolution.get("tier_assessment", {}).get("tier", 1),
-                json.dumps([t.get("trace", {}).get("id") for t in resolution.get("proven_traces", [])])
-            )
-        )
-        last_id = cursor.lastrowid
-        conn.commit()
-        conn.close()
+        conn = sqlite3.connect(db_path, timeout=5.0, isolation_level="IMMEDIATE")
+        last_id = None
+        try:
+            conn.execute("PRAGMA busy_timeout = 5000;")
+            conn.execute("PRAGMA synchronous = NORMAL;")
+            with conn:
+                cursor = conn.cursor()
+                cursor.execute(
+                    """
+                    INSERT INTO l1_staging_log (session_id, timestamp, user_input, workspace_hash, top_skill, tier_used, recalled_traces)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        payload.get("sessionId", "session_default"),
+                        datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                        user_input[:250],
+                        canonical_workspace_hash(workspace_dir),
+                        skills[0]["skill"]["name"] if skills else "none",
+                        resolution.get("tier_assessment", {}).get("tier", 1),
+                        json.dumps([t.get("trace", {}).get("id") for t in resolution.get("proven_traces", [])])
+                    )
+                )
+                last_id = cursor.lastrowid
+        finally:
+            conn.close()
 
         # Argon Chốt chặn 1: Lazy Threshold Detach (Không treo Pipe, 0% bão spawn)
         if last_id and (last_id % 50 == 0):
@@ -378,7 +406,7 @@ def process_hook(payload: dict) -> dict:
     except Exception:
         pass
 
-    message_text = build_preflight_message(resolution, gatekeeper_text=gatekeeper_text)
+    message_text = build_preflight_message(resolution, gatekeeper_text=gatekeeper_text, drift_text=drift_text)
     
     return {
         "injectSteps": [

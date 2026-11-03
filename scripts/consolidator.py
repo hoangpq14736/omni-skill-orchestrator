@@ -166,9 +166,6 @@ class ConsolidatorEngine:
             (batch_size,)
         )
         events = cur.fetchall()
-        if not events:
-            return {"events_processed": 0, "promoted_traces": 0, "soft_archived": 0}
-
         # Step 3: Cluster events by normalized folded query
         clusters: Dict[str, List[Dict[str, Any]]] = {}
         processed_ids = []
@@ -257,53 +254,63 @@ class ConsolidatorEngine:
 
                 promoted_count += 1
 
-        # Step 5: Bounded Ebbinghaus Decay & Soft-Archiving (T027 & T028)
+        # Step 5: Bounded Ebbinghaus Decay & Soft-Archiving (Pure SQLite Padé [0/1] Algebraic Bulk Update)
         soft_archived_count = 0
-        cur.execute(
-            """
-            SELECT memory_id, memory_type, confidence_score, decay_rate, activation_count, last_accessed_at, status
-            FROM workspace_episodic_memory
-            WHERE status = 'Active'
-            """
-        )
-        active_memories = cur.fetchall()
+        if not dry_run:
+            # 1. Native C Bulk Update: Padé [0/1] algebraic decay bounded in [0.0, 1.0]
+            # Time-partitioned to rows older than 1 day to eliminate hot-path contention
+            cur.execute(
+                """
+                UPDATE workspace_episodic_memory
+                SET confidence_score = MIN(1.0, MAX(0.0,
+                    (1.0 + 0.5 * activation_count) /
+                    ((1.0 + 0.5 * activation_count) + decay_rate * MAX(0.0, (julianday('now') - julianday(last_accessed_at))))
+                ))
+                WHERE status = 'Active'
+                  AND memory_type != 'invariant'
+                  AND decay_rate > 0.0
+                  AND last_accessed_at < datetime('now', '-1 day');
+                """
+            )
 
-        for mem in active_memories:
-            m_id, m_type, s0, decay_rate, n_hits, last_acc_str, cur_status = mem
+            # 2. Two-phase soft-archiving: mark Archived when confidence_score < 0.20 past 7-day grace period
+            cur.execute(
+                """
+                UPDATE workspace_episodic_memory
+                SET status = 'Archived'
+                WHERE confidence_score < 0.20
+                  AND status = 'Active'
+                  AND memory_type != 'invariant'
+                  AND last_accessed_at < datetime('now', '-7 days');
+                """
+            )
+            soft_archived_count = cur.rowcount
 
-            # Invariants are permanent (lambda_0 = 0.0)
-            if m_type == "invariant" or decay_rate == 0.0:
-                continue
+            # 3. Two-phase hard-purge: physical deletion after 30 days in Archived state
+            cur.execute(
+                """
+                DELETE FROM workspace_episodic_memory
+                WHERE status = 'Archived'
+                  AND last_accessed_at < datetime('now', '-30 days');
+                """
+            )
+        else:
+            cur.execute(
+                """
+                SELECT count(*) FROM workspace_episodic_memory
+                WHERE confidence_score < 0.20
+                  AND status = 'Active'
+                  AND memory_type != 'invariant'
+                  AND last_accessed_at < datetime('now', '-7 days');
+                """
+            )
+            soft_archived_count = cur.fetchone()[0]
 
-            try:
-                last_dt = datetime.datetime.fromisoformat(last_acc_str.replace("Z", "+00:00"))
-                if last_dt.tzinfo is None:
-                    last_dt = last_dt.replace(tzinfo=datetime.timezone.utc)
-            except Exception:
-                continue
-
-            delta_days = max(0.0, (now_dt - last_dt).total_seconds() / 86400.0)
-            new_st = calculate_ebbinghaus_stability(s0, decay_rate, delta_days, n_hits, alpha=1.5)
-
-            # Soft-archiving policy: S(t) < 0.20 AND delta_days >= 7.0 AND not invariant
-            if new_st < 0.20 and delta_days >= 7.0:
-                if not dry_run:
-                    cur.execute(
-                        "UPDATE workspace_episodic_memory SET status = 'Archived', confidence_score = ? WHERE memory_id = ?",
-                        (new_st, m_id)
-                    )
-                soft_archived_count += 1
-            else:
-                if not dry_run:
-                    cur.execute(
-                        "UPDATE workspace_episodic_memory SET confidence_score = ? WHERE memory_id = ?",
-                        (new_st, m_id)
-                    )
-
-        # Step 6: Mark processed events as consolidated
-        if not dry_run and processed_ids:
-            placeholders = ",".join("?" for _ in processed_ids)
-            cur.execute(f"UPDATE activation_events SET is_consolidated = 1 WHERE event_id IN ({placeholders})", processed_ids)
+        # Step 6: Mark processed events as consolidated & Commit
+        if not dry_run:
+            if processed_ids:
+                placeholders = ",".join("?" for _ in processed_ids)
+                cur.execute(f"UPDATE activation_events SET is_consolidated = 1 WHERE event_id IN ({placeholders})", processed_ids)
             self.conn.commit()
 
             # Lazy Vector Backfill (Argon Chốt chặn 3)
@@ -358,25 +365,42 @@ def main():
     parser.add_argument("--workspace", default=os.getcwd(), help="Target workspace root path")
     parser.add_argument("--batch-run", action="store_true", help="Run batch consolidation cycle")
     parser.add_argument("--dry-run", action="store_true", help="Simulate consolidation without persisting")
+    parser.add_argument("--daemon", action="store_true", help="Run as standing daemon with idle auto-exit")
+    parser.add_argument("--idle-timeout", type=int, default=3600, help="Auto-exit after idle seconds")
     args = parser.parse_args()
 
-    # Argon Chốt chặn 1: Khóa file tuyệt đối, chỉ cho phép 1 tiến trình chạy tại một thời điểm
-    from backend_client import acquire_lock_with_stale_recovery, release_autostart_lock
-    lock_file = os.path.join(_SCRIPT_DIR, "consolidator.lock")
-    if not acquire_lock_with_stale_recovery(lock_file, stale_timeout_sec=60.0):
+    # Lifecycle & Mutual Exclusion Guard (Anti-Zombie & Auto-Healing Lock)
+    from lifecycle_guard import LifecycleGuard
+    guard = LifecycleGuard("omni_consolidator")
+    if not guard.acquire_lock(stale_timeout_sec=60.0):
         print(json.dumps({"status": "skipped", "reason": "Another consolidator is currently running"}))
         return
 
-    try:
-        db_path = os.path.join(_SCRIPT_DIR, "..", "omni_memory.db")
-        conn = init_database(db_path)
+    # Mode A: Monitor parent process (IDE/Agent). Immediate termination on parent exit.
+    guard.start_parent_watcher()
 
+    db_path = os.path.join(_SCRIPT_DIR, "..", "omni_memory.db")
+    conn = init_database(db_path)
+    guard.register_cleanup(lambda: conn.close())
+
+    try:
         engine = ConsolidatorEngine(conn)
-        result = engine.consolidate_batch(batch_size=100, dry_run=args.dry_run)
-        conn.close()
-        print(json.dumps(result, indent=2))
+        if args.daemon:
+            last_activity = time.time()
+            print("🚀 Consolidator daemon started. Monitoring L1 events...")
+            while True:
+                res = engine.consolidate_batch(batch_size=100, dry_run=args.dry_run)
+                if res.get("events_processed", 0) > 0 or res.get("promoted_traces", 0) > 0:
+                    last_activity = time.time()
+                elif time.time() - last_activity > args.idle_timeout:
+                    print(f"✔ Consolidator idle for {args.idle_timeout}s without new events. Exiting cleanly.")
+                    break
+                time.sleep(30)
+        else:
+            result = engine.consolidate_batch(batch_size=100, dry_run=args.dry_run)
+            print(json.dumps(result, indent=2))
     finally:
-        release_autostart_lock(lock_file)
+        guard.stop()
 
 
 if __name__ == "__main__":

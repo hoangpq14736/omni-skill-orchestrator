@@ -102,44 +102,45 @@ class MemorySingleWriter:
         self._worker_thread.start()
 
     def _run_worker(self):
-        conn = sqlite3.connect(self.db_path, timeout=5.0)
-        conn.execute("PRAGMA busy_timeout = 5000;")
-        conn.execute("PRAGMA journal_mode = WAL;")
-        conn.execute("PRAGMA synchronous = NORMAL;")
-        conn.execute("PRAGMA wal_autocheckpoint = 1000;")
+        conn = sqlite3.connect(self.db_path, timeout=5.0, isolation_level=None)
+        try:
+            conn.execute("PRAGMA busy_timeout = 5000;")
+            conn.execute("PRAGMA journal_mode = WAL;")
+            conn.execute("PRAGMA synchronous = NORMAL;")
+            conn.execute("PRAGMA wal_autocheckpoint = 1000;")
 
-        while not self._stop_event.is_set() or not self._queue.empty():
-            try:
-                task = self._queue.get(timeout=0.1)
-            except queue.Empty:
-                continue
-
-            if task is None:
-                self._queue.task_done()
-                break
-
-            sql, params, callback = task
-            try:
-                conn.execute("BEGIN IMMEDIATE;")
-                if isinstance(sql, list):
-                    for stmt, p in sql:
-                        conn.execute(stmt, p)
-                else:
-                    conn.execute(sql, params)
-                conn.commit()
-                if callback:
-                    callback(True, None)
-            except Exception as e:
+            while not self._stop_event.is_set() or not self._queue.empty():
                 try:
-                    conn.rollback()
-                except Exception:
-                    pass
-                if callback:
-                    callback(False, e)
-            finally:
-                self._queue.task_done()
-
-        conn.close()
+                    task = self._queue.get(timeout=0.1)
+                except queue.Empty:
+                    continue
+    
+                if task is None:
+                    self._queue.task_done()
+                    break
+    
+                sql, params, callback = task
+                try:
+                    conn.execute("BEGIN IMMEDIATE;")
+                    if isinstance(sql, list):
+                        for stmt, p in sql:
+                            conn.execute(stmt, p)
+                    else:
+                        conn.execute(sql, params)
+                    conn.commit()
+                    if callback:
+                        callback(True, None)
+                except Exception as e:
+                    try:
+                        conn.rollback()
+                    except Exception:
+                        pass
+                    if callback:
+                        callback(False, e)
+                finally:
+                    self._queue.task_done()
+        finally:
+            conn.close()
 
     def enqueue_write(self, sql: Any, params: tuple = (), callback: Optional[Any] = None):
         """Enqueue a write task (single statement or list of statements)."""

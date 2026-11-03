@@ -3,6 +3,8 @@
 Omni-Kernel v4.1: Workspace Virtualization Engine (Assimilator)
 Automatically discovers and assimilates local skills, rules, and conventions from ANY workspace.
 Completely non-destructive and read-only on the target repository.
+Equipped with AssimilatorGuard (Zero-Trust Sanitizer) to block Indirect Prompt Injections (IPI).
+
 Supported formats:
 - Skills: .agents/skills/*/SKILL.md, .gemini/skills/*/SKILL.md, skills/*/SKILL.md
 - Rules: GEMINI.md, CLAUDE.md, AGENTS.md, .cursorrules, .cursor/rules/*.mdc, .agents/rules/*.md
@@ -21,6 +23,7 @@ if _SCRIPT_DIR not in sys.path:
     sys.path.insert(0, _SCRIPT_DIR)
 
 from indexer import parse_frontmatter, extract_tokens
+from workspace_sanitizer import AssimilatorGuard, is_trusted_workspace
 
 
 def get_workspace_hash(workspace_dir: str) -> str:
@@ -28,8 +31,8 @@ def get_workspace_hash(workspace_dir: str) -> str:
     return hashlib.md5(os.path.abspath(workspace_dir).lower().encode("utf-8")).hexdigest()[:12]
 
 
-def find_workspace_skills(workspace_dir: str) -> list:
-    """Scans for local skill definitions in standard agent folders."""
+def find_workspace_skills(workspace_dir: str, is_trusted: bool = False, blocked_list: list = None) -> list:
+    """Scans for local skill definitions in standard agent folders with IPI guard."""
     discovered = []
     if not workspace_dir or not os.path.exists(workspace_dir):
         return discovered
@@ -52,6 +55,17 @@ def find_workspace_skills(workspace_dir: str) -> list:
             try:
                 with open(norm_path, "r", encoding="utf-8", errors="ignore") as f:
                     content = f.read()
+
+                # Zero-Trust Check for Untrusted Workspaces
+                if not is_trusted:
+                    is_safe, violations = AssimilatorGuard.scan_rules(content, norm_path)
+                    if not is_safe:
+                        skill_name = os.path.basename(os.path.dirname(norm_path))
+                        print(f"⚠️ [Assimilator] BLOCKED SKILL '{skill_name}': {violations}", file=sys.stderr)
+                        if blocked_list is not None:
+                            blocked_list.append({"file": norm_path, "type": "skill", "name": skill_name, "violations": violations})
+                        continue
+
                 fm, _ = parse_frontmatter(content)
                 name = fm.get("name") or os.path.basename(os.path.dirname(norm_path))
                 desc = fm.get("description", "")
@@ -76,8 +90,8 @@ def find_workspace_skills(workspace_dir: str) -> list:
     return discovered
 
 
-def find_workspace_rules(workspace_dir: str) -> list:
-    """Scans and extracts local rules from Cursor, Claude, Gemini, or Antigravity files."""
+def find_workspace_rules(workspace_dir: str, is_trusted: bool = False, blocked_list: list = None) -> list:
+    """Scans and extracts local rules from Cursor, Claude, Gemini, or Antigravity files with IPI guard."""
     rules = []
     if not workspace_dir or not os.path.exists(workspace_dir):
         return rules
@@ -106,6 +120,16 @@ def find_workspace_rules(workspace_dir: str) -> list:
             try:
                 with open(path, "r", encoding="utf-8", errors="ignore") as f:
                     content = f.read(4000)  # Read first 4KB
+
+                # Zero-Trust Check for Untrusted Workspaces
+                if not is_trusted:
+                    is_safe, violations = AssimilatorGuard.scan_rules(content, label)
+                    if not is_safe:
+                        print(f"⚠️ [Assimilator] BLOCKED RULE '{label}': {violations}", file=sys.stderr)
+                        if blocked_list is not None:
+                            blocked_list.append({"file": norm, "type": "rule", "source": label, "violations": violations})
+                        continue
+
                 first_lines = [line.strip("# -*").strip() for line in content.splitlines() if line.strip() and not line.strip().startswith("```")][:3]
                 summary = " | ".join(first_lines) if first_lines else "Custom repository rules"
                 rules.append({
@@ -137,6 +161,16 @@ def find_workspace_rules(workspace_dir: str) -> list:
                     rel_name = os.path.relpath(r_file, workspace_dir).replace("\\", "/")
                     with open(r_file, "r", encoding="utf-8", errors="ignore") as f:
                         content = f.read(2000)
+
+                    # Zero-Trust Check for Untrusted Workspaces
+                    if not is_trusted:
+                        is_safe, violations = AssimilatorGuard.scan_rules(content, rel_name)
+                        if not is_safe:
+                            print(f"⚠️ [Assimilator] BLOCKED RULE '{rel_name}': {violations}", file=sys.stderr)
+                            if blocked_list is not None:
+                                blocked_list.append({"file": norm, "type": "rule", "source": rel_name, "violations": violations})
+                            continue
+
                     first_lines = [line.strip("# -*").strip() for line in content.splitlines() if line.strip() and not line.strip().startswith("```")][:2]
                     summary = " | ".join(first_lines) if first_lines else "Directory rule"
                     rules.append({
@@ -152,17 +186,22 @@ def find_workspace_rules(workspace_dir: str) -> list:
 
 
 def assimilate_workspace(workspace_dir: str) -> dict:
-    """Extracts all workspace-level skills and rules non-destructively."""
+    """Extracts all workspace-level skills and rules non-destructively, guarded by AssimilatorGuard."""
     start = time.time()
-    skills = find_workspace_skills(workspace_dir)
-    rules = find_workspace_rules(workspace_dir)
+    is_trusted = is_trusted_workspace(workspace_dir)
+    blocked = []
+    skills = find_workspace_skills(workspace_dir, is_trusted=is_trusted, blocked_list=blocked)
+    rules = find_workspace_rules(workspace_dir, is_trusted=is_trusted, blocked_list=blocked)
     elapsed = (time.time() - start) * 1000
 
     return {
         "workspace_dir": os.path.abspath(workspace_dir).replace("\\", "/"),
         "workspace_hash": get_workspace_hash(workspace_dir),
+        "is_trusted": is_trusted,
         "skills_count": len(skills),
         "rules_count": len(rules),
+        "blocked_count": len(blocked),
+        "blocked": blocked,
         "skills": skills,
         "rules": rules,
         "elapsed_ms": round(elapsed, 2)

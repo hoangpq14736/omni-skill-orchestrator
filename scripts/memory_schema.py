@@ -156,12 +156,12 @@ CREATE INDEX IF NOT EXISTS idx_event_pending ON activation_events(is_consolidate
 """
 
 
-def init_database(db_path: str = "omni_memory.db") -> sqlite3.Connection:
+def init_database(db_path: str = "omni_memory.db", isolation_level: Optional[str] = "IMMEDIATE") -> sqlite3.Connection:
     """
     Initialize SQLite database with production pragmas, tables, triggers, and indexes.
     Returns the active database connection.
     """
-    conn = sqlite3.connect(db_path, timeout=5.0)
+    conn = sqlite3.connect(db_path, timeout=5.0, isolation_level=isolation_level)
     conn.row_factory = sqlite3.Row
 
     # Verify auto_vacuum mode (2 == INCREMENTAL).

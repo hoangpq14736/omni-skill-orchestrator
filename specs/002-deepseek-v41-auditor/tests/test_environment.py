@@ -19,22 +19,18 @@ class TestAuditorEnvironment(unittest.TestCase):
 
     def test_zero_third_party_dependencies_in_core_scripts(self):
         """Principle II & Ponytail Simplicity: scripts/consult_critic.py and scripts/sanitizer.py must use 100% stdlib."""
-        prohibited_packages = [
-            "requests",
-            "httpx",
-            "aiohttp",
-            "urllib3",
-            "pydantic",
-            "openai",
-            "deepseek",
-            "grpc"
+        import os
+        import subprocess
+        cmd = [
+            sys.executable, "-c",
+            "import consult_critic, sanitizer, sys; "
+            "prohibited = ['requests', 'httpx', 'aiohttp', 'urllib3', 'pydantic', 'openai', 'deepseek', 'grpc']; "
+            "loaded = [p for p in prohibited if p in sys.modules]; "
+            "sys.exit(len(loaded))"
         ]
-        for pkg in prohibited_packages:
-            self.assertNotIn(
-                pkg,
-                sys.modules,
-                f"Prohibited package '{pkg}' must not be loaded into standard process context."
-            )
+        scripts_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "..", "scripts"))
+        res = subprocess.run(cmd, cwd=scripts_dir)
+        self.assertEqual(res.returncode, 0, "Core auditor scripts must not load any third party networking libraries.")
 
     def test_standard_library_modules_available(self):
         """Verify availability of essential standard library modules for REST client."""
