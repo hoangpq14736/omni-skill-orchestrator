@@ -1,95 +1,88 @@
-# 🧠 Omni-Kernel v4.1: Hệ Điều Hành Nhận Thức Tự Trị Toàn Năng
+# 🧠 Omni-Skill Orchestrator v4.1: Lớp Điều Phối Kỹ Năng JIT & Bộ Nhớ Phản Xạ Cho Tác Tử AI
 
 [![Agent Plugins 1.0.0](https://img.shields.io/badge/Spec-Agent%20Plugins%201.0.0-blue.svg)](https://agent-plugins.org)
 [![Python 3.10+](https://img.shields.io/badge/Python-3.10%2B-green.svg)](https://python.org)
-[![Zero Dependency Kernel](https://img.shields.io/badge/Dependencies-0%20(Pure%20Stdlib%20Kernel)-brightgreen.svg)]()
+[![Zero Dependency Kernel](https://img.shields.io/badge/Dependencies-0%20(Lõi%20Stdlib%20Thuần%20Túy)-brightgreen.svg)]()
 [![Tests](https://img.shields.io/badge/Tests-277%2F277%20Passing-success.svg)]()
 [![Council Gate](https://img.shields.io/badge/DeepSeek%20Council%20Gate-APPROVED-brightgreen.svg)](docs/audits/omni_kernel_v41_final_approved_verdict.md)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 [English](README.md) • [Tiếng Việt](README.vi.md)
 
-> **Hệ điều hành Nhận thức AI Tự trị Toàn năng dành cho Google Antigravity, Claude Code, Cursor và các Framework Tác tử AI.**  
-> *Trang bị Kiến trúc Trí nhớ Đa tầng Tri-Tier Omni-Memory v4.1, Giám sát viên Kiến trúc Độc lập Omni-Auditor (DeepSeek-V4.1-Flash), Hạm đội Tác nhân Không đồng nhất (Groq Cloud LPU + Local MI50 GPU), Bộ quy trình Đặc tả Kỹ thuật Chuẩn GitHub Spec Kit (SDD), và Điều phối Kỹ năng JIT với 0 static token lãng phí.*
+> **Lớp điều phối (harness) siêu nhẹ, vận hành cục bộ (local-first) dành cho Google Antigravity, Claude Code, Cursor và các AI coding agent.**  
+> *Trang bị cơ chế định tuyến kỹ năng JIT tốc độ dưới mili-giây, kiến trúc trí nhớ đa tầng Tri-Tier (SQLite WAL + Dual-Column FTS5 BM25 + CPU ONNX Embeddings 384 chiều), tự động tổng hợp kỹ năng mới, và cổng kiểm duyệt kiến trúc độc lập — với 0 token tĩnh lãng phí.*
 
 ---
 
-## ⚡ Tại sao cần Omni-Kernel?
+## 🎯 Omni-Skill Orchestrator thực sự là gì?
 
-Các hệ thống tác tử AI truyền thống thường đối mặt với vấn đề phình to ngữ cảnh (Context Bloat), luật lệ cứng nhắc, hao tổn hạn ngạch token nhanh chóng và thiếu khả năng thích ứng trước các công nghệ lạ.
+Omni **không phải** là một tác tử lập trình độc lập (như Aider, OpenCode hay OpenHands). Thay vào đó, Omni đóng vai trò là một **lớp điều phối và phản xạ tiền khởi chạy (Pre-flight Harness & Reflex Layer)** bọc ngoài mô hình chính của bạn (như Antigravity, Claude Code):
 
-| Tiêu chí | Hệ thống Kỹ năng Tĩnh Truyền thống | Omni-Kernel v4.1 |
+1. **Chống phình to ngữ cảnh (Context Bloat)**: Thay vì nhồi 50–120 kỹ năng và quy tắc tĩnh vào System Prompt (ngốn 15.000–25.000 token mỗi lượt chat), Omni quét hơn 500 kỹ năng trong **0.12s** và chỉ tiêm 1–3 kỹ năng/quy tắc phù hợp nhất **Đúng Lúc (Just-In-Time, < 300 token)**.
+2. **Trí nhớ phản xạ đa phiên (Cross-Session Memory)**: Tự động ghi nhận các giải pháp sửa lỗi thành công, đánh chỉ mục vào SQLite WAL với FTS5 BM25 và vector đặc ONNX CPU 384 chiều (`intfloat/multilingual-e5-small`), gợi ý lại giải pháp đã kiểm chứng trong **< 0.3ms**.
+3. **Tự tổng hợp kỹ năng mới (Autonomous Skill Synthesis)**: Khi đối mặt với công nghệ lạ chưa có trong thư viện, Omni tự soạn thảo file `SKILL.md`, quét tĩnh AST kiểm tra an toàn, chạy kiểm thử trong sandbox và tự động thăng hạng vào thư viện cục bộ.
+4. **Cổng kiểm duyệt kiến trúc độc lập (Council Gate)**: Phát hiện các yêu cầu thiết kế hệ thống lớn (RFC, SDD, diff lớn) trong `< 25ms` logic nội bộ (`~120ms` toàn tiến trình subprocess trên Windows) mà không làm tắc nghẽn phiên chat bằng các lệnh gọi mạng đồng bộ.
+
+---
+
+## ⚡ So sánh Tính năng Thực tế
+
+| Tiêu chí | Nhồi Kỹ năng Tĩnh Truyền thống | Omni-Skill Orchestrator v4.1 |
 |---|---|---|
-| **Dung lượng Ngữ cảnh (Tokens)** | Nhồi 50–120 kỹ năng & quy tắc tĩnh vào System Prompt (**15.000–25.000 tokens**), gây tràn ngữ cảnh và suy giảm IQ của mô hình. | **< 300 Tokens ở trạng thái chờ!** Giữ nguyên tắc Ring 0 tinh gọn; kỹ năng, quy tắc miền và công cụ được phân giải Đúng Lúc (JIT). |
-| **Trí nhớ Dài hạn (Memory)** | Dùng file JSON phẳng hoặc vector DB cồng kềnh, dễ mất dữ liệu hoặc làm chậm phiên chat (>500ms). | **Trí nhớ Đa tầng Tri-Tier Omni-Memory**: Tầng 1 Phản xạ RAM (<0.3ms); Tầng 2 SQLite WAL nhúng FTS5 BM25 + CPU ONNX Embeddings (<15ms, 0MB VRAM Tax); Tầng 3 Consolidator tự động tính độ trôi dạt Ebbinghaus. |
-| **Kiểm soát Kiến trúc (Architecture)** | Subagent nội bộ tự sinh dễ rơi vào "Buồng vang tự sướng" (Echo Chamber), tự khen chính mình. | **Omni-Auditor Gatekeeper (DeepSeek-V4.1-Flash)**: Phản biện độc lập bên ngoài (Red-teaming Devil's Advocate, 1M context), cưỡng chế kiểm tra qua `hook_runner.py` mà không gây nghẽn luồng hook. |
-| **Thực thi Mã nguồn (Worker Fleet)** | Mô hình chính phải tự gõ từng dòng boilerplate, tốn kém token và chậm chạp. | **Hạm đội Worker Chuyên trách**: Groq Cloud LPU (300-800+ tok/s sinh boilerplate/test) song song cùng Local AMD MI50 GPU (100% offline, local fast edit, SQLite WAL). |
-| **Quy trình Phát triển (SDD)** | Bắt tay vào viết code ngay mà không có đặc tả, dễ gây lỗi phân kỳ và phá vỡ kiến trúc. | **Tích hợp Bản địa GitHub Spec Kit**: Chuẩn hóa vòng đời 10 phase (Constitution, Specify, Plan, Tasks, Implement, Converge...). |
-| **Tốc độ & Phụ thuộc** | Phụ thuộc thư viện cồng kềnh ngoài luồng, dễ dính lỗi tương thích môi trường. | **Lõi Python Standard Library thuần túy (0 External Dependencies cho Kernel, Hook & FTS5)**. Quét 500+ kỹ năng trong **0.12s**, phân giải warm trong **~2–5ms** (**~1ms** không kèm workspace, **~0.11s** CLI khởi động lạnh). Tùy chọn tăng tốc CPU ONNX cho Tầng 2 (với cơ chế tự động hạ cấp an toàn về SQLite FTS5 BM25 thuần stdlib nếu máy chưa cài ONNX). |
+| **Dung lượng Ngữ cảnh** | Nhồi 50–120 kỹ năng (**15.000–25.000 token**), gây tràn ngữ cảnh và suy giảm IQ mô hình. | **< 300 Token ở trạng thái chờ!** Giữ nguyên tắc tinh gọn; kỹ năng, quy tắc và công cụ được phân giải Đúng Lúc (JIT). |
+| **Độ chính xác Định tuyến** | So khớp chuỗi con thô sơ dễ gọi nhầm sang kỹ năng không liên quan. | **Chấm điểm theo Segment + Ranh giới Từ**: Tách biệt rõ nhóm từ miền kỹ thuật (`docker`, `sqlite`, `postgres`) khỏi từ hành động chung (`fix`, `debug`, `guide`). Đạt **100% Top-1 & Top-3** trên bộ Golden Benchmark 25 câu hỏi. |
+| **Trí nhớ Dài hạn** | File JSON phẳng dễ hỏng hoặc vector DB SaaS đám mây cồng kềnh. | **Trí nhớ Đa tầng Tri-Tier**: Tầng 1 non-blocking RAM spool (<0.3ms); Tầng 2 SQLite WAL nhúng FTS5 BM25 + CPU ONNX Embeddings (0MB VRAM Tax); Tầng 3 Consolidator tự động tính độ trôi dạt Ebbinghaus. |
+| **Tổng hợp Kỹ năng** | Lập trình viên phải tự gõ thủ công từng file cấu hình cho mỗi thư viện mới. | **Quy trình Tự động**: `scripts/synthesizer.py` tự tạo mẫu, kiểm tra cú pháp AST, kiểm chứng assert trong sandbox và tự tái lập chỉ mục trong <150ms. |
+| **Kiểm soát Kiến trúc** | Subagent nội bộ dễ rơi vào "Buồng vang tự sướng" (Echo Chamber), tự khen code của nhau. | **Hội đồng Phản biện Độc lập (DeepSeek-V4.1-Flash)**: Cưỡng chế kiểm duyệt với chữ ký số HMAC-SHA256 và mã băm SHA-256 của file đích mà không làm nghẽn luồng hook. |
+| **Lõi Phụ thuộc** | Phụ thuộc thư viện nặng ngoài luồng, dễ lỗi môi trường. | **Lõi Python Standard Library thuần túy** cho Kernel, Hook và SQLite FTS5 (0 phụ thuộc ngoài). Tùy chọn cài thêm `fastembed` cho tìm kiếm vector CPU (tự động hạ cấp an toàn về FTS5 BM25 nếu chưa cài). |
 
 ---
 
-## 🏗️ Kiến trúc Hệ thống
+## 🏗️ Kiến trúc Phân tầng
 
-Omni-Kernel v4.1 vận hành theo mô hình phân tầng chặt chẽ:
+Omni vận hành như một bộ cương đánh chặn bọc quanh tác tử AI:
 
 ```text
                       ┌────────────────────────────────────────────────────────┐
-                      │              CHỈ HUY TRƯỞNG: ANTIGRAVITY               │
-                      │               (Lập kế hoạch, UI, Điều phối)            │
+                      │              AI AGENT: ANTIGRAVITY / CLAUDE            │
+                      │               (Lập kế hoạch, UI, Viết code)            │
                       └───────────────────────────┬────────────────────────────┘
-                                                  │
+                                                  │ (Trước mỗi lượt tương tác)
                                                   ▼
                       ┌────────────────────────────────────────────────────────┐
-                      │       HARD GATEKEEPER HOOK (hook_runner.py, <25ms)     │
-                      │  - Tầng 1: L1 Reflex RAM Cache (<0.3ms, 0 Token)       │
-                      │  - Quét phát hiện RFC / SDD / Git Diff lớn (<1ms)      │
-                      │  - Cưỡng chế tiêm chỉ thị cứng vào Ephemeral Context   │
+                      │    PRE-FLIGHT HARNESS HOOK (hook_runner.py, <25ms)     │
+                      │  - Tầng 1: Phản xạ RAM không nghẽn lock (<0.3ms)       │
+                      │  - JIT Router: Phân giải kỹ năng theo segment (~2-5ms) │
+                      │  - Truy hồi Ký ức Thực nghiệm độ chính xác cao (<0.3ms)│
+                      │  - Cổng Giám sát: Đối chiếu chữ ký số HMAC-SHA256      │
                       └───────────────────────────┬────────────────────────────┘
-                                                  │ (Bắt buộc Chỉ huy phải gọi Auditor)
+                                                  │ (Tiêm <300 token ngữ cảnh JIT)
                                                   ▼
-                                  ┌────────────────────────────────┐
-                                  │   DEEPSEEK-V4.1-FLASH AUDITOR  │
-                                  │   (Tổng Giám sát Kiến trúc)   │
-                                  │   - Cửa sổ 1M tokens           │
-                                  │   - Red-Teaming Persona        │
-                                  │   - Zero Echo-Chamber          │
-                                  └───────────────┬────────────────┘
-                                                  │
-                         ┌────────────────────────┴────────────────────────┐
-                         ▼ (Approved)                                      ▼ (Rejected / Critique)
-            ┌───────────────────────────┐                         ┌──────────────────┐
-            │   HẠM ĐỘI DUAL WORKERS    │                         │ Trả về phản biện │
-            ├─────────────┬─────────────┤                         │ Yêu cầu tinh chỉnh│
-            │  Local MI50 │  Groq Cloud │                         └──────────────────┘
-            │  (AMD 16GB) │  (LPU 120B) │
-            │ SQLite WAL  │ Sinh test & │
-            │ 100% offline│ boilerplate │
-            └─────────────┴─────────────┘
+                                      ┌───────────────────────┐
+                                      │   LƯỢT CHAT CỦA AGENT │
+                                      └───────────────────────┘
 ```
-
-> **⚡ Làm rõ về cơ chế Phân tách Hook & SLA:** Logic phản xạ nội bộ (`process_hook()`) của `hook_runner.py` hoàn tất trong **`<25ms`** (`~16ms` trung vị; `~120ms` nếu tính cả thời gian khởi tạo subprocess Python trên Windows) vì nó **KHÔNG thực hiện gọi mạng đồng bộ tới DeepSeek API** trong luồng hook. Thay vào đó, hook chỉ làm nhiệm vụ xác thực tính tươi mới của artifact trên đĩa, đối chiếu mã hash SHA-256, và tiêm chỉ thị bắt buộc (`[CRITICAL ARCHITECTURE GATEKEEPER DIRECTIVE]`) để ép Agent Chỉ huy phải chủ động gọi công cụ MCP `deepseek_worker_cloud` trước khi được phép chuyển sang phase tiếp theo.
 
 ---
 
-## 🧠 Kiến trúc Trí nhớ Đa tầng Tri-Tier Omni-Memory v4.1
+## 🧠 Kiến trúc Trí nhớ Đa tầng Tri-Tier Omni-Memory
 
-Toàn bộ tri thức, giải pháp khắc phục lỗi đã được chứng thực, và dấu vết thực thi được quản trị qua 3 tầng:
+Toàn bộ giải pháp khắc phục lỗi và dấu vết thực thi được quản trị qua 3 tầng:
 
 1. **Tier 1 (L1 Ephemeral Reflex - <0.3ms cache reflex, <25ms logic hook nội bộ / ~120ms subprocess)**:
    - Hook tiền khởi chạy viết bằng 100% Python Standard Library trong `scripts/hook_runner.py`.
    - Đọc bộ đệm RAM nhanh từ `scripts/proven_traces.json` trong <0.02ms.
-   - Ghi nhật ký bất đồng bộ vào bộ đệm `l1_staging_spool.jsonl` / `l1_staging_log` mà không làm chậm phiên tương tác.
+   - Ghi nhật ký non-blocking vào `l1_staging_spool.jsonl` để loại trừ hoàn toàn hiện tượng tranh chấp khóa SQLite trên Windows NTFS.
 
 2. **Tier 2 (L2 Hybrid Episodic Memory - <15ms retrieval, 0MB VRAM Tax)**:
    - Cơ sở dữ liệu SQLite nhúng tại `omni_memory.db` kích hoạt chế độ **WAL mode** (`PRAGMA synchronous = NORMAL;`, `busy_timeout = 5000;`).
-   - Tìm kiếm hỗn hợp kết hợp **Dual-Column FTS5 BM25** (`content_exact` trọng số 10.0 vs `content_folded` trọng số 1.0) song song với **CPU ONNX Embeddings** (`paraphrase-multilingual-MiniLM-L12-v2`, INT8 quantization, 0MB VRAM, ~7ms) qua thuật toán Reciprocal Rank Fusion ($k=20$).
-   - *Cơ chế Hạ cấp An toàn (Graceful Degradation):* Nếu môi trường chưa cài đặt `onnxruntime`, hệ thống tự động fallback về chế độ 100% thuần stdlib SQLite FTS5 BM25 mà không gây ra bất kỳ lỗi gián đoạn nào.
+   - Tìm kiếm hỗn hợp kết hợp **Dual-Column FTS5 BM25** (`content_exact` trọng số 10.0 vs `content_folded` trọng số 1.0) song song với **CPU ONNX Embeddings** (`intfloat/multilingual-e5-small`, 384 chiều, INT8 quantization, 0MB VRAM) qua thuật toán Reciprocal Rank Fusion ($k=20$).
+   - *Cơ chế Hạ cấp An toàn:* Nếu môi trường chưa cài `fastembed`, hệ thống tự động fallback về chế độ 100% thuần stdlib SQLite FTS5 BM25.
 
 3. **Tier 3 (L3 Background Consolidator Daemon)**:
-   - Tiến trình chạy ngầm `scripts/consolidator.py` tiêu thụ các bản ghi từ `l1_staging_log`.
+   - Tiến trình chạy ngầm `scripts/consolidator.py` tiêu thụ các bản ghi từ spool vào cơ sở dữ liệu.
    - Tự động thăng hạng vết tri thức đa kích hoạt ($\ge 2$ lần thành công) kèm gán nhãn song ngữ tự động.
-   - Áp dụng công thức suy giảm ổn định Ebbinghaus và sử dụng `PRAGMA wal_checkpoint(PASSIVE);` để chống hoàn toàn xung đột khóa file trên Windows NTFS.
+   - Áp dụng công thức suy giảm ổn định Ebbinghaus và sử dụng `PRAGMA wal_checkpoint(PASSIVE);` để chống hoàn toàn xung đột khóa file.
 
 ---
 
@@ -97,43 +90,37 @@ Toàn bộ tri thức, giải pháp khắc phục lỗi đã được chứng th
 
 | Thành phần | Đường dẫn | Mô tả chức năng |
 |---|---|---|
-| **Omni-Auditor Gatekeeper** | `scripts/consult_critic.py` | Client REST 100% stdlib kết nối DeepSeek-V4.1-Flash API phản biện kiến trúc độc lập (1M context, 30s timeout, jittered backoff). |
-| **Auditor MCP Server** | `mcp/deepseek_worker_mcp.py` | Máy chủ JSON-RPC 2.0 xuất xưởng 2 công cụ `deepseek_audit_spec` và `deepseek_audit_diff`. |
-| **Tri-Tier Memory Engine** | `scripts/memory_engine.py` | Lõi tìm kiếm bộ nhớ hỗn hợp FTS5 BM25 + ONNX Dense Vector Embeddings với RRF ranking. |
-| **Memory Consolidator** | `scripts/consolidator.py` | Daemon tiêu thụ staging log, thăng hạng tri thức, decay Ebbinghaus và nén dọn SQLite qua passive checkpoint. |
-| **PreInvocation Hook** | `scripts/hook_runner.py` | Cổng chặn kiểm duyệt cưỡng chế & nạp JIT phản xạ L1 (<25ms logic nội bộ, ~120ms subprocess). |
-| **Spec-Driven Development** | `skills/spec-driven-development/` | Kỹ năng chuẩn hóa 10 phase GitHub Spec Kit SDD (Constitution, Spec, Plan, Tasks, Implement...). |
-| **Dual-Tier Router** | `scripts/dual_tier.py` | Tính điểm độ phức tạp (0-100), áp dụng Quota Guard cho task đơn giản và ủy nhiệm L2 Strategist. |
-| **Weekly Reporter** | `scripts/reporter.py` | Tổng hợp KPI vận hành, ước tính token tiết kiệm, thống kê tỷ lệ phân tầng và sức khỏe hệ thống. |
-| **Workspace Assimilator** | `scripts/assimilator.py` | Đồng hóa không phá hủy các quy tắc `.cursorrules`, `GEMINI.md`, `CLAUDE.md`, và `.specify/` của repo. |
-| **Kernel Synchronizer** | `scripts/kernel_sync.py` | Tự động phát hiện và vá lỗi lệch phiên bản (Version Drift) giữa Workspace, Plugins và Library. |
+| **PreInvocation Hook** | `scripts/hook_runner.py` | Cổng chặn kiểm duyệt tiền khởi chạy, nạp JIT kỹ năng, quy tắc và trí nhớ (<25ms nội bộ, ~120ms subprocess). |
+| **JIT Skill Resolver** | `scripts/resolver.py` | Động cơ định tuyến kỹ năng theo segment (<5ms warm, word-boundary, chế tài theo domain). |
+| **Autonomous Synthesizer** | `scripts/synthesizer.py` | Pipeline tự động tạo mẫu, kiểm tra cú pháp AST, chạy thử sandbox và thăng hạng kỹ năng mới. |
+| **Skill Indexer** | `scripts/indexer.py` | Bộ lập chỉ mục tốc độ cao quét 500+ kỹ năng qua 4 nguồn trong 0.12s với khả năng phát hiện thay đổi ở cấp mili-giây. |
+| **Experiential Memory** | `scripts/experiential_memory.py` | Kho lưu trữ vết thực thi với bộ lọc từ dừng và tốc độ truy hồi dưới 1 mili-giây. |
+| **Memory Engine** | `scripts/memory_engine.py` | Lõi tìm kiếm bộ nhớ hỗn hợp SQLite FTS5 BM25 + ONNX Dense Vector Embeddings qua RRF. |
+| **Embedding Service** | `scripts/embedding_service.py` | Dịch vụ sinh vector embedding cục bộ trên CPU bằng `fastembed` (`intfloat/multilingual-e5-small`, 384 chiều). |
+| **Memory Consolidator** | `scripts/consolidator.py` | Daemon tiêu thụ staging log, thăng hạng tri thức và tính toán độ suy giảm Ebbinghaus. |
+| **Architecture Auditor** | `scripts/consult_critic.py` | Client kết nối DeepSeek-V4.1-Flash phản biện kiến trúc độc lập. |
 
 ---
 
-## 🧪 Kiểm thử Tự động Toàn diện & Chứng nhận Council Gate
+## 🧪 Kiểm thử Tự động & Chứng thực Thực nghiệm
 
-Omni-Kernel v4.1 duy trì bộ kiểm thử tự động toàn diện với **100% tỷ lệ đỗ (277/277 Tests PASS, 0 Skipped: 117/117 qua pytest toàn bộ + 160/160 qua 4 bộ kiểm thử khắc phục)** cùng chứng nhận **`APPROVED`** có chữ ký HMAC-SHA256 hợp lệ từ DeepSeek-V4.1-Flash Council Gate ([`docs/audits/omni_kernel_v41_final_approved_verdict.md`](docs/audits/omni_kernel_v41_final_approved_verdict.md), tương thích đa máy khi `git clone` nhờ xác thực SHA-256 content hash + chữ ký HMAC-SHA256):
+Omni-Skill Orchestrator duy trì bộ kiểm thử tự động toàn diện với **100% tỷ lệ đỗ (277/277 Tests PASS, 0 Skipped, 0 Flaked)**:
 
 ```bash
-# 1. Kiểm thử Lõi Động cơ, Bộ nhớ Đa tầng & Cổng Giám sát (117/117 passed cho toàn bộ tests/ + specs/; 110/110 passed cho 3 đường dẫn chính)
+# 1. Chạy toàn bộ pytest lõi và spec test suites (117 tests, 0 skipped)
 python -m pytest tests/ specs/001-omni-memory-v4/tests/ specs/002-deepseek-v41-auditor/tests/
 
-# 2. Kiểm thử Khắc phục Chuyên sâu Cluster 1–3 & Round 7–9 (160 tests)
-python scripts/test_cluster_1_remediation.py   # 69/69 passed (SQLite WAL, Outbox 2PC, SHA-256 Partitioning)
-python scripts/test_cluster_2_remediation.py   # 51/51 passed (Hook <25ms SLA, HMAC Gate, Trust Lock, Lifecycle Epoch)
-python scripts/test_cluster_3_remediation.py   # 17/17 passed (Resolver, AST Sandbox, CoW Stale-While-Revalidate)
+# 2. Chạy 4 bộ kiểm thử khắc phục Cluster 1–3 & Round 7 (160 tests)
+python scripts/test_cluster_1_remediation.py   # 69/69 passed (SQLite WAL, Outbox 2PC, Phân vùng SHA-256)
+python scripts/test_cluster_2_remediation.py   # 51/51 passed (SLA Hook <25ms, Cổng HMAC, Trust Lock)
+python scripts/test_cluster_3_remediation.py   # 17/17 passed (Resolver, Sandbox AST, CoW Stale-While-Revalidate)
 python scripts/test_round_7_remediation.py     # 23/23 passed (Tích hợp Liên cụm, Proven Recall & Edge Cases)
+
+# 3. Chạy Hợp đồng 10 Kịch bản Thực tế, Đánh giá Golden Routing 25 Câu & Đo Benchmark Thật
+python scripts/verify_real_world.py
+# Kết quả: 10/10 Kịch bản PASS | Golden Routing Top-1 = 25/25 (100%), Top-3 = 25/25 (100%)
+# Độ trễ thật: Resolver warm: ~2-5ms | Hook core: ~12-22ms | SQLite FTS5: ~0.3-0.5ms
 ```
-
----
-
-## 🤝 Triết lý Kỹ thuật: Nền tảng Ponytail
-
-Omni-Kernel v4.1 tuân thủ tuyệt đối **Triết lý Kỹ sư Ponytail (Tối giản & Đáng tin cậy)**:
-* **Dòng code tốt nhất là dòng code không cần phải viết.** Giải pháp hoàn chỉnh nhỏ gọn nhất luôn chiến thắng.
-* **Lõi Python Standard Library thuần túy cho Kernel**: Kernel, Gatekeeper Hook, và chỉ mục tìm kiếm SQLite FTS5 có **0 phụ thuộc ngoài** (`os`, `sqlite3`, `urllib`, `re`, `json`). Thư viện ngoài (ONNX) chỉ được dùng tùy chọn để tăng tốc tìm kiếm vector ở Tier 2.
-* Bất biến là ưu tiên, báo lỗi rõ ràng kèm ngữ cảnh, tuyệt đối không âm thầm nuốt ngoại lệ.
-* Bơm ngữ cảnh tạm thời (JIT Ephemeral) thay vì nhồi nhét quy tắc tĩnh gây ô nhiễm context.
 
 ---
 
