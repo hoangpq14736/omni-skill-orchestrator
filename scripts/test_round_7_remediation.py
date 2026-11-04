@@ -870,6 +870,26 @@ class TestRound7Remediation(unittest.TestCase):
         self.assertTrue(len(recalled) >= 1)
         self.assertIn("last_recalled", recalled[0]["trace"])
 
+        # Verify Docker routing quality (docker-patterns must be in top 3)
+        from resolver import resolve_skill
+        skills = resolve_skill("fix docker port conflict 8080", workspace_dir=".")
+        top_names = [(s.get("skill") or s).get("name") for s in skills[:3]]
+        self.assertIn("docker-patterns", top_names, f"Expected docker-patterns in top 3, got {top_names}")
+
+        # Verify portable repository audit in docs/audits/ across cloned workspace directory
+        from hook_runner import verify_critic_artifact
+        import shutil
+        audits_sub = os.path.join(ws_dir, "docs", "audits")
+        os.makedirs(audits_sub, exist_ok=True)
+        repo_root = os.path.dirname(_SCRIPTS_DIR)
+        src_verdict = os.path.join(repo_root, "docs", "audits", "omni_kernel_v41_final_approved_verdict.md")
+        src_patch = os.path.join(repo_root, "docs", "audits", "omni_kernel_v41_production_remediation.patch")
+        if os.path.exists(src_verdict) and os.path.exists(src_patch):
+            shutil.copy2(src_verdict, os.path.join(audits_sub, "omni_kernel_v41_final_approved_verdict.md"))
+            shutil.copy2(src_patch, os.path.join(audits_sub, "omni_kernel_v41_production_remediation.patch"))
+            v, _ = verify_critic_artifact(ws_dir, target_file="docs/audits/omni_kernel_v41_production_remediation.patch")
+            self.assertEqual(v, "APPROVED")
+
 
 if __name__ == "__main__":
     unittest.main()

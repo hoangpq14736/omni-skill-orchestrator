@@ -25,7 +25,7 @@ Các hệ thống tác tử AI truyền thống thường đối mặt với v�
 | **Kiểm soát Kiến trúc (Architecture)** | Subagent nội bộ tự sinh dễ rơi vào "Buồng vang tự sướng" (Echo Chamber), tự khen chính mình. | **Omni-Auditor Gatekeeper (DeepSeek-V4.1-Flash)**: Phản biện độc lập bên ngoài (Red-teaming Devil's Advocate, 1M context), cưỡng chế kiểm tra qua `hook_runner.py` mà không gây nghẽn luồng hook. |
 | **Thực thi Mã nguồn (Worker Fleet)** | Mô hình chính phải tự gõ từng dòng boilerplate, tốn kém token và chậm chạp. | **Hạm đội Worker Chuyên trách**: Groq Cloud LPU (300-800+ tok/s sinh boilerplate/test) song song cùng Local AMD MI50 GPU (100% offline, local fast edit, SQLite WAL). |
 | **Quy trình Phát triển (SDD)** | Bắt tay vào viết code ngay mà không có đặc tả, dễ gây lỗi phân kỳ và phá vỡ kiến trúc. | **Tích hợp Bản địa GitHub Spec Kit**: Chuẩn hóa vòng đời 10 phase (Constitution, Specify, Plan, Tasks, Implement, Converge...). |
-| **Tốc độ & Phụ thuộc** | Phụ thuộc thư viện cồng kềnh ngoài luồng, dễ dính lỗi tương thích môi trường. | **Lõi Python Standard Library thuần túy (0 External Dependencies cho Kernel, Hook & FTS5)**. Quét 500+ kỹ năng trong **0.12s**, phân giải trong **~1ms** với tốc độ **1.000+ QPS**. Tùy chọn tăng tốc CPU ONNX cho Tầng 2 (với cơ chế tự động hạ cấp an toàn về SQLite FTS5 BM25 thuần stdlib nếu máy chưa cài ONNX). |
+| **Tốc độ & Phụ thuộc** | Phụ thuộc thư viện cồng kềnh ngoài luồng, dễ dính lỗi tương thích môi trường. | **Lõi Python Standard Library thuần túy (0 External Dependencies cho Kernel, Hook & FTS5)**. Quét 500+ kỹ năng trong **0.12s**, phân giải warm trong **~2–5ms** (**~1ms** không kèm workspace, **~0.11s** CLI khởi động lạnh). Tùy chọn tăng tốc CPU ONNX cho Tầng 2 (với cơ chế tự động hạ cấp an toàn về SQLite FTS5 BM25 thuần stdlib nếu máy chưa cài ONNX). |
 
 ---
 
@@ -68,7 +68,7 @@ Omni-Kernel v4.1 vận hành theo mô hình phân tầng chặt chẽ:
             └─────────────┴─────────────┘
 ```
 
-> **⚡ Làm rõ về cơ chế Phân tách Hook & SLA:** Tiến trình `hook_runner.py` cam kết hoàn tất trong `<25ms` vì nó **KHÔNG thực hiện gọi mạng đồng bộ tới DeepSeek API** trong luồng hook. Thay vào đó, hook chỉ làm nhiệm vụ xác thực tính tươi mới của artifact trên đĩa, đối chiếu mã hash SHA-256, và tiêm chỉ thị bắt buộc (`[CRITICAL ARCHITECTURE GATEKEEPER DIRECTIVE]`) để ép Agent Chỉ huy phải chủ động gọi công cụ MCP `deepseek_worker_cloud` trước khi được phép chuyển sang phase tiếp theo.
+> **⚡ Làm rõ về cơ chế Phân tách Hook & SLA:** Logic phản xạ nội bộ (`process_hook()`) của `hook_runner.py` hoàn tất trong **`<25ms`** (`~16ms` trung vị; `~120ms` nếu tính cả thời gian khởi tạo subprocess Python trên Windows) vì nó **KHÔNG thực hiện gọi mạng đồng bộ tới DeepSeek API** trong luồng hook. Thay vào đó, hook chỉ làm nhiệm vụ xác thực tính tươi mới của artifact trên đĩa, đối chiếu mã hash SHA-256, và tiêm chỉ thị bắt buộc (`[CRITICAL ARCHITECTURE GATEKEEPER DIRECTIVE]`) để ép Agent Chỉ huy phải chủ động gọi công cụ MCP `deepseek_worker_cloud` trước khi được phép chuyển sang phase tiếp theo.
 
 ---
 
@@ -76,10 +76,10 @@ Omni-Kernel v4.1 vận hành theo mô hình phân tầng chặt chẽ:
 
 Toàn bộ tri thức, giải pháp khắc phục lỗi đã được chứng thực, và dấu vết thực thi được quản trị qua 3 tầng:
 
-1. **Tier 1 (L1 Ephemeral Reflex - <0.3ms reflex, <25ms hook turnaround)**:
+1. **Tier 1 (L1 Ephemeral Reflex - <0.3ms cache reflex, <25ms logic hook nội bộ / ~120ms subprocess)**:
    - Hook tiền khởi chạy viết bằng 100% Python Standard Library trong `scripts/hook_runner.py`.
    - Đọc bộ đệm RAM nhanh từ `scripts/proven_traces.json` trong <0.02ms.
-   - Ghi nhật ký bất đồng bộ vào bộ đệm `l1_staging_log` trong cơ sở dữ liệu SQLite mà không làm chậm phiên tương tác.
+   - Ghi nhật ký bất đồng bộ vào bộ đệm `l1_staging_spool.jsonl` / `l1_staging_log` mà không làm chậm phiên tương tác.
 
 2. **Tier 2 (L2 Hybrid Episodic Memory - <15ms retrieval, 0MB VRAM Tax)**:
    - Cơ sở dữ liệu SQLite nhúng tại `omni_memory.db` kích hoạt chế độ **WAL mode** (`PRAGMA synchronous = NORMAL;`, `busy_timeout = 5000;`).
@@ -101,7 +101,7 @@ Toàn bộ tri thức, giải pháp khắc phục lỗi đã được chứng th
 | **Auditor MCP Server** | `mcp/deepseek_worker_mcp.py` | Máy chủ JSON-RPC 2.0 xuất xưởng 2 công cụ `deepseek_audit_spec` và `deepseek_audit_diff`. |
 | **Tri-Tier Memory Engine** | `scripts/memory_engine.py` | Lõi tìm kiếm bộ nhớ hỗn hợp FTS5 BM25 + ONNX Dense Vector Embeddings với RRF ranking. |
 | **Memory Consolidator** | `scripts/consolidator.py` | Daemon tiêu thụ staging log, thăng hạng tri thức, decay Ebbinghaus và nén dọn SQLite qua passive checkpoint. |
-| **PreInvocation Hook** | `scripts/hook_runner.py` | Cổng chặn kiểm duyệt cưỡng chế & nạp JIT phản xạ L1 trong <25ms trước mỗi lượt chat. |
+| **PreInvocation Hook** | `scripts/hook_runner.py` | Cổng chặn kiểm duyệt cưỡng chế & nạp JIT phản xạ L1 (<25ms logic nội bộ, ~120ms subprocess). |
 | **Spec-Driven Development** | `skills/spec-driven-development/` | Kỹ năng chuẩn hóa 10 phase GitHub Spec Kit SDD (Constitution, Spec, Plan, Tasks, Implement...). |
 | **Dual-Tier Router** | `scripts/dual_tier.py` | Tính điểm độ phức tạp (0-100), áp dụng Quota Guard cho task đơn giản và ủy nhiệm L2 Strategist. |
 | **Weekly Reporter** | `scripts/reporter.py` | Tổng hợp KPI vận hành, ước tính token tiết kiệm, thống kê tỷ lệ phân tầng và sức khỏe hệ thống. |
@@ -112,10 +112,10 @@ Toàn bộ tri thức, giải pháp khắc phục lỗi đã được chứng th
 
 ## 🧪 Kiểm thử Tự động Toàn diện & Chứng nhận Council Gate
 
-Omni-Kernel v4.1 duy trì bộ kiểm thử tự động toàn diện với **100% tỷ lệ đỗ (277/277 Tests PASS: 117 pytest suites + 160 remediation verification tests)** cùng chứng nhận **`APPROVED`** có chữ ký HMAC-SHA256 hợp lệ từ DeepSeek-V4.1-Flash Council Gate ([`docs/audits/omni_kernel_v41_final_approved_verdict.md`](docs/audits/omni_kernel_v41_final_approved_verdict.md)):
+Omni-Kernel v4.1 duy trì bộ kiểm thử tự động toàn diện với **100% tỷ lệ đỗ (277/277 Tests PASS, 0 Skipped: 117/117 qua pytest toàn bộ + 160/160 qua 4 bộ kiểm thử khắc phục)** cùng chứng nhận **`APPROVED`** có chữ ký HMAC-SHA256 hợp lệ từ DeepSeek-V4.1-Flash Council Gate ([`docs/audits/omni_kernel_v41_final_approved_verdict.md`](docs/audits/omni_kernel_v41_final_approved_verdict.md), tương thích đa máy khi `git clone` nhờ xác thực SHA-256 content hash + chữ ký HMAC-SHA256):
 
 ```bash
-# 1. Kiểm thử Lõi Động cơ, Bộ nhớ Đa tầng & Cổng Giám sát (117 tests qua pytest)
+# 1. Kiểm thử Lõi Động cơ, Bộ nhớ Đa tầng & Cổng Giám sát (117/117 passed cho toàn bộ tests/ + specs/; 110/110 passed cho 3 đường dẫn chính)
 python -m pytest tests/ specs/001-omni-memory-v4/tests/ specs/002-deepseek-v41-auditor/tests/
 
 # 2. Kiểm thử Khắc phục Chuyên sâu Cluster 1–3 & Round 7–9 (160 tests)

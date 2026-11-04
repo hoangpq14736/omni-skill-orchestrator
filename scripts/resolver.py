@@ -165,6 +165,8 @@ SPECIFICITY_MAP = {
     "flutter": 3, "react-native": 3, "compose": 3, "swiftui": 3, "android": 2, "ios": 2, "dart": 1, "swift": 1, "kotlin": 1,
     # Database / Data
     "bigquery-sql": 5, "database-migrations": 3, "bigquery": 3, "prisma": 4, "drizzle": 3, "postgres": 2, "mysql": 2, "database": 2,
+    # DevOps / Containers / Infrastructure
+    "docker-patterns": 5, "docker": 4, "kubernetes-patterns": 4, "kubernetes": 3, "deployment-patterns": 3,
     # Review / Standards / Debugging
     "ponytail": 5, "systematic-debugging": 5, "code-reviewer": 2, "coding-standards": 1,
     # Hardware & Embedded
@@ -715,6 +717,10 @@ def extract_query_tokens(text):
     TECH_MORPH_EXPANSIONS = {
         "debug": ["debugging", "systematic-debugging", "troubleshoot", "troubleshooting", "bug"],
         "debugging": ["debug", "systematic-debugging", "troubleshoot"],
+        "fix": ["debug", "debugging", "systematic-debugging", "troubleshooting"],
+        "docker": ["dockerfile", "container", "containers", "compose", "docker-patterns", "deployment-patterns"],
+        "port": ["networking", "bind", "socket", "container", "docker-patterns", "systematic-debugging"],
+        "conflict": ["collision", "troubleshooting", "systematic-debugging"],
         "sqlite": ["sql", "database", "database-migrations", "migrations", "backend-patterns", "wal", "concurrency"],
         "database": ["sql", "database-migrations", "migrations", "backend-patterns"],
         "lock": ["locking", "concurrency", "deadlock", "mutex", "systematic-debugging", "backend-patterns"],
@@ -853,12 +859,19 @@ def resolve_skill(intent_text="", workspace_dir=None, registry=None, top_k=3, af
                     score -= 75
                     break
 
-        # Browser/Frontend-only debugging penalty when backend/database/SQLite intent is present without web/browser intent
-        is_db_or_backend_intent = any(dt in query_tokens for dt in ["sqlite", "sql", "database", "postgres", "mysql", "backend", "lock", "wal"])
+        # Browser/Frontend-only debugging penalty when backend/database/SQLite/Docker intent is present without web/browser intent
+        is_db_or_backend_intent = any(dt in query_tokens for dt in ["sqlite", "sql", "database", "postgres", "mysql", "backend", "lock", "wal", "docker", "container", "port"])
         is_browser_intent = any(bt in query_tokens for bt in ["chrome", "browser", "cookie", "a11y", "lcp", "css", "dom", "html", "frontend", "heap", "leak", "web"])
         if is_db_or_backend_intent and not is_browser_intent:
             if any(b_name in name for b_name in ["cookie-debugging", "a11y-debugging", "debug-optimize-lcp", "chrome-devtools", "memory-leak-debugging", "troubleshooting", "agent-introspection-debugging", "modern-web-guidance"]):
                 score -= 95
+
+        # Mobile/Flutter/Dart penalty unless mobile/flutter/dart/android/ios intent or stack is active
+        is_mobile_intent = any(mt in query_tokens for mt in ["flutter", "dart", "android", "ios", "mobile", "widget", "compose", "swift", "kotlin"])
+        is_mobile_stack = any(st in ["flutter", "dart", "android", "ios", "mobile"] for st in stack_tags)
+        if not is_mobile_intent and not is_mobile_stack:
+            if any(m_prefix in name for m_prefix in ["flutter-", "dart-", "android-", "compose-"]):
+                score -= 75
 
         # Quality bonus
         score += (s.get("quality_score", 50) / 10.0)

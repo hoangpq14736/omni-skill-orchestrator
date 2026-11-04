@@ -293,17 +293,17 @@ def is_registry_stale(registry, sources=SOURCES):
     for s_type, s_path in sources.items():
         if os.path.exists(s_path):
             try:
-                if os.path.getmtime(s_path) > gen_time + 1.0:
+                if os.path.getmtime(s_path) > gen_time:
                     return True
                 with os.scandir(s_path) as it:
                     for entry in it:
                         try:
                             if s_type == "plugin":
                                 skills_sub = os.path.join(entry.path, "skills")
-                                if os.path.exists(skills_sub) and os.path.getmtime(skills_sub) > gen_time + 1.0:
+                                if os.path.exists(skills_sub) and os.path.getmtime(skills_sub) > gen_time:
                                     return True
                             else:
-                                if entry.stat(follow_symlinks=False).st_mtime > gen_time + 1.0:
+                                if entry.stat(follow_symlinks=False).st_mtime > gen_time:
                                     return True
                         except OSError:
                             continue
@@ -327,7 +327,7 @@ def build_index(output_file=None):
             token_index[t].append(idx)
 
     registry = {
-        "generated_at": int(time.time()),
+        "generated_at": time.time(),
         "total_skills": len(skills),
         "sources_scanned": SOURCES,
         "skills": skills,

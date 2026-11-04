@@ -25,7 +25,7 @@ Traditional AI agent configurations suffer from static context bloat, fragile ha
 | **Architectural Gatekeeping** | Internal subagents create an "Echo Chamber", blindly approving each other's hallucinations. | **Omni-Auditor Gatekeeper (DeepSeek-V4.1-Flash)**: Independent external Red-Teaming Devil's Advocate (1M context), strictly enforced via `hook_runner.py` without blocking hook turnaround. |
 | **Code Execution Fleet** | Primary model wastes expensive tokens typing boilerplate, slowing down turnaround. | **Specialized Dual Worker Fleet**: Groq Cloud LPU (300-800+ tok/s for tests & boilerplate) paired with Local AMD Instinct MI50 GPU (100% offline, local fast edit, SQLite WAL). |
 | **Engineering Rigor (SDD)** | Coding without formal specifications, causing architectural regressions and drift. | **Native GitHub Spec Kit Integration**: Standardized 10-phase lifecycle (Constitution, Specify, Clarify, Plan, Tasks, Implement, Converge...). |
-| **Speed & Dependencies** | Relies on heavy external dependencies and fragile runtime wrappers. | **Pure Python Stdlib Core (0 External Dependencies for Kernel, Hook & FTS5)**. Indexes 500+ skills in **0.12s**, resolves in **~1ms** at **1,000+ QPS**. Optional CPU ONNX Runtime for Tier 2 Semantic Search with automatic fallback to SQLite FTS5 BM25. |
+| **Speed & Dependencies** | Relies on heavy external dependencies and fragile runtime wrappers. | **Pure Python Stdlib Core (0 External Dependencies for Kernel, Hook & FTS5)**. Indexes 500+ skills in **0.12s**, resolves warm in **~2–5ms** (**~1ms** without workspace, **~0.11s** CLI cold start). Optional CPU ONNX Runtime for Tier 2 Semantic Search with automatic fallback to SQLite FTS5 BM25. |
 
 ---
 
@@ -68,7 +68,7 @@ Omni-Kernel v4.1 operates with a deterministic layered structure:
             └─────────────┴─────────────┘
 ```
 
-> **⚡ Note on Hook Decoupling & SLA:** `hook_runner.py` is guaranteed to finish in `<25ms` because it **does NOT make synchronous network calls** to DeepSeek. Instead, it inspects disk artifact freshness, verifies cryptographic file hashes, and injects a non-bypassable directive (`[CRITICAL ARCHITECTURE GATEKEEPER DIRECTIVE]`) forcing the Commander agent to invoke the `deepseek_worker_cloud` MCP tool.
+> **⚡ Note on Hook Decoupling & SLA:** `hook_runner.py` in-process reflex logic (`process_hook()`) completes in **`<25ms`** (`~16ms` median; `~120ms` full Python CLI subprocess turnaround on Windows) because it **does NOT make synchronous network calls** to DeepSeek. Instead, it inspects disk artifact freshness, verifies cryptographic file hashes, and injects a non-bypassable directive (`[CRITICAL ARCHITECTURE GATEKEEPER DIRECTIVE]`) forcing the Commander agent to invoke the `deepseek_worker_cloud` MCP tool.
 
 ---
 
@@ -76,10 +76,10 @@ Omni-Kernel v4.1 operates with a deterministic layered structure:
 
 All verified solutions, execution traces, and episodic experiences are governed through three tiers:
 
-1. **Tier 1 (L1 Ephemeral Reflex - <0.3ms reflex, <25ms hook turnaround)**:
+1. **Tier 1 (L1 Ephemeral Reflex - <0.3ms cache reflex, <25ms in-process hook logic / ~120ms subprocess)**:
    - PreInvocation hook written in 100% Python Standard Library in `scripts/hook_runner.py`.
    - Reads lightning-fast RAM cache from `scripts/proven_traces.json` in <0.02ms.
-   - Logs events asynchronously into `l1_staging_log` in SQLite without blocking user interaction.
+   - Logs events asynchronously into `l1_staging_spool.jsonl` / `l1_staging_log` without blocking user interaction.
 
 2. **Tier 2 (L2 Hybrid Episodic Memory - <15ms retrieval, 0MB VRAM Tax)**:
    - Embedded SQLite database at `omni_memory.db` operating in **WAL mode** (`PRAGMA synchronous = NORMAL;`, `busy_timeout = 5000;`).
@@ -101,7 +101,7 @@ All verified solutions, execution traces, and episodic experiences are governed 
 | **Auditor MCP Server** | `mcp/deepseek_worker_mcp.py` | JSON-RPC 2.0 stdio server providing `deepseek_audit_spec` and `deepseek_audit_diff` tools. |
 | **Tri-Tier Memory Engine** | `scripts/memory_engine.py` | Hybrid memory search engine combining FTS5 BM25 + ONNX Dense Vector Embeddings with RRF ranking. |
 | **Memory Consolidator** | `scripts/consolidator.py` | Daemon consuming staging logs, promoting multi-hit knowledge, decaying stability, and compacting SQLite via passive checkpoints. |
-| **PreInvocation Hook** | `scripts/hook_runner.py` | Deterministic hard gatekeeper & JIT L1 Reflex injector executing in <25ms before every chat turn. |
+| **PreInvocation Hook** | `scripts/hook_runner.py` | Deterministic hard gatekeeper & JIT L1 Reflex injector (<25ms in-process logic, ~120ms subprocess). |
 | **Spec-Driven Development** | `skills/spec-driven-development/` | Native GitHub Spec Kit SDD engine implementing the 10-phase lifecycle (Constitution, Spec, Plan, Tasks, Implement...). |
 | **Dual-Tier Router** | `scripts/dual_tier.py` | Computes task complexity (0-100), applies Quota Guard to simple tasks, and delegates to L2 Strategist. |
 | **Weekly Reporter** | `scripts/reporter.py` | Generates executive reports detailing operational KPIs, token savings, top skills, and system health. |
@@ -112,10 +112,10 @@ All verified solutions, execution traces, and episodic experiences are governed 
 
 ## 🧪 Comprehensive Automated Testing & Council Gate Verification
 
-Omni-Kernel v4.1 maintains an exhaustive automated test suite with **100% pass rate (277/277 Tests PASS: 117 pytest suites + 160 remediation verification tests)** and an official cryptographically signed **`APPROVED`** verdict from the DeepSeek-V4.1-Flash Council Gate ([`docs/audits/omni_kernel_v41_final_approved_verdict.md`](docs/audits/omni_kernel_v41_final_approved_verdict.md)):
+Omni-Kernel v4.1 maintains an exhaustive automated test suite with **100% pass rate (277/277 Tests PASS, 0 Skipped: 117/117 in full pytest suite + 160/160 in remediation verification suites)** and an official cryptographically signed **`APPROVED`** verdict from the DeepSeek-V4.1-Flash Council Gate ([`docs/audits/omni_kernel_v41_final_approved_verdict.md`](docs/audits/omni_kernel_v41_final_approved_verdict.md), portable across `git clone` via SHA-256 content hash + HMAC-SHA256 verification):
 
 ```bash
-# 1. Core Engine, Tri-Tier Memory & Auditor Spec Suites (117 tests via pytest)
+# 1. Core Engine, Tri-Tier Memory & Auditor Spec Suites (117/117 passed in full tests/ + specs/; 110/110 passed for the 3 core paths)
 python -m pytest tests/ specs/001-omni-memory-v4/tests/ specs/002-deepseek-v41-auditor/tests/
 
 # 2. Cluster 1–3 & Round 7–9 Remediation Verification Suites (160 tests)
