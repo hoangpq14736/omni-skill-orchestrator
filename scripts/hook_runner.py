@@ -249,6 +249,7 @@ def verify_critic_artifact(workspace_dir: str, target_file: str = None, user_pro
                 if not isinstance(meta_hash, str) or not meta_hash.strip():
                     meta["stale_reason"] = "input_hash missing or invalid in inline audit metadata"
                     if best_verdict == "UNREVIEWED":
+                        best_verdict = "STALE_REVIEW"
                         best_meta = meta
                     continue
                 redacted_prompt = redact_secrets(user_prompt) or user_prompt
@@ -352,7 +353,9 @@ def verify_critic_artifact(workspace_dir: str, target_file: str = None, user_pro
                 best_verdict = verdict
                 best_meta = meta
 
-        except Exception:
+        except Exception as e:
+            persist_diag(e, 256)
+            sys.stderr.write(f"[!] Warning: Exception during critic verification of {c_path}: {e}\n")
             continue
 
     return best_verdict, best_meta
@@ -568,14 +571,15 @@ def process_hook(payload: dict) -> dict:
 
     skills = resolution.get("skills", [])
     
-    # VULN-008 & VULN-107: Low-latency SQLite staging insert (<20ms SLA budget, WAL mode enabled)
+    # VULN-008, VULN-107 & VULN-002: Low-latency SQLite staging insert with resilient spooling under write contention
+    staging_spooled = False
     try:
         db_path = os.path.join(_SCRIPT_DIR, "..", "omni_memory.db")
         if os.path.exists(db_path):
-            conn = sqlite3.connect(db_path, timeout=0.05, isolation_level="IMMEDIATE")
+            conn = sqlite3.connect(db_path, timeout=0.25, isolation_level="IMMEDIATE")
             last_id = None
             try:
-                conn.execute("PRAGMA busy_timeout = 50;")
+                conn.execute("PRAGMA busy_timeout = 250;")
                 conn.execute("PRAGMA synchronous = NORMAL;")
                 with conn:
                     cursor = conn.cursor()
@@ -617,6 +621,23 @@ def process_hook(payload: dict) -> dict:
                     persist_diag(ex, 256)
     except sqlite3.OperationalError as e:
         persist_diag(e, 256)
+        # VULN-002: Fallback to local append-only spool to prevent data loss under SQLite contention
+        try:
+            spool_path = os.path.join(_SCRIPT_DIR, "l1_staging_spool.jsonl")
+            spool_entry = {
+                "session_id": redact_secrets(str(payload.get("sessionId", "session_default")))[:64],
+                "timestamp": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                "user_input": safe_user_input[:250],
+                "workspace_hash": canonical_workspace_hash(workspace_dir),
+                "top_skill": safe_field(skills[0]["skill"]["name"], 64, single_line=True) if skills else "none",
+                "tier_used": resolution.get("tier_assessment", {}).get("tier", 1),
+                "recalled_traces": [t.get("trace", {}).get("id") for t in resolution.get("proven_traces", [])]
+            }
+            with open(spool_path, "a", encoding="utf-8") as sf:
+                sf.write(json.dumps(spool_entry, ensure_ascii=False) + "\n")
+            staging_spooled = True
+        except Exception as spool_err:
+            persist_diag(spool_err, 256)
     except Exception as e:
         persist_diag(e, 256)
 

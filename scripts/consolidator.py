@@ -539,6 +539,43 @@ class ConsolidatorEngine:
             self.conn.execute(f"SAVEPOINT {sp_drain};")
 
         try:
+            # Ingest spooled L1 rows from offline contention buffer (VULN-002)
+            spool_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "l1_staging_spool.jsonl")
+            if os.path.exists(spool_path):
+                try:
+                    with open(spool_path, "r", encoding="utf-8") as sf:
+                        spool_lines = sf.readlines()
+                    if spool_lines:
+                        for line in spool_lines:
+                            line = line.strip()
+                            if not line:
+                                continue
+                            try:
+                                s_data = json.loads(line)
+                                cur.execute(
+                                    """
+                                    INSERT INTO l1_staging_log (session_id, timestamp, user_input, workspace_hash, top_skill, tier_used, recalled_traces)
+                                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                                    """,
+                                    (
+                                        s_data.get("session_id", "session_default"),
+                                        s_data.get("timestamp", datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
+                                        s_data.get("user_input", "")[:250],
+                                        s_data.get("workspace_hash", ""),
+                                        s_data.get("top_skill", "none"),
+                                        s_data.get("tier_used", 1),
+                                        json.dumps(s_data.get("recalled_traces", []))
+                                    )
+                                )
+                            except Exception:
+                                pass
+                        try:
+                            os.remove(spool_path)
+                        except Exception:
+                            pass
+                except Exception as spool_drain_err:
+                    persist_diag(spool_drain_err, 256)
+
             if self.workspace_hash:
                 cur.execute(
                     """
@@ -650,7 +687,12 @@ class ConsolidatorEngine:
         if dry_run:
             if self.workspace_hash:
                 from memory_utils import legacy_workspace_hash
-                leg_h = legacy_workspace_hash(self.workspace_root or self.workspace_hash)
+                target_path = self.workspace_root
+                if not target_path:
+                    row_path = cur.execute("SELECT workspace_path FROM workspace_registry WHERE workspace_hash = ? LIMIT 1;", (self.workspace_hash,)).fetchone()
+                    if row_path and row_path[0]:
+                        target_path = row_path[0]
+                leg_h = legacy_workspace_hash(target_path) if target_path else self.workspace_hash
                 cur.execute(
                     """
                     SELECT event_id, session_id, timestamp, user_input, workspace_dir, feedback_score
@@ -659,7 +701,7 @@ class ConsolidatorEngine:
                     ORDER BY event_id ASC
                     LIMIT ?;
                     """,
-                    (self.workspace_hash, self.workspace_root or self.workspace_hash, leg_h, batch_size)
+                    (self.workspace_hash, target_path or self.workspace_hash, leg_h, batch_size)
                 )
             else:
                 cur.execute(
@@ -735,7 +777,12 @@ class ConsolidatorEngine:
             # Step 2: Ingest unprocessed activation events under active write lock
             if self.workspace_hash:
                 from memory_utils import legacy_workspace_hash
-                leg_h = legacy_workspace_hash(self.workspace_root or self.workspace_hash)
+                target_path = self.workspace_root
+                if not target_path:
+                    row_path = cur.execute("SELECT workspace_path FROM workspace_registry WHERE workspace_hash = ? LIMIT 1;", (self.workspace_hash,)).fetchone()
+                    if row_path and row_path[0]:
+                        target_path = row_path[0]
+                leg_h = legacy_workspace_hash(target_path) if target_path else self.workspace_hash
                 cur.execute(
                     """
                     SELECT event_id, session_id, timestamp, user_input, workspace_dir, feedback_score
@@ -744,7 +791,7 @@ class ConsolidatorEngine:
                     ORDER BY event_id ASC
                     LIMIT ?;
                     """,
-                    (self.workspace_hash, self.workspace_root or self.workspace_hash, leg_h, batch_size)
+                    (self.workspace_hash, target_path or self.workspace_hash, leg_h, batch_size)
                 )
             else:
                 cur.execute(

@@ -322,6 +322,13 @@ def init_database(db_path: str = "omni_memory.db", isolation_level: Optional[str
             if "duplicate column name" not in str(oe).lower():
                 raise RuntimeError(f"Failed to migrate activation_events.last_error: {oe}") from oe
 
+    # VULN-003: Drop triggers before running legacy MD5->SHA-256 migration to avoid RAISE(ABORT)
+    conn.execute("DROP TRIGGER IF EXISTS trg_episodic_prevent_ws_update;")
+    conn.execute("DROP TRIGGER IF EXISTS trg_episodic_prevent_ws_replace;")
+    conn.execute("DROP TRIGGER IF EXISTS trg_episodic_after_update;")
+    conn.execute("DROP TRIGGER IF EXISTS trg_episodic_prevent_cross_tenant_supersede;")
+    conn.execute("DROP TRIGGER IF EXISTS trg_episodic_prevent_cross_tenant_supersede_insert;")
+
     # VULN-002 & VULN-001: Dual-key migration for legacy MD5 (32-hex) to canonical SHA-256 (64-hex)
     tables_exist = [r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table';").fetchall()]
     sp_mig = f"sp_mig_{uuid.uuid4().hex[:8]}"

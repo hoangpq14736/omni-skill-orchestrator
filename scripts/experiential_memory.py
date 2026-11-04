@@ -144,16 +144,17 @@ class FileLock:
     """
     def __init__(self, lock_file: str, timeout: float = 5.0):
         self.lock_file = os.path.abspath(lock_file)
+        self._lock_key = os.path.normcase(os.path.realpath(self.lock_file))
         self.timeout = timeout
         self.fd = None
         self._rlock = None
 
     def __enter__(self):
-        # VULN-003 & VULN-005: Acquire process-wide RLock with refcount tracking to prevent unbounded registry leak
-        self._rlock = _enter_process_rlock(self.lock_file)
+        # VULN-003 & VULN-005: Acquire process-wide RLock with refcount tracking on canonical key to prevent unbounded registry leak
+        self._rlock = _enter_process_rlock(self._lock_key)
         acquired = self._rlock.acquire(timeout=self.timeout)
         if not acquired:
-            _exit_process_rlock(self.lock_file)
+            _exit_process_rlock(self._lock_key)
             self._rlock = None
             raise TimeoutError(f"Could not acquire intra-process thread lock on {self.lock_file} within {self.timeout}s")
 
@@ -260,7 +261,7 @@ class FileLock:
         except Exception:
             if self._rlock is not None:
                 self._rlock.release()
-                _exit_process_rlock(self.lock_file)
+                _exit_process_rlock(self._lock_key)
                 self._rlock = None
             raise
 
@@ -287,7 +288,7 @@ class FileLock:
         finally:
             if self._rlock is not None:
                 self._rlock.release()
-                _exit_process_rlock(self.lock_file)
+                _exit_process_rlock(self._lock_key)
                 self._rlock = None
 
 
