@@ -26,6 +26,21 @@ for p in (REPO_ROOT, SCRIPTS_DIR, TESTS_DIR):
         sys.path.insert(0, p)
 
 import hook_runner
+from memory_utils import sign_audit_meta, canonical_workspace_hash
+import hashlib
+
+
+def make_signed_meta(tmp_ws, verdict, target_file, input_hash="sha256:12345", model="deepseek-chat"):
+    meta = {
+        "verdict": verdict,
+        "target_file": target_file,
+        "input_hash": input_hash,
+        "model": model,
+        "workspace_hash": canonical_workspace_hash(tmp_ws),
+        "timestamp_utc": "2026-11-04T12:00:00.000000+00:00"
+    }
+    meta["signature"] = sign_audit_meta(meta)
+    return meta
 
 
 class TestGatekeeperHook(unittest.TestCase):
@@ -70,13 +85,12 @@ class TestGatekeeperHook(unittest.TestCase):
 
     def test_verify_critic_artifact_rejected(self):
         with tempfile.TemporaryDirectory() as tmp_ws:
+            target_file = os.path.join(tmp_ws, "spec.md")
+            with open(target_file, "w", encoding="utf-8") as f:
+                f.write("# Spec content")
+            h = hashlib.sha256(b"# Spec content").hexdigest()
             review_file = os.path.join(tmp_ws, "CRITIC_REVIEW.md")
-            meta = {
-                "verdict": "REJECTED",
-                "target_file": "spec.md",
-                "input_hash": "sha256:12345",
-                "model": "deepseek-chat"
-            }
+            meta = make_signed_meta(tmp_ws, "REJECTED", "spec.md", input_hash=f"sha256:{h}")
             with open(review_file, "w", encoding="utf-8") as f:
                 f.write(f"<!-- OMNI_AUDIT_META: {json.dumps(meta)} -->\n# Audit Report\nFindings...")
 
@@ -87,12 +101,11 @@ class TestGatekeeperHook(unittest.TestCase):
     def test_verify_critic_artifact_approved_target_file_matches(self):
         with tempfile.TemporaryDirectory() as tmp_ws:
             review_file = os.path.join(tmp_ws, "CRITIC_REVIEW.md")
-            meta = {
-                "verdict": "APPROVED",
-                "target_file": "spec.md",
-                "input_hash": "sha256:abcde",
-                "model": "deepseek-chat"
-            }
+            target_file = os.path.join(tmp_ws, "spec.md")
+            with open(target_file, "w", encoding="utf-8") as f:
+                f.write("# Spec content")
+            h = hashlib.sha256(b"# Spec content").hexdigest()
+            meta = make_signed_meta(tmp_ws, "APPROVED", "spec.md", input_hash=f"sha256:{h}")
             with open(review_file, "w", encoding="utf-8") as f:
                 f.write(f"<!-- OMNI_AUDIT_META: {json.dumps(meta)} -->\n# Approved Report\n100% sound.")
 
@@ -104,12 +117,7 @@ class TestGatekeeperHook(unittest.TestCase):
         """FLAW-002: Review for spec.md must NOT approve plan.md."""
         with tempfile.TemporaryDirectory() as tmp_ws:
             review_file = os.path.join(tmp_ws, "CRITIC_REVIEW.md")
-            meta = {
-                "verdict": "APPROVED",
-                "target_file": "spec.md",
-                "input_hash": "sha256:abcde",
-                "model": "deepseek-chat"
-            }
+            meta = make_signed_meta(tmp_ws, "APPROVED", "spec.md", input_hash="sha256:abcde")
             with open(review_file, "w", encoding="utf-8") as f:
                 f.write(f"<!-- OMNI_AUDIT_META: {json.dumps(meta)} -->\n# Approved Report")
 
@@ -133,12 +141,11 @@ class TestGatekeeperHook(unittest.TestCase):
     def test_two_state_directive_injection_approved(self):
         with tempfile.TemporaryDirectory() as tmp_ws:
             review_file = os.path.join(tmp_ws, "CRITIC_REVIEW.md")
-            meta = {
-                "verdict": "APPROVED",
-                "target_file": "spec.md",
-                "input_hash": "sha256:12345",
-                "model": "deepseek-chat"
-            }
+            target_file = os.path.join(tmp_ws, "spec.md")
+            with open(target_file, "w", encoding="utf-8") as f:
+                f.write("# Spec content")
+            h = hashlib.sha256(b"# Spec content").hexdigest()
+            meta = make_signed_meta(tmp_ws, "APPROVED", "spec.md", input_hash=f"sha256:{h}")
             with open(review_file, "w", encoding="utf-8") as f:
                 f.write(f"<!-- OMNI_AUDIT_META: {json.dumps(meta)} -->\n# Approved Report\n100% sound.")
 
@@ -160,12 +167,7 @@ class TestGatekeeperHook(unittest.TestCase):
             target_file = os.path.join(tmp_ws, "spec.md")
 
             # Create review file with older timestamp
-            meta = {
-                "verdict": "APPROVED",
-                "target_file": "spec.md",
-                "input_hash": "sha256:dummy",
-                "model": "deepseek-chat"
-            }
+            meta = make_signed_meta(tmp_ws, "APPROVED", "spec.md", input_hash="sha256:dummy")
             with open(review_file, "w", encoding="utf-8") as f:
                 f.write(f"<!-- OMNI_AUDIT_META: {json.dumps(meta)} -->\n# Approved Report")
             os.utime(review_file, (1000000, 1000000))
@@ -181,7 +183,6 @@ class TestGatekeeperHook(unittest.TestCase):
 
     def test_verify_critic_artifact_stale_when_hash_mismatches(self):
         """TOCTOU Defense: If target_file content hash does not match input_hash in review, return STALE_REVIEW."""
-        import hashlib
         with tempfile.TemporaryDirectory() as tmp_ws:
             review_file = os.path.join(tmp_ws, "CRITIC_REVIEW.md")
             target_file = os.path.join(tmp_ws, "spec.md")
@@ -190,12 +191,7 @@ class TestGatekeeperHook(unittest.TestCase):
                 f.write("# Genuine content")
 
             # Review with different hash
-            meta = {
-                "verdict": "APPROVED",
-                "target_file": "spec.md",
-                "input_hash": "sha256:badhash12345",
-                "model": "deepseek-chat"
-            }
+            meta = make_signed_meta(tmp_ws, "APPROVED", "spec.md", input_hash="sha256:badhash12345")
             with open(review_file, "w", encoding="utf-8") as f:
                 f.write(f"<!-- OMNI_AUDIT_META: {json.dumps(meta)} -->\n# Approved Report")
 

@@ -29,9 +29,9 @@ description: "Granular, dependency-ordered task breakdown for Omni-Memory v4.0 p
 
 **Purpose**: Establish workspace directories, configuration, and shared test harnesses.
 
-- [ ] T001 Initialize SDD feature directory and configuration files in `.specify/` and `specs/001-omni-memory-v4/`
-- [ ] T002 [P] Configure shared Pytest fixtures and mock worker drivers in `specs/001-omni-memory-v4/tests/conftest.py`
-- [ ] T003 [P] Configure Windows AppLocker and Python 3.11+ stdlib validation checks in `specs/001-omni-memory-v4/tests/test_environment.py`
+- [x] T001 Initialize SDD feature directory and configuration files in `.specify/` and `specs/001-omni-memory-v4/`
+- [x] T002 [P] Configure shared Pytest fixtures and mock worker drivers in `specs/001-omni-memory-v4/tests/conftest.py`
+- [x] T003 [P] Configure Windows AppLocker and Python 3.11+ stdlib validation checks in `specs/001-omni-memory-v4/tests/test_environment.py`
 
 ---
 
