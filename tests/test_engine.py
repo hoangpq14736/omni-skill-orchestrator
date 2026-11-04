@@ -166,8 +166,8 @@ class TestOmniSkillOrchestrator(unittest.TestCase):
         import tempfile
         import shutil
 
-        # Test failure case (bad test)
-        fail_res = run_sandbox_validation("assert 1 == 2, 'Should fail'")
+        # Test failure case (bad test with allow_exec=True)
+        fail_res = run_sandbox_validation("assert 1 == 2, 'Should fail'", allow_exec=True)
         self.assertFalse(fail_res[0])
         self.assertIn("Should fail", fail_res[2])
 
@@ -267,9 +267,9 @@ class TestOmniSkillOrchestrator(unittest.TestCase):
         self.assertFalse(success_syntax)
         self.assertTrue(len(err_syntax) > 0)
 
-        # Timeout containment
+        # Timeout containment (with allow_exec=True)
         timeout_code = "import time\ntime.sleep(10)"
-        success_timeout, _, err_timeout = run_sandbox_validation(timeout_code, timeout_sec=1)
+        success_timeout, _, err_timeout = run_sandbox_validation(timeout_code, timeout_sec=1, allow_exec=True)
         self.assertFalse(success_timeout)
         self.assertIn("timed out", err_timeout)
 
@@ -428,7 +428,7 @@ class TestOmniSkillOrchestrator(unittest.TestCase):
 
             # 2. Recall matching trace
             start_t = time.perf_counter()
-            recalled = recall_traces("lỗi docker port conflict 8080", traces_path=tmp_traces_path)
+            recalled = recall_traces("lỗi docker port conflict 8080", traces_path=tmp_traces_path, allow_unscoped=True)
             latency_ms = (time.perf_counter() - start_t) * 1000
             self.assertLess(latency_ms, 5.0, f"Memory recall took too long: {latency_ms:.2f}ms")
             self.assertTrue(len(recalled) > 0)
@@ -453,7 +453,7 @@ class TestOmniSkillOrchestrator(unittest.TestCase):
             self.assertEqual(updated_tr["success_count"], 2)
 
             # 4. Recall newly recorded trace
-            git_recalled = recall_traces("git rebase conflict", traces_path=tmp_traces_path)
+            git_recalled = recall_traces("git rebase conflict", traces_path=tmp_traces_path, allow_unscoped=True)
             self.assertTrue(len(git_recalled) > 0)
             self.assertEqual(git_recalled[0]["trace"]["id"], new_tr["id"])
 

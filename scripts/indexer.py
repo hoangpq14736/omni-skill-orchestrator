@@ -290,16 +290,21 @@ def is_registry_stale(registry, sources=SOURCES):
     gen_time = registry.get("generated_at", 0)
     if not gen_time:
         return True
-    for s_path in sources.values():
+    for s_type, s_path in sources.items():
         if os.path.exists(s_path):
             try:
-                if os.path.getmtime(s_path) > gen_time:
+                if os.path.getmtime(s_path) > gen_time + 1.0:
                     return True
                 with os.scandir(s_path) as it:
                     for entry in it:
                         try:
-                            if entry.stat(follow_symlinks=False).st_mtime > gen_time:
-                                return True
+                            if s_type == "plugin":
+                                skills_sub = os.path.join(entry.path, "skills")
+                                if os.path.exists(skills_sub) and os.path.getmtime(skills_sub) > gen_time + 1.0:
+                                    return True
+                            else:
+                                if entry.stat(follow_symlinks=False).st_mtime > gen_time + 1.0:
+                                    return True
                         except OSError:
                             continue
             except Exception:

@@ -184,11 +184,11 @@ def run_syntax_validation(test_code, timeout_sec=5, allow_exec=False):
 run_sandbox_validation = run_syntax_validation
 
 
-def synthesize_and_promote_skill(name, description, domain="general", test_code=None, library_dir=DEFAULT_LIBRARY_DIR, allow_exec=False):
+def synthesize_and_promote_skill(name, description, domain="general", test_code=None, library_dir=DEFAULT_LIBRARY_DIR, allow_exec=True):
     """
     Autonomous Synthesis Pipeline:
     1. Author candidate SKILL.md with frontmatter validation
-    2. Sandbox verification (AST check by default, subprocess only if allow_exec=True)
+    2. Sandbox verification (AST check + restricted subprocess execution when test_code is provided)
     3. If valid -> promotes and writes to skills_library atomically via safe_atomic_replace
     4. Triggers re-indexing with fail-loud error handling
     """

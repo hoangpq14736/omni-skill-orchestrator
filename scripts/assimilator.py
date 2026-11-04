@@ -26,6 +26,9 @@ MAX_WORKSPACE_READ = 64 * 1024       # 64 KiB max per skill/rule file
 MAX_WORKSPACE_SKILLS = 50            # Max local skills scanned
 MAX_WORKSPACE_RULES = 100            # Max local rules scanned
 
+_ASSIMILATE_CACHE = {}
+_ASSIMILATE_TTL = 2.0                # 2.0s in-memory cache for repeated calls within same process
+
 
 def get_workspace_hash(workspace_dir: str) -> str:
     """Generates a stable MD5 identifier for a workspace path."""
@@ -228,14 +231,20 @@ def find_workspace_rules(workspace_dir: str, is_trusted: bool = False, blocked_l
 def assimilate_workspace(workspace_dir: str) -> dict:
     """Extracts all workspace-level skills and rules non-destructively, guarded by AssimilatorGuard."""
     start = time.time()
+    norm_ws = os.path.abspath(workspace_dir).replace("\\", "/") if workspace_dir else ""
     is_trusted = is_trusted_workspace(workspace_dir)
+    cache_key = (norm_ws, is_trusted)
+    cached = _ASSIMILATE_CACHE.get(cache_key)
+    if cached and (start - cached[0]) < _ASSIMILATE_TTL:
+        return cached[1]
+
     blocked = []
     skills = find_workspace_skills(workspace_dir, is_trusted=is_trusted, blocked_list=blocked)
     rules = find_workspace_rules(workspace_dir, is_trusted=is_trusted, blocked_list=blocked)
     elapsed = (time.time() - start) * 1000
 
-    return {
-        "workspace_dir": os.path.abspath(workspace_dir).replace("\\", "/"),
+    res = {
+        "workspace_dir": norm_ws,
         "workspace_hash": get_workspace_hash(workspace_dir),
         "is_trusted": is_trusted,
         "skills_count": len(skills),
@@ -246,6 +255,8 @@ def assimilate_workspace(workspace_dir: str) -> dict:
         "rules": rules,
         "elapsed_ms": round(elapsed, 2)
     }
+    _ASSIMILATE_CACHE[cache_key] = (start, res)
+    return res
 
 
 def main():

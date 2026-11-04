@@ -24,6 +24,7 @@ DEFAULT_MCP_DIRS = [
     os.path.expanduser(r"~\.gemini\config\plugins")
 ]
 GLOBAL_MCP_CONFIG = os.path.expanduser(r"~\.gemini\config\mcp_config.json")
+MCP_INDEX_CACHE_PATH = os.path.join(_SCRIPT_DIR, "mcp_index_cache.json")
 
 # Metadata files to exclude from tool indexing (VULN-008)
 METADATA_EXCLUDED_FILES = {
@@ -241,12 +242,11 @@ def is_mcp_stale(index_data: dict, base_dirs: list = None) -> bool:
                 for entry in it:
                     if entry.is_dir():
                         try:
-                            if entry.stat(follow_symlinks=False).st_mtime > indexed_at:
-                                return True
                             with os.scandir(entry.path) as sit:
                                 for f in sit:
-                                    if f.is_file() and f.stat(follow_symlinks=False).st_mtime > indexed_at:
-                                        return True
+                                    if f.is_file() and f.name.lower().endswith(".json") and f.name.lower() not in METADATA_EXCLUDED_FILES:
+                                        if f.stat(follow_symlinks=False).st_mtime > indexed_at:
+                                            return True
                         except OSError:
                             continue
         except Exception:
@@ -268,6 +268,17 @@ def get_mcp_index(force_refresh: bool = False, base_dirs: list = None) -> dict:
     now = time.time()
 
     with _MCP_LOCK:
+        if _CACHED_MCP_INDEX is None and base_dirs is None and not force_refresh and os.path.exists(MCP_INDEX_CACHE_PATH):
+            try:
+                with open(MCP_INDEX_CACHE_PATH, "r", encoding="utf-8") as cf:
+                    disk_idx = json.load(cf)
+                if isinstance(disk_idx, dict) and not is_mcp_stale(disk_idx, base_dirs):
+                    _CACHED_MCP_INDEX = disk_idx
+                    _CACHED_MCP_TIME = disk_idx.get("indexed_at", now)
+                    _LAST_STALE_CHECK = now
+                    return _CACHED_MCP_INDEX
+            except Exception:
+                pass
         curr_idx = _CACHED_MCP_INDEX
         need_refresh = force_refresh or (curr_idx is None)
         if not need_refresh:
@@ -292,6 +303,14 @@ def get_mcp_index(force_refresh: bool = False, base_dirs: list = None) -> dict:
         servers = discover_mcp_servers(base_dirs)
         new_index = index_mcp_tools(servers)
         finish_time = time.time()
+        if base_dirs is None:
+            try:
+                tmp_mcp = f"{MCP_INDEX_CACHE_PATH}.{os.getpid()}.tmp"
+                with open(tmp_mcp, "w", encoding="utf-8") as cf:
+                    json.dump(new_index, cf, ensure_ascii=False)
+                os.replace(tmp_mcp, MCP_INDEX_CACHE_PATH)
+            except Exception:
+                pass
         with _MCP_LOCK:
             _CACHED_MCP_INDEX = new_index
             _CACHED_MCP_TIME = finish_time

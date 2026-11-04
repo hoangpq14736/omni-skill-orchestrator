@@ -18,6 +18,9 @@ import unicodedata
 from workspace_sanitizer import TrustFileLock
 
 _AFFINITY_LOCK = threading.RLock()
+_CACHED_REGISTRY = None
+_CACHED_REGISTRY_MTIME = 0.0
+_CACHED_STACK = {}
 
 if hasattr(sys.stdout, "reconfigure"):
     try:
@@ -161,9 +164,9 @@ SPECIFICITY_MAP = {
     # Mobile
     "flutter": 3, "react-native": 3, "compose": 3, "swiftui": 3, "android": 2, "ios": 2, "dart": 1, "swift": 1, "kotlin": 1,
     # Database / Data
-    "bigquery-sql": 5, "bigquery": 3, "prisma": 4, "drizzle": 3, "postgres": 2, "mysql": 2, "database": 1,
-    # Review / Standards
-    "ponytail": 5, "code-reviewer": 2, "coding-standards": 1,
+    "bigquery-sql": 5, "database-migrations": 3, "bigquery": 3, "prisma": 4, "drizzle": 3, "postgres": 2, "mysql": 2, "database": 2,
+    # Review / Standards / Debugging
+    "ponytail": 5, "systematic-debugging": 5, "code-reviewer": 2, "coding-standards": 1,
     # Hardware & Embedded
     "baremetal": 5, "embedded": 4, "firmware": 3,
     # Office & Google Suite
@@ -479,10 +482,25 @@ def get_learned_stats(affinities_path=None):
 
 
 def load_registry(registry_path=REGISTRY_PATH):
+    global _CACHED_REGISTRY, _CACHED_REGISTRY_MTIME
     if not os.path.exists(registry_path):
         from indexer import build_index
-        return build_index(registry_path)
+        reg = build_index(registry_path)
+        if registry_path == REGISTRY_PATH:
+            _CACHED_REGISTRY = reg
+            _CACHED_REGISTRY_MTIME = os.path.getmtime(registry_path) if os.path.exists(registry_path) else time.time()
+        return reg
     try:
+        curr_mtime = os.path.getmtime(registry_path)
+        if registry_path == REGISTRY_PATH and _CACHED_REGISTRY is not None and curr_mtime == _CACHED_REGISTRY_MTIME:
+            from indexer import is_registry_stale, build_index
+            if not is_registry_stale(_CACHED_REGISTRY):
+                return _CACHED_REGISTRY
+            reg = build_index(registry_path)
+            _CACHED_REGISTRY = reg
+            _CACHED_REGISTRY_MTIME = os.path.getmtime(registry_path)
+            return reg
+
         with open(registry_path, "r", encoding="utf-8") as f:
             registry = json.load(f)
         if not isinstance(registry, dict):
@@ -491,7 +509,11 @@ def load_registry(registry_path=REGISTRY_PATH):
         # Self-healing & auto-update: if files were added/modified, re-index automatically
         from indexer import is_registry_stale, build_index
         if is_registry_stale(registry):
-            return build_index(registry_path)
+            registry = build_index(registry_path)
+            curr_mtime = os.path.getmtime(registry_path) if os.path.exists(registry_path) else time.time()
+        if registry_path == REGISTRY_PATH:
+            _CACHED_REGISTRY = registry
+            _CACHED_REGISTRY_MTIME = curr_mtime
         return registry
     except Exception as e:
         bak_path = f"{registry_path}.corrupt.{int(time.time())}.bak"
@@ -508,6 +530,12 @@ def detect_workspace_stack(workspace_dir):
     """Inspects workspace marker files and dependencies to extract stack tags."""
     if not workspace_dir or not os.path.exists(workspace_dir):
         return []
+
+    now = time.time()
+    norm_ws = os.path.abspath(workspace_dir).replace("\\", "/")
+    cached = _CACHED_STACK.get(norm_ws)
+    if cached and (now - cached[0]) < 2.0:
+        return list(cached[1])
 
     tags = set()
     files = []
@@ -578,9 +606,11 @@ def detect_workspace_stack(workspace_dir):
         elif base.endswith(".py") and "python" not in tags:
             tags.update(["python"])
         elif base == "plugin.json":
-            tags.update(["plugin", "antigravity", "customization"])
+            tags.update(["plugin"])
 
-    return list(tags)
+    tag_list = list(tags)
+    _CACHED_STACK[norm_ws] = (now, tag_list)
+    return tag_list
 
 
 def _parse_package_json(pkg_path, tags):
@@ -672,7 +702,7 @@ def strip_accents(text):
 
 
 def extract_query_tokens(text):
-    """Extracts Unicode words, compound phrases, strips accents, and expands technical synonyms."""
+    """Extracts Unicode words, compound phrases, strips accents, stems suffixes, and expands technical synonyms."""
     if not text:
         return set()
     text_lower = text.lower()
@@ -680,13 +710,39 @@ def extract_query_tokens(text):
     raw_words = re.findall(r'\b[\w\-]+\b', text_lower, re.UNICODE)
     raw_words_unaccented = re.findall(r'\b[\w\-]+\b', text_unaccented, re.UNICODE)
     tokens = set([w for w in raw_words + raw_words_unaccented if len(w) >= 2])
-    
+
+    # Lightweight technical stemming & bidirectional morphological expansion
+    TECH_MORPH_EXPANSIONS = {
+        "debug": ["debugging", "systematic-debugging", "troubleshoot", "troubleshooting", "bug"],
+        "debugging": ["debug", "systematic-debugging", "troubleshoot"],
+        "sqlite": ["sql", "database", "database-migrations", "migrations", "backend-patterns", "wal", "concurrency"],
+        "database": ["sql", "database-migrations", "migrations", "backend-patterns"],
+        "lock": ["locking", "concurrency", "deadlock", "mutex", "systematic-debugging", "backend-patterns"],
+        "migrate": ["migration", "migrations", "database-migrations"],
+        "migration": ["migrate", "migrations", "database-migrations"],
+        "test": ["testing", "tests", "tdd"],
+        "testing": ["test", "tests", "tdd"],
+        "optimize": ["optimization", "performance", "tuning"],
+    }
+    for tok in list(tokens):
+        if tok in TECH_MORPH_EXPANSIONS:
+            tokens.update(TECH_MORPH_EXPANSIONS[tok])
+        if len(tok) > 4:
+            if tok.endswith("ing"):
+                stem = tok[:-3]
+                if len(stem) >= 3:
+                    tokens.add(stem)
+                    if len(stem) >= 4 and stem[-1] == stem[-2]:
+                        tokens.add(stem[:-1])  # e.g. debugging -> debug
+            elif tok.endswith("s") and not tok.endswith("ss"):
+                tokens.add(tok[:-1])
+
     # Expand with synonyms (matches both accented and unaccented variations)
     for phrase, syns in VI_EN_SYNONYMS.items():
         phrase_unaccented = strip_accents(phrase)
         if phrase in text_lower or phrase_unaccented in text_unaccented:
             tokens.update(syns)
-            
+
     return tokens
 
 
@@ -781,6 +837,29 @@ def resolve_skill(intent_text="", workspace_dir=None, registry=None, top_k=3, af
                     score -= 60
                     break
 
+        # Scientific/Biomedical domain penalty unless biomedical/chemistry/patent intent is requested
+        SCIENTIFIC_DOMAINS = [
+            "scientific-db-", "scientific-pkg-", "reactome", "pubmed", "uspto",
+            "chembl", "uniprot", "ensembl", "genbank", "alphafold", "biopython",
+            "cosmic", "clinvar", "kegg", "pdb", "gnomad", "omim", "GWAS"
+        ]
+        is_bio_intent = any(bv in query_tokens for bv in [
+            "bio", "biology", "biomedical", "gene", "genome", "genomic", "protein",
+            "pathway", "reactome", "pubmed", "patent", "uspto", "chemistry", "molecule", "drug"
+        ])
+        if not is_bio_intent:
+            for sdom in SCIENTIFIC_DOMAINS:
+                if sdom.lower() in name:
+                    score -= 75
+                    break
+
+        # Browser/Frontend-only debugging penalty when backend/database/SQLite intent is present without web/browser intent
+        is_db_or_backend_intent = any(dt in query_tokens for dt in ["sqlite", "sql", "database", "postgres", "mysql", "backend", "lock", "wal"])
+        is_browser_intent = any(bt in query_tokens for bt in ["chrome", "browser", "cookie", "a11y", "lcp", "css", "dom", "html", "frontend", "heap", "leak", "web"])
+        if is_db_or_backend_intent and not is_browser_intent:
+            if any(b_name in name for b_name in ["cookie-debugging", "a11y-debugging", "debug-optimize-lcp", "chrome-devtools", "memory-leak-debugging", "troubleshooting", "agent-introspection-debugging", "modern-web-guidance"]):
+                score -= 95
+
         # Quality bonus
         score += (s.get("quality_score", 50) / 10.0)
 
@@ -860,7 +939,7 @@ def resolve_skill(intent_text="", workspace_dir=None, registry=None, top_k=3, af
             }
         try:
             from experiential_memory import recall_traces
-            proven_traces = recall_traces(intent_text, workspace_dir=workspace_dir, top_k=2)
+            proven_traces = recall_traces(intent_text, workspace_dir=workspace_dir, top_k=2, allow_unscoped=True)
         except Exception:
             proven_traces = []
         try:
@@ -911,7 +990,7 @@ def resolve_skill(intent_text="", workspace_dir=None, registry=None, top_k=3, af
     # Cross-Session Experiential Memory Recall (<0.3ms)
     try:
         from experiential_memory import recall_traces
-        proven_traces = recall_traces(intent_text, workspace_dir=workspace_dir, top_k=2)
+        proven_traces = recall_traces(intent_text, workspace_dir=workspace_dir, top_k=2, allow_unscoped=True)
     except Exception:
         proven_traces = []
 

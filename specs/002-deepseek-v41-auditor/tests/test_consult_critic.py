@@ -132,7 +132,7 @@ class TestSystemPromptAndConditionalSchema(unittest.TestCase):
 
     def test_system_prompt_rfc_mode_contains_flaw001_contract(self):
         prompt = consult_critic.build_system_prompt("rfc")
-        self.assertIn("FLAW-001", prompt)
+        self.assertIn("PERSONAL PROJECT", prompt)
         self.assertIn("critical_vulnerabilities", prompt)
         self.assertIn("edge_cases", prompt)
         self.assertIn("minItems: 3", prompt)

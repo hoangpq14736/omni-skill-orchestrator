@@ -685,12 +685,11 @@ def recall_traces(query_text: str,
     scored.sort(key=lambda x: x["score"], reverse=True)
     results = scored[:top_k]
 
-    # Update last_recalled for top matches
-    if results and (traces_path is None or traces_path == TRACES_FILE):
+    # Update last_recalled in returned view (non-mutating read path to preserve <0.3ms SLA)
+    if results:
         now_str = time.strftime("%Y-%m-%d %H:%M:%S")
         for res in results:
             res["trace"]["last_recalled"] = now_str
-        save_traces(data, traces_path)
 
     return results
 

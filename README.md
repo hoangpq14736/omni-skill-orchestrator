@@ -3,8 +3,8 @@
 [![Agent Plugins 1.0.0](https://img.shields.io/badge/Spec-Agent%20Plugins%201.0.0-blue.svg)](https://agent-plugins.org)
 [![Python 3.10+](https://img.shields.io/badge/Python-3.10%2B-green.svg)](https://python.org)
 [![Zero Dependency Kernel](https://img.shields.io/badge/Dependencies-0%20(Pure%20Stdlib%20Kernel)-brightgreen.svg)]()
-[![Tests](https://img.shields.io/badge/Tests-288%2F288%20Passing-success.svg)]()
-[![Council Gate](https://img.shields.io/badge/DeepSeek%20Council%20Gate-APPROVED%20(0.88)-brightgreen.svg)](docs/audits/omni_kernel_v41_final_approved_verdict.md)
+[![Tests](https://img.shields.io/badge/Tests-277%2F277%20Passing-success.svg)]()
+[![Council Gate](https://img.shields.io/badge/DeepSeek%20Council%20Gate-APPROVED-brightgreen.svg)](docs/audits/omni_kernel_v41_final_approved_verdict.md)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 [English](README.md) • [Tiếng Việt](README.vi.md)
@@ -112,17 +112,17 @@ All verified solutions, execution traces, and episodic experiences are governed 
 
 ## 🧪 Comprehensive Automated Testing & Council Gate Verification
 
-Omni-Kernel v4.1 maintains an exhaustive automated test suite with **100% pass rate (288/288 Tests PASS)** and an official cryptographically signed **`APPROVED`** verdict from the DeepSeek-V4.1-Flash Council Gate ([`docs/audits/omni_kernel_v41_final_approved_verdict.md`](docs/audits/omni_kernel_v41_final_approved_verdict.md)):
+Omni-Kernel v4.1 maintains an exhaustive automated test suite with **100% pass rate (277/277 Tests PASS: 117 pytest suites + 160 remediation verification tests)** and an official cryptographically signed **`APPROVED`** verdict from the DeepSeek-V4.1-Flash Council Gate ([`docs/audits/omni_kernel_v41_final_approved_verdict.md`](docs/audits/omni_kernel_v41_final_approved_verdict.md)):
 
 ```bash
-# 1. Core Engine, Tri-Tier Memory & Auditor Spec Suites (129 tests)
-python -m pytest tests/test_engine.py specs/001-omni-memory-v4/tests/ specs/002-deepseek-v41-auditor/tests/
+# 1. Core Engine, Tri-Tier Memory & Auditor Spec Suites (117 tests via pytest)
+python -m pytest tests/ specs/001-omni-memory-v4/tests/ specs/002-deepseek-v41-auditor/tests/
 
-# 2. Cluster 1–3 & Round 7–9 Remediation Verification Suites (159 tests)
+# 2. Cluster 1–3 & Round 7–9 Remediation Verification Suites (160 tests)
 python scripts/test_cluster_1_remediation.py   # 69/69 passed (SQLite WAL, Outbox 2PC, SHA-256 Partitioning)
 python scripts/test_cluster_2_remediation.py   # 51/51 passed (Hook <25ms SLA, HMAC Gate, Trust Lock, Lifecycle Epoch)
 python scripts/test_cluster_3_remediation.py   # 17/17 passed (Resolver, AST Sandbox, CoW Stale-While-Revalidate)
-python scripts/test_round_7_remediation.py     # 22/22 passed (Cross-Cluster Integration & Edge Cases)
+python scripts/test_round_7_remediation.py     # 23/23 passed (Cross-Cluster Integration, Proven Recall & Edge Cases)
 ```
 
 ---

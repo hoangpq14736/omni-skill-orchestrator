@@ -850,6 +850,26 @@ class TestRound7Remediation(unittest.TestCase):
         self.assertEqual(row, 0, "Failed with conn: block must have rolled back atomically")
         conn.close()
 
+    def test_recall_traces_default_path_no_nameerror(self):
+        """
+        Regression test: recall_traces() on the default TRACES_FILE path with a matching
+        scoped trace must return results cleanly without raising NameError: name 'data' is not defined.
+        """
+        from experiential_memory import record_trace, recall_traces
+        ws_dir = self.temp_dir.name
+        rec = record_trace(
+            problem_signature="fix sqlite database lock contention in personal cli",
+            proven_solution="Use WAL mode with append-only spool and single writer queue",
+            action_type="pattern",
+            tags=["sqlite", "lock", "wal"],
+            workspace_context=ws_dir,
+            workspace_hash=canonical_workspace_hash(ws_dir)
+        )
+        self.assertTrue(rec.get("id"))
+        recalled = recall_traces("fix sqlite database lock contention", workspace_dir=ws_dir)
+        self.assertTrue(len(recalled) >= 1)
+        self.assertIn("last_recalled", recalled[0]["trace"])
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -31,7 +31,7 @@ class TestEbbinghausAlgebraicDecay(unittest.TestCase):
         self.temp_dir = tempfile.TemporaryDirectory()
         self.db_path = os.path.join(self.temp_dir.name, "test_decay.db")
         self.conn = init_database(self.db_path)
-        self.engine = ConsolidatorEngine(self.conn)
+        self.engine = ConsolidatorEngine(self.conn, allow_unscoped=True)
 
     def tearDown(self):
         self.conn.close()

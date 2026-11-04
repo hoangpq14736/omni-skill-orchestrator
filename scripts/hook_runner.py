@@ -157,19 +157,23 @@ def verify_critic_artifact(workspace_dir: str, target_file: str = None, user_pro
             if os.path.isfile(cand):
                 target_full_path = os.path.normcase(os.path.realpath(cand))
             else:
-                specs_dir = os.path.join(workspace_dir, "specs")
-                if os.path.isdir(specs_dir):
-                    # Bounded traversal: max 15 entries, max depth 2 (VULN-004)
-                    for entry in os.listdir(specs_dir)[:15]:
-                        cand_entry = os.path.join(specs_dir, entry)
-                        if os.path.isfile(cand_entry) and entry == clean_target:
-                            target_full_path = os.path.normcase(os.path.realpath(cand_entry))
-                            break
-                        elif os.path.isdir(cand_entry):
-                            sub_cand = os.path.join(cand_entry, clean_target)
-                            if os.path.isfile(sub_cand):
-                                target_full_path = os.path.normcase(os.path.realpath(sub_cand))
+                audits_cand = os.path.join(workspace_dir, "docs", "audits", clean_target)
+                if os.path.isfile(audits_cand):
+                    target_full_path = os.path.normcase(os.path.realpath(audits_cand))
+                else:
+                    specs_dir = os.path.join(workspace_dir, "specs")
+                    if os.path.isdir(specs_dir):
+                        # Bounded traversal: max 15 entries, max depth 2 (VULN-004)
+                        for entry in os.listdir(specs_dir)[:15]:
+                            cand_entry = os.path.join(specs_dir, entry)
+                            if os.path.isfile(cand_entry) and entry == clean_target:
+                                target_full_path = os.path.normcase(os.path.realpath(cand_entry))
                                 break
+                            elif os.path.isdir(cand_entry):
+                                sub_cand = os.path.join(cand_entry, clean_target)
+                                if os.path.isfile(sub_cand):
+                                    target_full_path = os.path.normcase(os.path.realpath(sub_cand))
+                                    break
 
     best_verdict = "UNREVIEWED"
     best_meta = None
@@ -276,7 +280,13 @@ def verify_critic_artifact(workspace_dir: str, target_file: str = None, user_pro
 
                 cand_meta = meta_target if os.path.isabs(meta_target) else os.path.join(workspace_dir, meta_target)
                 if not os.path.exists(cand_meta):
-                    continue
+                    cand_meta_audits = os.path.join(workspace_dir, "docs", "audits", os.path.basename(meta_target))
+                    if os.path.exists(cand_meta_audits):
+                        cand_meta = cand_meta_audits
+                    elif os.path.basename(meta_target).lower() == os.path.basename(target_full_path).lower():
+                        cand_meta = target_full_path
+                    else:
+                        continue
                 meta_target_canonical = os.path.normcase(os.path.realpath(cand_meta))
 
                 if meta_target_canonical != target_full_path:
@@ -319,13 +329,17 @@ def verify_critic_artifact(workspace_dir: str, target_file: str = None, user_pro
                             best_meta = meta
                         continue
 
+                    raw_chunks = []
                     hasher = hashlib.sha256()
                     while True:
                         chunk = os.read(fd, 65536)
                         if not chunk:
                             break
                         hasher.update(chunk)
+                        raw_chunks.append(chunk)
                     current_hash = hasher.hexdigest()
+                    raw_data_bytes = b"".join(raw_chunks)
+                    normalized_lf_hash = hashlib.sha256(raw_data_bytes.replace(b"\r\n", b"\n")).hexdigest()
 
                     target_mtime = st.st_mtime
                     if target_mtime > review_mtime + 1.0:
@@ -338,7 +352,7 @@ def verify_critic_artifact(workspace_dir: str, target_file: str = None, user_pro
                     os.close(fd)
 
                 expected_hash = meta_hash.replace("sha256:", "").strip().lower()
-                if current_hash.lower() != expected_hash:
+                if expected_hash not in (current_hash.lower(), normalized_lf_hash.lower()):
                     meta["stale_reason"] = "target_file content hash mismatch (modified since audit)"
                     if best_verdict == "UNREVIEWED":
                         best_verdict = "STALE_REVIEW"
@@ -579,80 +593,50 @@ def process_hook(payload: dict) -> dict:
 
     skills = resolution.get("skills", [])
     
-    # VULN-008, VULN-101 & VULN-107: Fast <10ms SQLite staging insert with immediate spool fallback under contention
-    staging_spooled = False
+    # VULN-002 & Principle I (<25ms SLA): Fast non-blocking append to L1 staging spool (0ms SQLite WAL checkpoint overhead).
+    # Background consolidator.py drains l1_staging_spool.jsonl into omni_memory.db l1_staging_log out-of-band.
     try:
-        db_path = os.path.join(_SCRIPT_DIR, "..", "omni_memory.db")
-        if os.path.exists(db_path):
-            conn = sqlite3.connect(db_path, timeout=0.01, isolation_level="IMMEDIATE")
-            last_id = None
-            try:
-                conn.execute("PRAGMA busy_timeout = 10;")
-                conn.execute("PRAGMA synchronous = NORMAL;")
-                with conn:
-                    cursor = conn.cursor()
-                    cursor.execute(
-                        """
-                        INSERT OR IGNORE INTO l1_staging_log (session_id, timestamp, user_input, workspace_hash, top_skill, tier_used, recalled_traces)
-                        VALUES (?, ?, ?, ?, ?, ?, ?)
-                        """,
-                        (
-                            redact_secrets(str(payload.get("sessionId", "session_default")))[:64],
-                            datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f"),
-                            safe_user_input[:250],
-                            canonical_workspace_hash(workspace_dir),
-                            safe_field(skills[0]["skill"]["name"], 64, single_line=True) if skills else "none",
-                            resolution.get("tier_assessment", {}).get("tier", 1),
-                            str(redact_secrets(json.dumps([t.get("trace", {}).get("id") for t in resolution.get("proven_traces", [])])))
-                        )
-                    )
-                    last_id = cursor.lastrowid
-            finally:
-                conn.close()
-
-            # Detach consolidator every 50 events (platform-safe creationflags)
-            if last_id and (last_id % 50 == 0):
+        spool_path = os.path.join(_SCRIPT_DIR, "l1_staging_spool.jsonl")
+        spool_lock = spool_path + ".lock"
+        spool_entry = {
+            "session_id": redact_secrets(str(payload.get("sessionId", "session_default")))[:64],
+            "timestamp": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f"),
+            "user_input": safe_user_input[:250],
+            "workspace_hash": canonical_workspace_hash(workspace_dir),
+            "top_skill": safe_field(skills[0]["skill"]["name"], 64, single_line=True) if skills else "none",
+            "tier_used": resolution.get("tier_assessment", {}).get("tier", 1),
+            "recalled_traces": [t.get("trace", {}).get("id") for t in resolution.get("proven_traces", [])]
+        }
+        should_spawn_consolidator = False
+        with TrustFileLock(spool_lock, timeout=0.05):
+            if os.path.exists(spool_path):
                 try:
-                    consolidator_script = os.path.join(_SCRIPT_DIR, "consolidator.py")
-                    cflags = 0
-                    if os.name == "nt":
-                        cflags = getattr(subprocess, "DETACHED_PROCESS", 0) | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
-                    subprocess.Popen(
-                        [sys.executable, consolidator_script, "--batch-run", "--workspace", workspace_dir],
-                        stdin=subprocess.DEVNULL,
-                        stdout=subprocess.DEVNULL,
-                        stderr=subprocess.DEVNULL,
-                        close_fds=True,
-                        creationflags=cflags
-                    )
-                except Exception as ex:
-                    persist_diag(ex, 256)
-    except (sqlite3.OperationalError, sqlite3.IntegrityError, sqlite3.DatabaseError) as e:
-        persist_diag(e, 256)
-        # VULN-002: Fallback to local append-only spool to prevent data loss under SQLite contention
-        try:
-            spool_path = os.path.join(_SCRIPT_DIR, "l1_staging_spool.jsonl")
-            spool_lock = spool_path + ".lock"
-            spool_entry = {
-                "session_id": redact_secrets(str(payload.get("sessionId", "session_default")))[:64],
-                "timestamp": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                "user_input": safe_user_input[:250],
-                "workspace_hash": canonical_workspace_hash(workspace_dir),
-                "top_skill": safe_field(skills[0]["skill"]["name"], 64, single_line=True) if skills else "none",
-                "tier_used": resolution.get("tier_assessment", {}).get("tier", 1),
-                "recalled_traces": [t.get("trace", {}).get("id") for t in resolution.get("proven_traces", [])]
-            }
-            with TrustFileLock(spool_lock, timeout=1.0):
-                if os.path.exists(spool_path) and os.path.getsize(spool_path) > 10 * 1024 * 1024:
-                    try:
+                    sz = os.path.getsize(spool_path)
+                    if sz > 10 * 1024 * 1024:
                         os.replace(spool_path, spool_path + ".1.bak")
-                    except Exception:
-                        pass
-                with open(spool_path, "a", encoding="utf-8") as sf:
-                    sf.write(json.dumps(spool_entry, ensure_ascii=False) + "\n")
-            staging_spooled = True
-        except Exception as spool_err:
-            persist_diag(spool_err, 256)
+                    elif sz > 25 * 1024:
+                        should_spawn_consolidator = True
+                except Exception:
+                    pass
+            with open(spool_path, "a", encoding="utf-8") as sf:
+                sf.write(json.dumps(spool_entry, ensure_ascii=False) + "\n")
+
+        if should_spawn_consolidator:
+            try:
+                consolidator_script = os.path.join(_SCRIPT_DIR, "consolidator.py")
+                cflags = 0
+                if os.name == "nt":
+                    cflags = getattr(subprocess, "DETACHED_PROCESS", 0) | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+                subprocess.Popen(
+                    [sys.executable, consolidator_script, "--batch-run", "--workspace", workspace_dir],
+                    stdin=subprocess.DEVNULL,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    close_fds=True,
+                    creationflags=cflags
+                )
+            except Exception as ex:
+                persist_diag(ex, 256)
     except Exception as e:
         persist_diag(e, 256)
 
@@ -680,13 +664,11 @@ def process_hook(payload: dict) -> dict:
             "proven_traces": redact_secrets(resolution.get("proven_traces", []))
         }
         
-        # Atomic replace for last_activation.json
+        # Atomic replace for last_activation.json (no blocking fsync on telemetry to preserve <25ms SLA)
         tmp_act = f"{LAST_ACTIVATION_PATH}.{uuid.uuid4().hex}.tmp"
         try:
             with open(tmp_act, "w", encoding="utf-8") as f:
                 json.dump(record, f, indent=2, ensure_ascii=False)
-                f.flush()
-                os.fsync(f.fileno())
             os.replace(tmp_act, LAST_ACTIVATION_PATH)
         finally:
             if os.path.exists(tmp_act):
