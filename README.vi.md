@@ -3,7 +3,8 @@
 [![Agent Plugins 1.0.0](https://img.shields.io/badge/Spec-Agent%20Plugins%201.0.0-blue.svg)](https://agent-plugins.org)
 [![Python 3.10+](https://img.shields.io/badge/Python-3.10%2B-green.svg)](https://python.org)
 [![Zero Dependency Kernel](https://img.shields.io/badge/Dependencies-0%20(Pure%20Stdlib%20Kernel)-brightgreen.svg)]()
-[![Tests](https://img.shields.io/badge/Tests-129%2F129%20Passing-success.svg)]()
+[![Tests](https://img.shields.io/badge/Tests-288%2F288%20Passing-success.svg)]()
+[![Council Gate](https://img.shields.io/badge/DeepSeek%20Council%20Gate-APPROVED%20(0.88)-brightgreen.svg)](docs/audits/omni_kernel_v41_final_approved_verdict.md)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 [English](README.md) • [Tiếng Việt](README.vi.md)
@@ -109,19 +110,19 @@ Toàn bộ tri thức, giải pháp khắc phục lỗi đã được chứng th
 
 ---
 
-## 🧪 Kiểm thử Tự động Toàn diện
+## 🧪 Kiểm thử Tự động Toàn diện & Chứng nhận Council Gate
 
-Omni-Kernel v4.1 duy trì bộ kiểm thử tự động toàn diện với **100% tỷ lệ đỗ (110/110 Tests PASS)**:
+Omni-Kernel v4.1 duy trì bộ kiểm thử tự động toàn diện với **100% tỷ lệ đỗ (288/288 Tests PASS)** cùng chứng nhận **`APPROVED`** có chữ ký HMAC-SHA256 hợp lệ từ DeepSeek-V4.1-Flash Council Gate ([`docs/audits/omni_kernel_v41_final_approved_verdict.md`](docs/audits/omni_kernel_v41_final_approved_verdict.md)):
 
 ```bash
-# 1. Kiểm thử Lõi Động cơ & Router (31 tests)
-python -m pytest tests/test_engine.py
+# 1. Kiểm thử Lõi Động cơ, Bộ nhớ Đa tầng & Cổng Giám sát (129 tests)
+python -m pytest tests/test_engine.py specs/001-omni-memory-v4/tests/ specs/002-deepseek-v41-auditor/tests/
 
-# 2. Kiểm thử Bộ nhớ Đa tầng Tri-Tier Omni-Memory v4.1 (34 tests)
-python -m pytest specs/001-omni-memory-v4/tests/
-
-# 3. Kiểm thử Cổng Giám sát Omni-Auditor DeepSeek (43 tests)
-python -m pytest specs/002-deepseek-v41-auditor/tests/
+# 2. Kiểm thử Khắc phục Chuyên sâu Cluster 1–3 & Round 7–9 (159 tests)
+python scripts/test_cluster_1_remediation.py   # 69/69 passed (SQLite WAL, Outbox 2PC, SHA-256 Partitioning)
+python scripts/test_cluster_2_remediation.py   # 51/51 passed (Hook <25ms SLA, HMAC Gate, Trust Lock, Lifecycle Epoch)
+python scripts/test_cluster_3_remediation.py   # 17/17 passed (Resolver, AST Sandbox, CoW Stale-While-Revalidate)
+python scripts/test_round_7_remediation.py     # 22/22 passed (Tích hợp Liên cụm & Edge Cases)
 ```
 
 ---
