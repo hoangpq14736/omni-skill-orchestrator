@@ -41,7 +41,7 @@ GOLDEN_ROUTING_QUERIES = [
     ("build chrome extension manifest v3 content script", {"chrome-extensions"}),
     ("debug largest contentful paint slow page load lcp", {"debug-optimize-lcp", "modern-web-guidance"}),
     ("fix cookie samesite 401 authentication redirect", {"cookie-debugging", "chrome-devtools"}),
-    ("check accessibility aria labels keyboard navigation contrast", {"a11y-debugging", "modern-web-guidance"}),
+    ("check accessibility aria labels keyboard navigation contrast", {"accessibility", "a11y-debugging", "modern-web-guidance"}),
     ("inspect memory leak heap snapshot oom in browser", {"memory-leak-debugging", "chrome-devtools"}),
     ("write unit tests with pytest fixtures and tdd", {"python-testing", "tdd-workflow"}),
     ("review code for security vulnerabilities owasp sql injection xss", {"security-review", "security-scan", "ponytail-review"}),
