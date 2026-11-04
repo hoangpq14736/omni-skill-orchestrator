@@ -194,6 +194,9 @@ class FileLock:
                         if getattr(st, "st_file_attributes", 0) & reparse:
                             raise PermissionError(f"Security violation: lock file is a reparse point or symlink: {self.lock_file}")
 
+                    if getattr(st, "st_nlink", 1) > 1:
+                        raise PermissionError(f"Security violation: lock file has hard links: {self.lock_file}")
+
                     if hasattr(os, "fchmod"):
                         try:
                             os.fchmod(self.fd, 0o600)

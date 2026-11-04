@@ -480,8 +480,16 @@ def build_preflight_message(resolution: dict, gatekeeper_text: str = None, drift
 
 
 def process_hook(payload: dict) -> dict:
-    """Core hook processing logic."""
-    raw_user_input = (payload.get("lastUserInput") or payload.get("prompt") or payload.get("userInput") or "").strip()
+    """Core hook processing logic with robust type coercion and schema validation (VULN-006)."""
+    raw_input_obj = payload.get("lastUserInput") if payload.get("lastUserInput") is not None else (
+        payload.get("prompt") if payload.get("prompt") is not None else payload.get("userInput")
+    )
+    if raw_input_obj is None:
+        return {"injectSteps": []}
+    if isinstance(raw_input_obj, (dict, list)):
+        raw_user_input = json.dumps(raw_input_obj, ensure_ascii=False).strip()
+    else:
+        raw_user_input = str(raw_input_obj).strip()
     
     # Skip empty input or slash commands
     if not raw_user_input:
@@ -494,10 +502,10 @@ def process_hook(payload: dict) -> dict:
         return {"injectSteps": []}
 
     # T010: 2,048-char head clamping invariant
-    user_input = raw_user_input[:2048]
+    user_input = str(raw_user_input[:2048])
     
     # Redact sensitive credentials before storing or staging (VULN-006)
-    safe_user_input = redact_secrets(user_input)
+    safe_user_input = str(redact_secrets(user_input) or user_input)
     
     # Extract workspace paths with strict schema validation (VULN-004)
     workspace_paths = payload.get("workspacePaths")
@@ -610,7 +618,7 @@ def process_hook(payload: dict) -> dict:
                     if os.name == "nt":
                         cflags = getattr(subprocess, "DETACHED_PROCESS", 0) | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
                     subprocess.Popen(
-                        [sys.executable, consolidator_script, "--batch-run"],
+                        [sys.executable, consolidator_script, "--batch-run", "--workspace", workspace_dir],
                         stdin=subprocess.DEVNULL,
                         stdout=subprocess.DEVNULL,
                         stderr=subprocess.DEVNULL,

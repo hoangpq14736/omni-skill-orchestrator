@@ -218,6 +218,7 @@ class MemorySingleWriter:
                 try:
                     conn.close()
                 except Exception:
+                    # Cleanup on thread exit: suppress secondary close errors to preserve fatal thread error state
                     pass
 
     def enqueue_write(self, sql: Any, params: tuple = (), callback: Optional[Any] = None, timeout: float = 5.0):
@@ -365,12 +366,12 @@ def search_fts5(
         elif len(workspace_hash) == 32:
             row = conn.execute("SELECT workspace_path FROM workspace_registry WHERE workspace_hash = ? LIMIT 1;", (workspace_hash,)).fetchone()
             if row and row[0]:
-                from memory_utils import canonical_workspace_hash
                 can_h = canonical_workspace_hash(row[0])
                 if can_h and can_h != workspace_hash:
                     ws_hashes.append(can_h)
-    except Exception:
-        pass
+    except Exception as reg_err:
+        persist_diag(reg_err, 256)
+        sys.stderr.write(f"[!] Warning: Failed to query workspace_registry for dual-hash: {reg_err}\n")
 
     placeholders = ",".join("?" for _ in ws_hashes)
     sql = f"""

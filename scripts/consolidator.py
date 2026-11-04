@@ -533,14 +533,7 @@ class ConsolidatorEngine:
             row = cur.fetchone()
             return row[0] if row else 0
 
-        own_tx = not getattr(self.conn, "in_transaction", False)
-        sp_drain = f"sp_drain_{uuid.uuid4().hex[:12]}"
-
-        if own_tx:
-            self.conn.execute("BEGIN IMMEDIATE;")
-        else:
-            self.conn.execute(f"SAVEPOINT {sp_drain};")
-
+        # Phase 1: Read and parse offline spool OUTSIDE of SQLite write transaction (VULN-005)
         spool_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "l1_staging_spool.jsonl")
         spool_lock = spool_path + ".lock"
         proc_path = spool_path + f".proc_{os.getpid()}_{uuid.uuid4().hex[:6]}"
@@ -555,48 +548,60 @@ class ConsolidatorEngine:
             except Exception as lk_err:
                 persist_diag(lk_err, 256)
 
-        try:
-            # Ingest spooled L1 rows from offline contention buffer (VULN-001, VULN-002)
-            if spool_staged and os.path.exists(proc_path):
-                bad_lines = []
-                lines_read = 0
-                try:
-                    with open(proc_path, "r", encoding="utf-8") as sf:
-                        for line in sf:
-                            lines_read += 1
-                            if lines_read > 5000:
-                                break
-                            line_s = line.strip()
-                            if not line_s:
-                                continue
-                            try:
-                                s_data = json.loads(line_s)
-                                cur.execute(
-                                    """
-                                    INSERT INTO l1_staging_log (session_id, timestamp, user_input, workspace_hash, top_skill, tier_used, recalled_traces)
-                                    VALUES (?, ?, ?, ?, ?, ?, ?)
-                                    """,
-                                    (
-                                        s_data.get("session_id", "session_default"),
-                                        s_data.get("timestamp", datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
-                                        s_data.get("user_input", "")[:250],
-                                        s_data.get("workspace_hash", ""),
-                                        s_data.get("top_skill", "none"),
-                                        s_data.get("tier_used", 1),
-                                        json.dumps(s_data.get("recalled_traces", []))
-                                    )
-                                )
-                            except Exception as parse_err:
-                                persist_diag(parse_err, 256)
-                                bad_lines.append((line_s, str(parse_err)))
+        parsed_spool_rows = []
+        if spool_staged and os.path.exists(proc_path):
+            bad_lines = []
+            lines_read = 0
+            try:
+                with open(proc_path, "r", encoding="utf-8") as sf:
+                    for line in sf:
+                        lines_read += 1
+                        if lines_read > 5000:
+                            break
+                        line_s = line.strip()
+                        if not line_s:
+                            continue
+                        try:
+                            s_data = json.loads(line_s)
+                            parsed_spool_rows.append((
+                                s_data.get("session_id", "session_default"),
+                                s_data.get("timestamp", datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
+                                s_data.get("user_input", "")[:250],
+                                s_data.get("workspace_hash", ""),
+                                s_data.get("top_skill", "none"),
+                                s_data.get("tier_used", 1),
+                                json.dumps(s_data.get("recalled_traces", []))
+                            ))
+                        except Exception as parse_err:
+                            persist_diag(parse_err, 256)
+                            bad_lines.append((line_s, str(parse_err)))
 
-                    if bad_lines:
-                        bad_path = spool_path + ".bad.jsonl"
-                        with open(bad_path, "a", encoding="utf-8") as bf:
-                            for b_line, b_err in bad_lines:
-                                bf.write(json.dumps({"line": b_line, "error": b_err}, ensure_ascii=False) + "\n")
-                except Exception as spool_drain_err:
-                    persist_diag(spool_drain_err, 256)
+                if bad_lines:
+                    bad_path = spool_path + ".bad.jsonl"
+                    with open(bad_path, "a", encoding="utf-8") as bf:
+                        for b_line, b_err in bad_lines:
+                            bf.write(json.dumps({"line": b_line, "error": b_err}, ensure_ascii=False) + "\n")
+            except Exception as spool_drain_err:
+                persist_diag(spool_drain_err, 256)
+
+        # Phase 2: Open SQLite transaction strictly for fast in-memory DB operations
+        own_tx = not getattr(self.conn, "in_transaction", False)
+        sp_drain = f"sp_drain_{uuid.uuid4().hex[:12]}"
+
+        if own_tx:
+            self.conn.execute("BEGIN IMMEDIATE;")
+        else:
+            self.conn.execute(f"SAVEPOINT {sp_drain};")
+
+        try:
+            if parsed_spool_rows:
+                cur.executemany(
+                    """
+                    INSERT INTO l1_staging_log (session_id, timestamp, user_input, workspace_hash, top_skill, tier_used, recalled_traces)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    parsed_spool_rows
+                )
 
             if self.workspace_hash:
                 cur.execute(
@@ -709,10 +714,11 @@ class ConsolidatorEngine:
         effective_unscoped = self.allow_unscoped if allow_unscoped is None else (self.allow_unscoped and allow_unscoped)
         cur = self.conn.cursor()
 
-        # VULN-002: Gate entire consolidation cycle when unscoped and allow_unscoped=False
+        # VULN-002 & VULN-003: Fail-loud gate when unscoped and allow_unscoped=False
         if not self.workspace_hash and not effective_unscoped:
-            sys.stderr.write("[!] Notice: Skipping unscoped consolidation cycle (pass allow_unscoped=True to run globally)\n")
+            sys.stderr.write("[!] LỖI VẬN HÀNH: Skipping unscoped consolidation cycle (unconfigured workspace)\n")
             return {
+                "status": "unconfigured_unscoped_error",
                 "events_processed": 0,
                 "promoted_traces": 0,
                 "soft_archived": 0
@@ -900,6 +906,8 @@ class ConsolidatorEngine:
                             sys.stderr.write(f"[!] Warning: Quarantining empty/non-alphanumeric signature in cluster {key}\n")
                             cur.execute(f"RELEASE SAVEPOINT {sp_prom};")
                             for dl_eid in cluster_event_ids:
+                                if dl_eid in processed_ids:
+                                    processed_ids.remove(dl_eid)
                                 dead_letter_ids.append((dl_eid, "Quarantined: Empty or non-alphanumeric problem signature"))
                             continue
                         tags = extract_bilingual_tags(clean_sig)
@@ -994,9 +1002,15 @@ class ConsolidatorEngine:
                         )
                         if is_trans:
                             sys.stderr.write(f"[!] Warning: Transient contention during cluster promotion {safe_key}: {redacted_prom_err} (re-queued for retry)\n")
+                            # VULN-002: Transient contention preserves is_consolidated=0 for natural retry
+                            for ev_to_retry in cluster_event_ids:
+                                if ev_to_retry in processed_ids:
+                                    processed_ids.remove(ev_to_retry)
                         else:
                             sys.stderr.write(f"[!] Warning: Quarantining poison pill cluster {safe_key}: {redacted_prom_err}\n")
                             for dl_eid in cluster_event_ids:
+                                if dl_eid in processed_ids:
+                                    processed_ids.remove(dl_eid)
                                 dead_letter_ids.append((dl_eid, redacted_prom_err))
 
             # Step 5: Bounded Ebbinghaus Decay & Soft-Archiving (Pure SQLite Padé [0/1] Algebraic Bulk Update)
@@ -1237,12 +1251,18 @@ class ConsolidatorEngine:
 
 def main():
     parser = argparse.ArgumentParser(description="Omni-Memory v4.1 Background Consolidator")
-    parser.add_argument("--workspace", default=os.getcwd(), help="Target workspace root path")
+    parser.add_argument("--workspace", default=None, help="Target workspace root path")
+    parser.add_argument("--allow-unscoped", action="store_true", help="Allow unscoped global consolidation across all workspaces")
     parser.add_argument("--batch-run", action="store_true", help="Run batch consolidation cycle")
     parser.add_argument("--dry-run", action="store_true", help="Simulate consolidation without persisting")
     parser.add_argument("--daemon", action="store_true", help="Run as standing daemon with idle auto-exit")
     parser.add_argument("--idle-timeout", type=int, default=3600, help="Auto-exit after idle seconds")
     args = parser.parse_args()
+
+    target_ws = args.workspace.strip() if (args.workspace and isinstance(args.workspace, str) and args.workspace.strip()) else None
+    if not target_ws and not args.allow_unscoped:
+        sys.stderr.write("[!] LỖI VẬN HÀNH: Consolidator requires an explicit --workspace path or --allow-unscoped flag\n")
+        sys.exit(1)
 
     # Lifecycle & Mutual Exclusion Guard (Anti-Zombie & Auto-Healing Lock)
     from lifecycle_guard import LifecycleGuard
@@ -1259,12 +1279,15 @@ def main():
     guard.register_cleanup(lambda: conn.close())
 
     try:
-        engine = ConsolidatorEngine(conn)
+        engine = ConsolidatorEngine(conn, workspace_root=target_ws, allow_unscoped=args.allow_unscoped)
         if args.daemon:
             last_activity = time.time()
             print("🚀 Consolidator daemon started. Monitoring L1 events...")
             while True:
                 res = engine.consolidate_batch(batch_size=100, dry_run=args.dry_run)
+                if res.get("status") == "unconfigured_unscoped_error":
+                    sys.stderr.write("[!] LỖI VẬN HÀNH: Consolidator daemon aborted due to unconfigured workspace\n")
+                    sys.exit(1)
                 if res.get("events_processed", 0) > 0 or res.get("promoted_traces", 0) > 0:
                     last_activity = time.time()
                 elif time.time() - last_activity > args.idle_timeout:
@@ -1274,6 +1297,9 @@ def main():
         else:
             result = engine.consolidate_batch(batch_size=100, dry_run=args.dry_run)
             print(json.dumps(result, indent=2))
+            if result.get("status") == "unconfigured_unscoped_error":
+                sys.stderr.write("[!] LỖI VẬN HÀNH: Consolidator batch run failed due to unconfigured workspace\n")
+                sys.exit(1)
     finally:
         guard.stop()
 

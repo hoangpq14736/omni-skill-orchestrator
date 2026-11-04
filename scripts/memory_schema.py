@@ -350,11 +350,6 @@ def init_database(db_path: str = "omni_memory.db", isolation_level: Optional[str
 
         for old_hash in legacy_hashes:
             known_path = hash_to_path.get(old_hash)
-            if not known_path and "activation_events" in tables_exist:
-                row_ae = conn.execute("SELECT workspace_dir FROM activation_events WHERE workspace_dir LIKE '%/%' OR workspace_dir LIKE '%\\\\%' LIMIT 1;").fetchone()
-                if row_ae and row_ae[0]:
-                    known_path = row_ae[0]
-
             if known_path:
                 new_hash = canonical_workspace_hash(known_path)
                 if new_hash and len(new_hash) == 64 and new_hash != old_hash:
@@ -369,8 +364,9 @@ def init_database(db_path: str = "omni_memory.db", isolation_level: Optional[str
                     if "workspace_registry" in tables_exist:
                         conn.execute("INSERT OR IGNORE INTO workspace_registry (workspace_hash, workspace_path, registered_at) VALUES (?, ?, datetime('now'));", (new_hash, known_path))
             else:
-                # VULN-003: Retain 32-hex legacy partition key when workspace_path is unresolvable; never synthesize artificial hash
-                pass
+                # VULN-001 & VULN-003: Retain 32-hex legacy partition key when workspace_path is unresolvable; never map to arbitrary path
+                from memory_utils import persist_diag
+                persist_diag(f"Retaining unmapped legacy 32-hex partition {old_hash[:12]}", 256)
         conn.execute(f"RELEASE SAVEPOINT {sp_mig};")
     except Exception as mig_err:
         try:

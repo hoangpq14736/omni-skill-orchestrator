@@ -100,7 +100,7 @@ def sanitize_unicode_skeleton(text: str) -> str:
 class TrustFileLock:
     """Context manager for cross-process advisory lock on companion .lock file (canonical realpath - VULN-012)."""
     def __init__(self, target_path: str, timeout: float = 5.0):
-        clean_target = os.path.normcase(os.path.realpath(os.path.abspath(target_path)))
+        clean_target = os.path.abspath(target_path)
         if clean_target.endswith(".lock"):
             self.lock_path = clean_target
         else:
@@ -113,9 +113,12 @@ class TrustFileLock:
         if os.path.islink(self.lock_path) or (hasattr(os.path, "isreparsepoint") and os.path.isreparsepoint(self.lock_path)):
             raise PermissionError(f"Security violation: lock file cannot be a symbolic link or reparse point: {self.lock_path}")
         start = time.time()
-        self._fh = open(self.lock_path, "a+b")
+        open_flags = os.O_CREAT | os.O_RDWR
+        if hasattr(os, "O_NOFOLLOW"):
+            open_flags |= os.O_NOFOLLOW
+        fd = os.open(self.lock_path, open_flags, 0o600)
         try:
-            st = os.fstat(self._fh.fileno())
+            st = os.fstat(fd)
             if not stat.S_ISREG(st.st_mode):
                 raise PermissionError(f"Security violation: lock file is not a regular file: {self.lock_path}")
             if sys.platform.startswith("win"):
@@ -124,8 +127,9 @@ class TrustFileLock:
                     raise PermissionError(f"Security violation: lock file is a reparse point or symlink: {self.lock_path}")
             if getattr(st, "st_nlink", 1) > 1:
                 raise PermissionError(f"Security violation: lock file has hard links: {self.lock_path}")
+            self._fh = os.fdopen(fd, "a+b")
         except Exception:
-            self._fh.close()
+            os.close(fd)
             self._fh = None
             raise
 

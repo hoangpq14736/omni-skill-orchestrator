@@ -20,6 +20,7 @@ import uuid
 import signal
 import ctypes
 import errno
+import stat
 import threading
 from pathlib import Path
 from typing import Callable, Optional, Dict, Any
@@ -44,8 +45,29 @@ class ProcessMutex:
 
     def __enter__(self):
         os.makedirs(os.path.dirname(os.path.abspath(self.path)), exist_ok=True)
+        if os.path.islink(self.path) or (hasattr(os.path, "isreparsepoint") and os.path.isreparsepoint(self.path)):
+            raise PermissionError(f"Security violation: mutex file cannot be a symbolic link or reparse point: {self.path}")
         start = time.time()
-        self._fh = open(self.path, "a+b")
+        open_flags = os.O_CREAT | os.O_RDWR
+        if hasattr(os, "O_NOFOLLOW"):
+            open_flags |= os.O_NOFOLLOW
+        fd = os.open(self.path, open_flags, 0o600)
+        try:
+            st = os.fstat(fd)
+            if not stat.S_ISREG(st.st_mode):
+                raise PermissionError(f"Security violation: mutex file is not a regular file: {self.path}")
+            if sys.platform.startswith("win"):
+                reparse = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400)
+                if getattr(st, "st_file_attributes", 0) & reparse:
+                    raise PermissionError(f"Security violation: mutex file is a reparse point or symlink: {self.path}")
+            if getattr(st, "st_nlink", 1) > 1:
+                raise PermissionError(f"Security violation: mutex file has hard links: {self.path}")
+            self._fh = os.fdopen(fd, "a+b")
+        except Exception:
+            os.close(fd)
+            self._fh = None
+            raise
+
         if os.name == "nt":
             self._fh.seek(0, os.SEEK_END)
             if self._fh.tell() == 0:
