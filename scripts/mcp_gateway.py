@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 """
-Omni-Kernel v4.1: Omni-MCP Virtual Bus (Dynamic Tool Multiplexer & Gateway)
+Omni-Kernel v4.1: Omni-MCP Virtual Bus (Dynamic Tool Multiplexer & Gateway - Hardened)
 Discovers, indexes, routes, and validates MCP tools Just-In-Time (JIT) across all installed MCP servers.
 Eliminates static tool schema prompt bloat (saving 1,000+ tokens) and provides sub-millisecond tool routing.
+Remediated against VULN-004 (type confusion, bool vs int, schema crashes), VULN-008 (metadata exclusion),
+concurrency hazards via threading locks, and bounded tokenization.
 100% Python Standard Library (Pure Ponytail Invariant, 0 dependencies).
 """
 
@@ -11,6 +13,7 @@ import re
 import sys
 import json
 import time
+import threading
 
 _SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 if _SCRIPT_DIR not in sys.path:
@@ -22,20 +25,33 @@ DEFAULT_MCP_DIRS = [
 ]
 GLOBAL_MCP_CONFIG = os.path.expanduser(r"~\.gemini\config\mcp_config.json")
 
+# Metadata files to exclude from tool indexing (VULN-008)
+METADATA_EXCLUDED_FILES = {
+    "package.json", "tsconfig.json", "codex_contract.json",
+    "plugin.json", "manifest.json", "settings.json", "launch.json"
+}
+
+# Module concurrency lock
+_MCP_LOCK = threading.Lock()
+_CACHED_MCP_INDEX = None
+_CACHED_MCP_TIME = 0.0
+_LAST_STALE_CHECK = 0.0
+
 
 def tokenize(text: str) -> list:
-    """Extracts normalized lowercase tokens from text."""
+    """Extracts normalized lowercase tokens from text with input bounds (VULN-009)."""
     if not text:
         return []
-    cleaned = re.sub(r"[^\w\s\-\.]", " ", text.lower())
-    tokens = [t.strip(".-") for t in cleaned.split() if len(t.strip(".-")) > 1]
-    return list(set(tokens))
+    bounded = str(text)[:4096].lower()
+    cleaned = re.sub(r"[^\w\s\-\.]", " ", bounded)
+    tokens = [t.strip(".-") for t in cleaned.split() if 1 < len(t.strip(".-")) <= 64]
+    return sorted(list(set(tokens[:200])))
 
 
 def discover_mcp_servers(base_dirs: list = None, extra_workspace_paths: list = None) -> dict:
     """
     Scans directories to locate MCP server definitions and their JSON tool schemas.
-    Also ingests ~/.gemini/config/mcp_config.json and workspace-level MCP configs.
+    Excludes plugin/project metadata files (VULN-008).
     Returns a dict mapping server_name -> { "path": server_path, "tool_files": [paths], "instructions": str }
     Runs in <15ms.
     """
@@ -46,7 +62,6 @@ def discover_mcp_servers(base_dirs: list = None, extra_workspace_paths: list = N
         if not os.path.exists(base):
             continue
 
-        # Check if base contains direct MCP server folders (e.g. ~/.gemini/antigravity/mcp/<server>/)
         try:
             with os.scandir(base) as it:
                 for entry in it:
@@ -62,9 +77,10 @@ def discover_mcp_servers(base_dirs: list = None, extra_workspace_paths: list = N
                         with os.scandir(server_path) as sit:
                             for f in sit:
                                 if f.is_file():
-                                    if f.name.endswith(".json") and f.name not in ("package.json", "tsconfig.json", "codex_contract.json"):
+                                    fname_lower = f.name.lower()
+                                    if fname_lower.endswith(".json") and fname_lower not in METADATA_EXCLUDED_FILES:
                                         tool_files.append(f.path)
-                                    elif f.name.lower() in ("instructions.md", "readme.md"):
+                                    elif fname_lower in ("instructions.md", "readme.md"):
                                         try:
                                             with open(f.path, "r", encoding="utf-8", errors="replace") as inf:
                                                 instructions = inf.read(500)
@@ -88,14 +104,15 @@ def discover_mcp_servers(base_dirs: list = None, extra_workspace_paths: list = N
         try:
             with open(GLOBAL_MCP_CONFIG, "r", encoding="utf-8") as f:
                 gcfg = json.load(f)
-            for sname, sdef in gcfg.get("mcpServers", {}).items():
-                if sname not in servers:
-                    servers[sname] = {
-                        "name": sname,
-                        "path": GLOBAL_MCP_CONFIG,
-                        "tool_files": [],
-                        "instructions": f"Configured via global mcp_config.json: {sdef.get('command', '')}"
-                    }
+            if isinstance(gcfg, dict):
+                for sname, sdef in gcfg.get("mcpServers", {}).items():
+                    if sname not in servers and isinstance(sdef, dict):
+                        servers[sname] = {
+                            "name": sname,
+                            "path": GLOBAL_MCP_CONFIG,
+                            "tool_files": [],
+                            "instructions": f"Configured via global mcp_config.json: {sdef.get('command', '')}"
+                        }
         except Exception:
             pass
 
@@ -108,13 +125,15 @@ def discover_mcp_servers(base_dirs: list = None, extra_workspace_paths: list = N
                     try:
                         with open(ws_mcp, "r", encoding="utf-8") as f:
                             wcfg = json.load(f)
-                        for sname, sdef in wcfg.get("mcpServers", {}).items():
-                            servers[f"ws:{sname}"] = {
-                                "name": f"ws:{sname}",
-                                "path": ws_mcp,
-                                "tool_files": [],
-                                "instructions": f"Configured via workspace {rel}: {sdef.get('command', '')}"
-                            }
+                        if isinstance(wcfg, dict):
+                            for sname, sdef in wcfg.get("mcpServers", {}).items():
+                                if isinstance(sdef, dict):
+                                    servers[f"ws:{sname}"] = {
+                                        "name": f"ws:{sname}",
+                                        "path": ws_mcp,
+                                        "tool_files": [],
+                                        "instructions": f"Configured via workspace {rel}: {sdef.get('command', '')}"
+                                    }
                     except Exception:
                         pass
 
@@ -124,12 +143,7 @@ def discover_mcp_servers(base_dirs: list = None, extra_workspace_paths: list = N
 def index_mcp_tools(servers: dict = None) -> dict:
     """
     Parses and indexes all MCP tools into a high-speed routing dictionary.
-    Returns:
-    {
-        "tools": [ { server, name, description, parameters, required, path, tokens } ],
-        "inverted_index": { token: [tool_indices] }
-    }
-    Runs in <25ms across dozens of tools.
+    Treats tool schemas as untrusted inputs with defensive normalization (VULN-004).
     """
     if servers is None:
         servers = discover_mcp_servers()
@@ -140,16 +154,35 @@ def index_mcp_tools(servers: dict = None) -> dict:
     for server_name, sinfo in servers.items():
         for tfile in sinfo.get("tool_files", []):
             try:
+                if os.path.getsize(tfile) > 1024 * 1024:
+                    continue
                 with open(tfile, "r", encoding="utf-8") as f:
                     schema = json.load(f)
             except Exception:
                 continue
 
-            tool_name = schema.get("name") or os.path.splitext(os.path.basename(tfile))[0]
-            desc = schema.get("description", "")
-            params = schema.get("parameters", {})
-            properties = params.get("properties", {}) if isinstance(params, dict) else {}
-            required = params.get("required", []) if isinstance(params, dict) else []
+            if not isinstance(schema, dict):
+                continue
+
+            raw_name = schema.get("name")
+            tool_name = str(raw_name).strip() if raw_name else os.path.splitext(os.path.basename(tfile))[0]
+            raw_desc = schema.get("description", "")
+            desc = str(raw_desc) if raw_desc is not None else ""
+            
+            raw_params = schema.get("parameters", {})
+            params = raw_params if isinstance(raw_params, dict) else {}
+            
+            raw_props = params.get("properties", {})
+            properties = {}
+            if isinstance(raw_props, dict):
+                for pk, pv in raw_props.items():
+                    if isinstance(pv, dict):
+                        properties[pk] = pv
+                    else:
+                        properties[pk] = {"type": str(pv)}
+
+            raw_req = params.get("required", [])
+            required = [str(r) for r in raw_req] if isinstance(raw_req, list) else []
 
             # Tokenize for indexing
             name_tokens = tokenize(tool_name)
@@ -159,7 +192,7 @@ def index_mcp_tools(servers: dict = None) -> dict:
             for p in properties.keys():
                 prop_tokens.extend(tokenize(p))
 
-            all_tokens = list(set(name_tokens + server_tokens + desc_tokens + prop_tokens))
+            all_tokens = sorted(list(set(name_tokens + server_tokens + desc_tokens + prop_tokens)))
 
             tool_obj = {
                 "server": server_name,
@@ -188,18 +221,9 @@ def index_mcp_tools(servers: dict = None) -> dict:
     }
 
 
-_CACHED_MCP_INDEX = None
-_CACHED_MCP_TIME = 0.0
-_LAST_STALE_CHECK = 0.0
-
-
 def is_mcp_stale(index_data: dict, base_dirs: list = None) -> bool:
-    """
-    Sub-millisecond filesystem mtime freshness check (<0.4ms).
-    Detects if any new MCP directory was created, or if any tool schema was added/modified/deleted.
-    Triggers autonomous self-reindexing without requiring manual user or AI intervention.
-    """
-    if not index_data:
+    """Sub-millisecond filesystem mtime freshness check without symlink following."""
+    if not index_data or not isinstance(index_data, dict):
         return True
     indexed_at = index_data.get("indexed_at", 0)
     if not indexed_at:
@@ -215,20 +239,18 @@ def is_mcp_stale(index_data: dict, base_dirs: list = None) -> bool:
             with os.scandir(base) as it:
                 for entry in it:
                     if entry.is_dir():
-                        if entry.stat().st_mtime > indexed_at:
-                            return True
-                        # Check tools inside server folder
                         try:
+                            if entry.stat(follow_symlinks=False).st_mtime > indexed_at:
+                                return True
                             with os.scandir(entry.path) as sit:
                                 for f in sit:
-                                    if f.is_file() and f.stat().st_mtime > indexed_at:
+                                    if f.is_file() and f.stat(follow_symlinks=False).st_mtime > indexed_at:
                                         return True
-                        except Exception:
-                            pass
+                        except OSError:
+                            continue
         except Exception:
             pass
 
-    # Check global config file mtime
     if os.path.exists(GLOBAL_MCP_CONFIG):
         try:
             if os.path.getmtime(GLOBAL_MCP_CONFIG) > indexed_at:
@@ -240,25 +262,25 @@ def is_mcp_stale(index_data: dict, base_dirs: list = None) -> bool:
 
 
 def get_mcp_index(force_refresh: bool = False, base_dirs: list = None) -> dict:
-    """Returns cached MCP index, automatically re-indexing if files changed or TTL expired."""
+    """Returns cached MCP index under module lock, reindexing if stale."""
     global _CACHED_MCP_INDEX, _CACHED_MCP_TIME, _LAST_STALE_CHECK
     now = time.time()
-    
-    # If custom directories passed (e.g. testing) or force_refresh or not yet indexed
-    need_refresh = force_refresh or (_CACHED_MCP_INDEX is None)
-    if not need_refresh:
-        if base_dirs is not None:
-            need_refresh = is_mcp_stale(_CACHED_MCP_INDEX, base_dirs)
-        elif now - _LAST_STALE_CHECK > 1.5:
-            _LAST_STALE_CHECK = now
-            need_refresh = is_mcp_stale(_CACHED_MCP_INDEX, base_dirs) or (now - _CACHED_MCP_TIME > 120)
 
-    if need_refresh:
-        servers = discover_mcp_servers(base_dirs)
-        _CACHED_MCP_INDEX = index_mcp_tools(servers)
-        _CACHED_MCP_TIME = now
-        _LAST_STALE_CHECK = now
-    return _CACHED_MCP_INDEX
+    with _MCP_LOCK:
+        need_refresh = force_refresh or (_CACHED_MCP_INDEX is None)
+        if not need_refresh:
+            if base_dirs is not None:
+                need_refresh = is_mcp_stale(_CACHED_MCP_INDEX, base_dirs)
+            elif now - _LAST_STALE_CHECK > 1.5:
+                _LAST_STALE_CHECK = now
+                need_refresh = is_mcp_stale(_CACHED_MCP_INDEX, base_dirs) or (now - _CACHED_MCP_TIME > 120)
+
+        if need_refresh:
+            servers = discover_mcp_servers(base_dirs)
+            _CACHED_MCP_INDEX = index_mcp_tools(servers)
+            _CACHED_MCP_TIME = now
+            _LAST_STALE_CHECK = now
+        return _CACHED_MCP_INDEX
 
 
 def route_mcp_tool(query_text: str,
@@ -267,8 +289,7 @@ def route_mcp_tool(query_text: str,
                    mcp_index: dict = None) -> list:
     """
     Sub-millisecond dynamic routing from intent query to optimal MCP tool(s).
-    Returns a ranked list of matched tools with confidence score and call template.
-    Runs in <0.3ms.
+    Runs safely even if tool schemas contain non-dict properties (VULN-004).
     """
     if not query_text:
         return []
@@ -284,7 +305,6 @@ def route_mcp_tool(query_text: str,
         return []
 
     candidate_scores = {}
-
     for tok in query_tokens:
         matching_indices = inverted_index.get(tok, [])
         for idx in matching_indices:
@@ -300,24 +320,32 @@ def route_mcp_tool(query_text: str,
         overlap = len(query_tokens.intersection(tool_tokens)) / len(query_tokens)
         jaccard = len(query_tokens.intersection(tool_tokens)) / len(query_tokens.union(tool_tokens))
 
-        # Boosts: Exact tool name match
         name_boost = 0.3 if tool["name"].lower() in query_text.lower() else 0.0
         server_boost = 0.2 if tool["server"].lower() in query_text.lower() else 0.0
 
         score = (overlap * 0.5) + (jaccard * 0.3) + name_boost + server_boost
 
         if score >= 0.15:
+            # Safe call template argument extraction
+            props = tool.get("properties", {})
+            call_args = {}
+            for k, v in props.items():
+                if isinstance(v, dict):
+                    call_args[k] = f"<{v.get('type', 'any')}>"
+                else:
+                    call_args[k] = f"<{str(v)}>"
+
             ranked.append({
                 "score": round(score, 3),
                 "server": tool["server"],
                 "tool": tool["name"],
                 "description": tool["description"][:160] + "..." if len(tool["description"]) > 160 else tool["description"],
                 "required": tool["required"],
-                "properties": list(tool["properties"].keys()),
+                "properties": list(props.keys()),
                 "call_template": {
                     "ServerName": tool["server"],
                     "ToolName": tool["name"],
-                    "Arguments": {k: f"<{v.get('type', 'any')}>" for k, v in tool["properties"].items()}
+                    "Arguments": call_args
                 }
             })
 
@@ -344,42 +372,69 @@ def get_tool_schema(server_name: str, tool_name: str, mcp_index: dict = None) ->
 def validate_tool_arguments(server_name: str, tool_name: str, arguments: dict, mcp_index: dict = None) -> dict:
     """
     Validates execution arguments against the MCP tool's parameter schema.
-    Returns:
-    {
-        "valid": bool,
-        "missing_required": list,
-        "type_errors": list,
-        "server": server_name,
-        "tool": tool_name
-    }
+    Defends against type confusion: bool vs int/number (VULN-004), non-dict arguments,
+    enum violations, and unexpected additional properties.
     """
+    if arguments is None or not isinstance(arguments, dict):
+        return {
+            "valid": False,
+            "error": "Arguments must be a dictionary / JSON object",
+            "missing_required": [],
+            "type_errors": ["Arguments must be a dict"],
+            "server": server_name,
+            "tool": tool_name
+        }
+
     schema = get_tool_schema(server_name, tool_name, mcp_index)
     if not schema:
         return {
             "valid": False,
             "error": f"Tool '{tool_name}' not found on MCP server '{server_name}'",
             "missing_required": [],
-            "type_errors": []
+            "type_errors": [],
+            "server": server_name,
+            "tool": tool_name
         }
 
-    required = schema.get("required", [])
-    properties = schema.get("parameters", {}).get("properties", {})
+    params = schema.get("parameters", {})
+    required = params.get("required", []) if isinstance(params, dict) else []
+    properties = params.get("properties", {}) if isinstance(params, dict) else {}
+    allow_additional = params.get("additionalProperties", True) if isinstance(params, dict) else True
+
     missing = [req for req in required if req not in arguments]
     type_errors = []
 
     for key, val in arguments.items():
         if key in properties:
-            expected_type = properties[key].get("type")
-            if expected_type == "string" and not isinstance(val, str):
-                type_errors.append(f"Field '{key}' expected string, got {type(val).__name__}")
-            elif expected_type in ("integer", "number") and not isinstance(val, (int, float)):
-                type_errors.append(f"Field '{key}' expected number, got {type(val).__name__}")
-            elif expected_type == "boolean" and not isinstance(val, bool):
-                type_errors.append(f"Field '{key}' expected boolean, got {type(val).__name__}")
-            elif expected_type == "array" and not isinstance(val, list):
-                type_errors.append(f"Field '{key}' expected list/array, got {type(val).__name__}")
-            elif expected_type == "object" and not isinstance(val, dict):
-                type_errors.append(f"Field '{key}' expected dict/object, got {type(val).__name__}")
+            prop_def = properties[key]
+            if isinstance(prop_def, dict):
+                expected_type = prop_def.get("type")
+                # Type confusion defense: In Python, bool is a subclass of int.
+                # Must check isinstance(val, bool) explicitly first!
+                if expected_type in ("integer", "number"):
+                    if isinstance(val, bool):
+                        type_errors.append(f"Field '{key}' expected number/integer, got boolean ({val})")
+                    elif not isinstance(val, (int, float)):
+                        type_errors.append(f"Field '{key}' expected number, got {type(val).__name__}")
+                elif expected_type == "boolean":
+                    if not isinstance(val, bool):
+                        type_errors.append(f"Field '{key}' expected boolean, got {type(val).__name__}")
+                elif expected_type == "string":
+                    if not isinstance(val, str):
+                        type_errors.append(f"Field '{key}' expected string, got {type(val).__name__}")
+                elif expected_type == "array":
+                    if not isinstance(val, list):
+                        type_errors.append(f"Field '{key}' expected list/array, got {type(val).__name__}")
+                elif expected_type == "object":
+                    if not isinstance(val, dict):
+                        type_errors.append(f"Field '{key}' expected dict/object, got {type(val).__name__}")
+
+                # Enum validation
+                if "enum" in prop_def and isinstance(prop_def["enum"], list):
+                    if val not in prop_def["enum"]:
+                        type_errors.append(f"Field '{key}' value '{val}' not in allowed enum: {prop_def['enum']}")
+        elif not allow_additional:
+            type_errors.append(f"Unrecognized additional property '{key}' not permitted by schema")
 
     is_valid = len(missing) == 0 and len(type_errors) == 0
     return {

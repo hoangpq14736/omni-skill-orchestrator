@@ -1,12 +1,22 @@
 """
-Omni-Skill Orchestrator: Indexing Engine
+Omni-Skill Orchestrator: Indexing Engine (Hardened)
 Zero-dependency, high-speed scanner and indexer for all skill sources.
+Remediated against VULN-003 (OOM memory bounds), VULN-006 (atomic registry writes),
+VULN-007 (symlink traversal containment), and VULN-009 (unbounded tokenization).
 """
 
 import os
 import re
+import sys
 import json
 import time
+import uuid
+
+_SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+if _SCRIPT_DIR not in sys.path:
+    sys.path.insert(0, _SCRIPT_DIR)
+
+from workspace_sanitizer import TrustFileLock
 
 HOME = os.path.expanduser("~")
 GEMINI_DIR = os.path.join(HOME, ".gemini")
@@ -18,10 +28,29 @@ SOURCES = {
     "builtin": os.path.join(GEMINI_DIR, "antigravity", "builtin", "skills"),
 }
 
+# Constitutional Memory & DoS Ceilings (VULN-003, VULN-009)
+MAX_SKILL_SIZE = 256 * 1024         # 256 KiB max per SKILL.md
+MAX_JSON_SIZE = 1 * 1024 * 1024     # 1 MiB max per metadata JSON
+MAX_TOKENS_PER_SKILL = 200          # Upper bound index token count per skill
+MAX_TOKEN_LENGTH = 64               # Max token string length
+MAX_INPUT_TEXT_SCAN = 16384         # Max input characters scanned for tokenization
+
+
+def _normalize_meta_val(val_str: str) -> str:
+    val_str = val_str.strip()
+    if (val_str.startswith('"') and val_str.endswith('"')) or (val_str.startswith("'") and val_str.endswith("'")):
+        try:
+            return json.loads(val_str)
+        except Exception:
+            return val_str.strip("'\"")
+    return val_str.strip("'\"")
+
 
 def parse_frontmatter(content):
     meta = {}
     body = content
+    if not content or not isinstance(content, str):
+        return meta, body
     if content.startswith("---"):
         parts = content.split("---", 2)
         if len(parts) >= 3:
@@ -37,19 +66,23 @@ def parse_frontmatter(content):
                 # If unindented key
                 if not line.startswith(" ") and not line.startswith("\t") and ":" in line:
                     if current_key:
-                        meta[current_key] = " ".join(current_val).strip()
+                        meta[current_key] = _normalize_meta_val(" ".join(current_val).strip())
                     k, v = line.split(":", 1)
                     current_key = k.strip()
                     v_str = v.strip().strip("\"'")
                     if v_str in [">-", "|", ">", "|-", ""]:
                         current_val = []
                     else:
-                        current_val = [v_str]
+                        current_val = [v.strip()]
                 elif current_key and (line.startswith(" ") or line.startswith("\t")):
-                    current_val.append(stripped.strip("\"'"))
+                    if ":" in stripped and not stripped.startswith("-"):
+                        nk, nv = stripped.split(":", 1)
+                        if nk.strip() not in meta:
+                            meta[nk.strip()] = _normalize_meta_val(nv.strip())
+                    current_val.append(stripped)
             
             if current_key:
-                meta[current_key] = " ".join(current_val).strip()
+                meta[current_key] = _normalize_meta_val(" ".join(current_val).strip())
                 
     return meta, body
 
@@ -82,18 +115,28 @@ def calculate_quality_score(content, meta):
 
 
 def extract_tokens(text):
-    """Extracts both individual words and hyphenated compounds (Unicode / Vietnamese aware)."""
+    """Extracts bounded individual words and hyphenated compounds (Unicode / Vietnamese aware, VULN-009)."""
+    if not text:
+        return []
+    bounded_text = str(text)[:MAX_INPUT_TEXT_SCAN].lower()
     tokens = set()
     # Individual words
-    words = re.findall(r'[\w]+', text.lower(), re.UNICODE)
+    words = re.findall(r'[\w]+', bounded_text, re.UNICODE)
     for w in words:
-        if len(w) >= 2 and not w.isdigit():
+        if 2 <= len(w) <= MAX_TOKEN_LENGTH and not w.isdigit():
             tokens.add(w)
+            if len(tokens) >= MAX_TOKENS_PER_SKILL:
+                return sorted(list(tokens))
+
     # Hyphenated compounds
-    compounds = re.findall(r'[\w]+(?:-[\w]+)+', text.lower(), re.UNICODE)
+    compounds = re.findall(r'[\w]+(?:-[\w]+)+', bounded_text, re.UNICODE)
     for c in compounds:
-        tokens.add(c)
-    return list(tokens)
+        if 2 <= len(c) <= MAX_TOKEN_LENGTH:
+            tokens.add(c)
+            if len(tokens) >= MAX_TOKENS_PER_SKILL:
+                break
+
+    return sorted(list(tokens))
 
 
 def safe_listdir(path):
@@ -121,9 +164,10 @@ def scan_all_skills(extra_workspace_paths=None):
             pjson_path = os.path.join(pdir, "plugin.json")
             if os.path.exists(pjson_path):
                 try:
-                    with open(pjson_path, "r", encoding="utf-8", errors="ignore") as f:
-                        pj = json.load(f)
-                        p_ver = pj.get("version")
+                    if os.path.getsize(pjson_path) <= MAX_JSON_SIZE:
+                        with open(pjson_path, "r", encoding="utf-8", errors="ignore") as f:
+                            pj = json.load(f)
+                            p_ver = pj.get("version")
                 except Exception:
                     pass
 
@@ -134,7 +178,9 @@ def scan_all_skills(extra_workspace_paths=None):
                     sm_file = os.path.join(sdir, "SKILL.md") if os.path.isdir(sdir) else (sdir if item == "SKILL.md" else None)
                     if sm_file and os.path.exists(sm_file):
                         skill_name = item if os.path.isdir(sdir) else plugin_name
-                        skills.append(_parse_skill_file(sm_file, skill_name, "plugin", plugin_name, p_ver))
+                        parsed = _parse_skill_file(sm_file, skill_name, "plugin", plugin_name, p_ver)
+                        if parsed:
+                            skills.append(parsed)
 
     # 2. Scan User Active Skills
     active_root = SOURCES["user_active"]
@@ -143,7 +189,9 @@ def scan_all_skills(extra_workspace_paths=None):
             sdir = os.path.join(active_root, item)
             sm_file = os.path.join(sdir, "SKILL.md")
             if os.path.exists(sm_file):
-                skills.append(_parse_skill_file(sm_file, item, "user_active"))
+                parsed = _parse_skill_file(sm_file, item, "user_active")
+                if parsed:
+                    skills.append(parsed)
 
     # 3. Scan Offline Library
     lib_root = SOURCES["library"]
@@ -152,7 +200,9 @@ def scan_all_skills(extra_workspace_paths=None):
             sdir = os.path.join(lib_root, item)
             sm_file = os.path.join(sdir, "SKILL.md")
             if os.path.exists(sm_file):
-                skills.append(_parse_skill_file(sm_file, item, "library"))
+                parsed = _parse_skill_file(sm_file, item, "library")
+                if parsed:
+                    skills.append(parsed)
 
     # 4. Scan Builtin
     builtin_root = SOURCES["builtin"]
@@ -161,27 +211,43 @@ def scan_all_skills(extra_workspace_paths=None):
             sdir = os.path.join(builtin_root, item)
             sm_file = os.path.join(sdir, "SKILL.md")
             if os.path.exists(sm_file):
-                skills.append(_parse_skill_file(sm_file, item, "builtin"))
+                parsed = _parse_skill_file(sm_file, item, "builtin")
+                if parsed:
+                    skills.append(parsed)
 
-    # 5. Scan Workspace skills
+    # 5. Scan Workspace skills with symlink containment guard (VULN-007)
     if extra_workspace_paths:
         for ws in extra_workspace_paths:
+            if not ws or not os.path.isdir(ws):
+                continue
+            ws_real = os.path.normcase(os.path.realpath(ws))
             for rel in [".agents/skills", ".gemini/skills", "skills"]:
                 ws_skills = os.path.join(ws, rel)
                 if os.path.exists(ws_skills):
                     for item in safe_listdir(ws_skills):
                         sdir = os.path.join(ws_skills, item)
-                        sm_file = os.path.join(sdir, "SKILL.md")
-                        if os.path.exists(sm_file):
-                            skills.append(_parse_skill_file(sm_file, item, "workspace"))
+                        sm_file = os.path.join(sdir, "SKILL.md") if os.path.isdir(sdir) else (sdir if item == "SKILL.md" else None)
+                        if sm_file and os.path.exists(sm_file):
+                            sm_real = os.path.normcase(os.path.realpath(sm_file))
+                            if sm_real.startswith(ws_real + os.sep) or sm_real == ws_real:
+                                parsed = _parse_skill_file(sm_file, item, "workspace")
+                                if parsed:
+                                    skills.append(parsed)
 
     return skills
 
 
 def _parse_skill_file(file_path, default_name, source_type, plugin_name=None, plugin_version=None):
+    """Parses a SKILL.md file with strict memory upper bound limits (VULN-003)."""
     try:
+        if os.path.islink(file_path):
+            return None
+        st_size = os.path.getsize(file_path) if os.path.exists(file_path) else 0
+        if st_size > MAX_SKILL_SIZE:
+            # File exceeds max allowable size for a skill document; reject to protect against OOM
+            return None
         with open(file_path, "r", encoding="utf-8", errors="ignore") as f:
-            content = f.read()
+            content = f.read(MAX_SKILL_SIZE)
     except Exception:
         content = ""
 
@@ -189,9 +255,9 @@ def _parse_skill_file(file_path, default_name, source_type, plugin_name=None, pl
     skill_name = meta.get("name") or default_name
     desc = meta.get("description") or ""
     
-    # Extract rich token set from name, description, and top headers
-    tokens = extract_tokens(skill_name + " " + desc + " " + (plugin_name or ""))
-    version = extract_version_clues(desc + " " + skill_name, plugin_version)
+    # Extract bounded token set from name, description, and top headers
+    tokens = extract_tokens(str(skill_name) + " " + str(desc) + " " + (plugin_name or ""))
+    version = extract_version_clues(str(desc) + " " + str(skill_name), plugin_version)
     q_score = calculate_quality_score(content, meta)
     mtime = int(os.path.getmtime(file_path)) if os.path.exists(file_path) else 0
 
@@ -210,31 +276,39 @@ def _parse_skill_file(file_path, default_name, source_type, plugin_name=None, pl
 
 
 def is_registry_stale(registry, sources=SOURCES):
-    """Checks in <1ms if any skill directory was modified since last index."""
+    """Checks in <1ms if any skill directory was modified since last index without following symlinks."""
+    if not isinstance(registry, dict):
+        return True
     gen_time = registry.get("generated_at", 0)
     if not gen_time:
         return True
     for s_path in sources.values():
         if os.path.exists(s_path):
-            if os.path.getmtime(s_path) > gen_time:
-                return True
             try:
+                if os.path.getmtime(s_path) > gen_time:
+                    return True
                 with os.scandir(s_path) as it:
                     for entry in it:
-                        if entry.stat().st_mtime > gen_time:
-                            return True
+                        try:
+                            if entry.stat(follow_symlinks=False).st_mtime > gen_time:
+                                return True
+                        except OSError:
+                            continue
             except Exception:
                 pass
     return False
 
 
 def build_index(output_file=None):
+    """
+    Builds the unified index and writes registry.json atomically with advisory file locking (VULN-006).
+    """
     start = time.time()
     skills = scan_all_skills()
     
     token_index = {}
     for idx, s in enumerate(skills):
-        for t in s["tokens"]:
+        for t in s.get("tokens", [])[:MAX_TOKENS_PER_SKILL]:
             if t not in token_index:
                 token_index[t] = []
             token_index[t].append(idx)
@@ -248,9 +322,23 @@ def build_index(output_file=None):
     }
 
     if output_file:
-        os.makedirs(os.path.dirname(os.path.abspath(output_file)), exist_ok=True)
-        with open(output_file, "w", encoding="utf-8") as f:
-            json.dump(registry, f, indent=2, ensure_ascii=False)
+        out_dir = os.path.dirname(os.path.abspath(output_file))
+        os.makedirs(out_dir, exist_ok=True)
+        lock_path = output_file + ".lock"
+        with TrustFileLock(lock_path):
+            temp_file = os.path.join(out_dir, f"tmp_reg_{os.getpid()}_{uuid.uuid4().hex[:8]}.json")
+            try:
+                with open(temp_file, "w", encoding="utf-8") as f:
+                    json.dump(registry, f, indent=2, ensure_ascii=False)
+                    f.flush()
+                    os.fsync(f.fileno())
+                os.replace(temp_file, output_file)
+            finally:
+                if os.path.exists(temp_file):
+                    try:
+                        os.remove(temp_file)
+                    except Exception:
+                        pass
 
     duration = time.time() - start
     print(f"Indexed {len(skills)} skills in {duration:.2f}s -> {output_file or 'in-memory'}")

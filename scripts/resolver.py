@@ -7,9 +7,17 @@ import os
 import re
 import json
 import sys
+import time
+import uuid
+import shutil
+import threading
 import argparse
 import datetime
 import unicodedata
+
+from workspace_sanitizer import TrustFileLock
+
+_AFFINITY_LOCK = threading.RLock()
 
 if hasattr(sys.stdout, "reconfigure"):
     try:
@@ -315,7 +323,7 @@ def build_cognitive_pre_flight(intent_text, workspace_dir, top_skills, inferred_
 
 
 def load_learned_affinities(path=None):
-    """Loads learned affinities and stats from disk in <0.2ms."""
+    """Loads learned affinities and stats from disk with quarantine for corrupt JSON (VULN-006)."""
     path = path or LEARNED_PATH
     if not os.path.exists(path):
         return {"version": "1.1.0", "affinities": {}, "skill_stats": {}}
@@ -323,33 +331,50 @@ def load_learned_affinities(path=None):
         with open(path, "r", encoding="utf-8") as f:
             data = json.load(f)
             if not isinstance(data, dict):
-                return {"version": "1.1.0", "affinities": {}, "skill_stats": {}}
+                raise ValueError("Learned affinities root must be a JSON object")
             data.setdefault("affinities", {})
             data.setdefault("skill_stats", {})
             return data
-    except Exception:
+    except Exception as e:
+        bak_path = f"{path}.corrupt.{int(time.time())}.bak"
+        try:
+            shutil.copy2(path, bak_path)
+            print(f"[!] Warning: Corrupt learned affinities quarantined to {bak_path}: {e}", file=sys.stderr)
+        except Exception:
+            pass
         return {"version": "1.1.0", "affinities": {}, "skill_stats": {}}
 
 
-def save_learned_affinities(data, path=None):
-    """Safely saves learned affinities and stats to disk."""
-    path = path or LEARNED_PATH
+def _save_learned_affinities_unlocked(data, path):
+    """Writes learned affinities atomically with unique temp file and fsync (VULN-006)."""
+    out_dir = os.path.dirname(os.path.abspath(path))
+    os.makedirs(out_dir, exist_ok=True)
+    temp_path = os.path.join(out_dir, f"tmp_aff_{os.getpid()}_{uuid.uuid4().hex[:8]}.json")
     try:
-        os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
-        temp_path = f"{path}.tmp.{os.getpid()}"
         with open(temp_path, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=2, ensure_ascii=False)
-        if os.path.exists(path):
-            os.replace(temp_path, path)
-        else:
-            os.rename(temp_path, path)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(temp_path, path)
         return True
-    except Exception:
+    finally:
+        if os.path.exists(temp_path):
+            try:
+                os.remove(temp_path)
+            except Exception:
+                pass
+
+
+def save_learned_affinities(data, path=None):
+    """Safely and atomically saves learned affinities and stats with advisory locking (VULN-006)."""
+    path = path or LEARNED_PATH
+    lock_path = path + ".lock"
+    with _AFFINITY_LOCK:
         try:
-            with open(path, "w", encoding="utf-8") as f:
-                json.dump(data, f, indent=2, ensure_ascii=False)
-            return True
-        except Exception:
+            with TrustFileLock(lock_path):
+                return _save_learned_affinities_unlocked(data, path)
+        except Exception as e:
+            print(f"[!] Error saving learned affinities: {e}", file=sys.stderr)
             return False
 
 
@@ -363,63 +388,66 @@ def record_feedback(intent_text="", workspace_dir=None, chosen_skill="", rejecte
         return {"status": "error", "message": "chosen_skill is required"}
 
     path = affinities_path or LEARNED_PATH
-    data = load_learned_affinities(path)
-    affinities = data["affinities"]
-    stats = data["skill_stats"]
+    lock_path = path + ".lock"
+    
+    with _AFFINITY_LOCK, TrustFileLock(lock_path):
+        data = load_learned_affinities(path)
+        affinities = data["affinities"]
+        stats = data["skill_stats"]
 
-    # Gather target tokens
-    query_tokens = extract_query_tokens(intent_text) if intent_text else set()
-    stack_tags = set(detect_workspace_stack(workspace_dir)) if workspace_dir else set()
-    all_tokens = query_tokens.union(stack_tags)
+        # Gather target tokens
+        query_tokens = extract_query_tokens(intent_text) if intent_text else set()
+        stack_tags = set(detect_workspace_stack(workspace_dir)) if workspace_dir else set()
+        all_tokens = query_tokens.union(stack_tags)
 
-    # Fallback to tokens from skill name if prompt and stack are empty
-    if not all_tokens:
-        all_tokens = set(re.findall(r'\b[\w\-]+\b', chosen_skill.lower()))
+        # Fallback to tokens from skill name if prompt and stack are empty
+        if not all_tokens:
+            all_tokens = set(re.findall(r'\b[\w\-]+\b', chosen_skill.lower()))
 
-    # Positive reinforcement for chosen skill
-    chosen_lower = chosen_skill.lower()
-    for tok in all_tokens:
-        tok_lower = tok.lower()
-        if tok_lower not in affinities:
-            affinities[tok_lower] = {}
-        curr = affinities[tok_lower].get(chosen_lower, 0.0)
-        # Boost by +15.0 per feedback event, capped at +60.0 to prevent runaway bias
-        affinities[tok_lower][chosen_lower] = min(60.0, curr + 15.0)
+        # Positive reinforcement for chosen skill
+        chosen_lower = chosen_skill.lower()
+        for tok in all_tokens:
+            tok_lower = tok.lower()
+            if tok_lower not in affinities:
+                affinities[tok_lower] = {}
+            curr = affinities[tok_lower].get(chosen_lower, 0.0)
+            # Boost by +15.0 per feedback event, capped at +60.0 to prevent runaway bias
+            affinities[tok_lower][chosen_lower] = min(60.0, curr + 15.0)
 
-    # Optional dampening for rejected skills
-    if rejected_skills:
-        if isinstance(rejected_skills, str):
-            rejected_skills = [rejected_skills]
-        for rej in rejected_skills:
-            rej_lower = rej.lower()
-            if rej_lower and rej_lower != chosen_lower:
-                for tok in all_tokens:
-                    tok_lower = tok.lower()
-                    if tok_lower in affinities and rej_lower in affinities[tok_lower]:
-                        curr = affinities[tok_lower][rej_lower]
-                        affinities[tok_lower][rej_lower] = max(-30.0, curr - 10.0)
+        # Optional dampening for rejected skills
+        if rejected_skills:
+            if isinstance(rejected_skills, str):
+                rejected_skills = [rejected_skills]
+            for rej in rejected_skills:
+                rej_lower = rej.lower()
+                if rej_lower and rej_lower != chosen_lower:
+                    for tok in all_tokens:
+                        tok_lower = tok.lower()
+                        if tok_lower in affinities and rej_lower in affinities[tok_lower]:
+                            curr = affinities[tok_lower][rej_lower]
+                            affinities[tok_lower][rej_lower] = max(-30.0, curr - 10.0)
 
-    # Update stats
-    skill_stat = stats.setdefault(chosen_lower, {"chosen_count": 0, "rejected_count": 0, "last_chosen": ""})
-    skill_stat["chosen_count"] += 1
-    skill_stat["last_chosen"] = datetime.datetime.now(datetime.timezone.utc).isoformat()
+        # Update stats
+        skill_stat = stats.setdefault(chosen_lower, {"chosen_count": 0, "rejected_count": 0, "last_chosen": ""})
+        skill_stat["chosen_count"] += 1
+        skill_stat["last_chosen"] = datetime.datetime.now(datetime.timezone.utc).isoformat()
 
-    if rejected_skills:
-        for rej in rejected_skills:
-            rej_lower = rej.lower()
-            if rej_lower and rej_lower != chosen_lower:
-                rstat = stats.setdefault(rej_lower, {"chosen_count": 0, "rejected_count": 0, "last_chosen": ""})
-                rstat["rejected_count"] += 1
+        if rejected_skills:
+            for rej in rejected_skills:
+                rej_lower = rej.lower()
+                if rej_lower and rej_lower != chosen_lower:
+                    rstat = stats.setdefault(rej_lower, {"chosen_count": 0, "rejected_count": 0, "last_chosen": ""})
+                    rstat["rejected_count"] += 1
 
-    data["updated_at"] = datetime.datetime.now(datetime.timezone.utc).isoformat()
-    save_learned_affinities(data, path)
+        data["updated_at"] = datetime.datetime.now(datetime.timezone.utc).isoformat()
+        _save_learned_affinities_unlocked(data, path)
 
-    return {
-        "status": "ok",
-        "chosen_skill": chosen_lower,
-        "tokens_boosted": sorted(list(all_tokens)),
-        "total_associations": len(affinities)
-    }
+        return {
+            "status": "ok",
+            "chosen_skill": chosen_lower,
+            "tokens_boosted": sorted(list(all_tokens)),
+            "total_associations": len(affinities)
+        }
 
 
 def reset_learning(affinities_path=None):
@@ -457,13 +485,21 @@ def load_registry(registry_path=REGISTRY_PATH):
     try:
         with open(registry_path, "r", encoding="utf-8") as f:
             registry = json.load(f)
+        if not isinstance(registry, dict):
+            raise ValueError("Registry root must be a JSON object")
         
         # Self-healing & auto-update: if files were added/modified, re-index automatically
         from indexer import is_registry_stale, build_index
         if is_registry_stale(registry):
             return build_index(registry_path)
         return registry
-    except Exception:
+    except Exception as e:
+        bak_path = f"{registry_path}.corrupt.{int(time.time())}.bak"
+        try:
+            shutil.copy2(registry_path, bak_path)
+            print(f"[!] Warning: Corrupt registry quarantined to {bak_path}: {e}", file=sys.stderr)
+        except Exception:
+            pass
         from indexer import build_index
         return build_index(registry_path)
 
@@ -584,19 +620,35 @@ def _parse_python_deps(req_path, tags):
         pass
 
 
+def _parse_version_tuple(v):
+    if not v:
+        return (0, 0, 0)
+    nums = [int(n) for n in re.findall(r'\d+', str(v))]
+    while len(nums) < 3:
+        nums.append(0)
+    return tuple(nums[:4])
+
+
+def _candidate_sort_key(c):
+    s = c.get("skill", {})
+    score = round(float(c.get("raw_score", 0.0)), 3)
+    spec = int(c.get("specificity", 0))
+    q_score = int(s.get("quality_score", 50))
+    scope_prio = SCOPE_PRIORITY.get(s.get("source_type"), 5)
+    v_tuple = _parse_version_tuple(s.get("version"))
+    s_type = str(s.get("source_type", ""))
+    s_name = str(s.get("name", ""))
+    return (score, spec, q_score, scope_prio, v_tuple, s_type, s_name)
+
+
 def compare_versions(v1, v2):
     """Returns 1 if v1 > v2, -1 if v1 < v2, 0 if equal/inconclusive."""
-    if not v1 or not v2:
-        return 0
-    nums1 = [int(n) for n in re.findall(r'\d+', str(v1))]
-    nums2 = [int(n) for n in re.findall(r'\d+', str(v2))]
-    if not nums1 or not nums2:
-        return 0
-    for i in range(max(len(nums1), len(nums2))):
-        n1 = nums1[i] if i < len(nums1) else 0
-        n2 = nums2[i] if i < len(nums2) else 0
-        if n1 > n2: return 1
-        if n1 < n2: return -1
+    t1 = _parse_version_tuple(v1)
+    t2 = _parse_version_tuple(v2)
+    if t1 > t2:
+        return 1
+    if t1 < t2:
+        return -1
     return 0
 
 
@@ -827,8 +879,8 @@ def resolve_skill(intent_text="", workspace_dir=None, registry=None, top_k=3, af
             cand["mcp_tools"] = dynamic_mcp_tools
         return default_res
 
-    # Sort descending
-    candidates.sort(key=lambda c: c["raw_score"], reverse=True)
+    # Sort descending with deterministic total tie-breaking (VULN-005)
+    candidates.sort(key=_candidate_sort_key, reverse=True)
 
     # Arbitration
     top_candidates = candidates[:20]
@@ -938,6 +990,8 @@ def _arbitrate_candidates(candidates, stack_tags, query_tokens):
         seen_domains[domain_key] = cand
         selected.append(cand)
 
+    # VULN-005: Re-sort selected using total deterministic ordering so replacements are not dropped
+    selected.sort(key=_candidate_sort_key, reverse=True)
     return selected
 
 

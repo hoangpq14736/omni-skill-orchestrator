@@ -1,42 +1,76 @@
 """
-Omni-Kernel v4.1: Autonomous Skill, Rule & Tool Synthesizer
+Omni-Kernel v4.1: Autonomous Skill, Rule & Tool Synthesizer (Hardened)
 Enables the AI to independently hypothesize, author, sandbox-test, and promote
 new skills, rules, and MCP wrappers when facing unmapped technical requirements.
+Remediated against VULN-001 (Arbitrary test execution), VULN-002 (YAML injection),
+clean_name path traversal, and atomic writing.
 """
 
 import os
 import sys
 import json
 import re
+import ast
+import uuid
 import subprocess
 import tempfile
-from datetime import datetime
+from datetime import datetime, timezone
 
 HOME = os.path.expanduser("~")
 DEFAULT_LIBRARY_DIR = os.path.join(HOME, ".gemini", "config", "skills_library")
 SCRATCH_DIR = os.path.join(tempfile.gettempdir(), "omni_sandbox")
 
+_SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+if _SCRIPT_DIR not in sys.path:
+    sys.path.insert(0, _SCRIPT_DIR)
+
+from kernel_sync import safe_atomic_replace
+from indexer import parse_frontmatter
+
 
 def generate_skill_template(name, description, domain="general", patterns=None, gotchas=None):
-    """Generates a standard, production-ready SKILL.md document."""
-    clean_name = re.sub(r'[^a-z0-9\-]', '-', name.lower().strip()).strip('-')
-    patterns_text = "\n".join([f"- {p}" for p in (patterns or ["Follow standard library patterns first", "Validate all inputs at trust boundaries"])])
-    gotchas_text = "\n".join([f"- {g}" for g in (gotchas or ["Never hardcode credentials or secrets", "Avoid unrequested abstractions or wrappers (YAGNI)"])])
+    """
+    Generates a standard, production-ready SKILL.md document.
+    Validates clean_name and description against injection and path traversal (VULN-002).
+    """
+    if not name or not isinstance(name, str):
+        raise ValueError("Skill name must be a non-empty string")
+    clean = name.strip().lower()
+    if not clean or ".." in clean or "/" in clean or "\\" in clean:
+        raise ValueError("Invalid skill name: must not contain path traversal characters")
+    
+    clean_name = re.sub(r'[^a-z0-9\-]', '-', clean).strip('-')
+    if not clean_name:
+        raise ValueError("Invalid skill name: must contain at least one alphanumeric character")
+    if len(clean_name) > 64:
+        raise ValueError("Skill name exceeds 64 characters limit")
+
+    # Sanitize description against YAML breakout (VULN-002)
+    clean_desc = re.sub(r'[\r\n\t]+', ' ', str(description)).strip()
+    clean_desc = clean_desc.replace("---", "- - -")
+    if len(clean_desc) > 1024:
+        clean_desc = clean_desc[:1021] + "..."
+
+    json_desc = json.dumps(clean_desc, ensure_ascii=False)
+    clean_domain = re.sub(r'[^a-z0-9_\-]', '', str(domain).lower().strip()) or "general"
+
+    patterns_text = "\n".join([f"- {re.sub(r'[\r\n]+', ' ', str(p)).strip()}" for p in (patterns or ["Follow standard library patterns first", "Validate all inputs at trust boundaries"])])
+    gotchas_text = "\n".join([f"- {re.sub(r'[\r\n]+', ' ', str(g)).strip()}" for g in (gotchas or ["Never hardcode credentials or secrets", "Avoid unrequested abstractions or wrappers (YAGNI)"])])
 
     skill_content = f"""---
 name: {clean_name}
-description: >-
-  {description.strip()}
+description: {json_desc}
+version: "1.0.0"
 metadata:
-  version: 1.0.0
-  domain: {domain}
+  version: "1.0.0"
+  domain: "{clean_domain}"
   auto_generated: true
-  generated_at: {datetime.now().isoformat()}
+  generated_at: "{datetime.now(timezone.utc).isoformat()}"
 ---
 
 # {clean_name.replace('-', ' ').title()}
 
-{description.strip()}
+{clean_desc}
 
 ## Core Architecture & Patterns
 {patterns_text}
@@ -50,24 +84,59 @@ metadata:
 assert True, "Verification passed"
 ```
 """
+    # Defensive Assert: round-trip verification to ensure no YAML frontmatter breakout
+    meta, _ = parse_frontmatter(skill_content)
+    if meta.get("name") != clean_name:
+        raise ValueError(f"Frontmatter name corrupted during synthesis: expected '{clean_name}', got '{meta.get('name')}'")
+
     return clean_name, skill_content
 
 
-def run_sandbox_validation(test_code, timeout_sec=5):
+def run_sandbox_validation(test_code, timeout_sec=5, allow_exec=False):
     """
-    Executes a test script inside a safe, isolated subprocess sandbox.
+    Validates synthesized test code.
+    By default (allow_exec=False), performs AST static analysis to ensure valid Python syntax
+    and blocks dangerous execution primitives without executing arbitrary code (VULN-001).
+    If allow_exec=True is explicitly set, executes in a restricted subprocess with a hard timeout.
     Returns (success: bool, stdout: str, stderr: str).
     """
+    if not test_code or not str(test_code).strip():
+        return (True, "Empty test code passed", "")
+
+    # Static AST syntax and safety check
+    try:
+        parsed = ast.parse(test_code, mode="exec")
+    except SyntaxError as e:
+        return (False, "", f"AST validation failed: SyntaxError: {e}")
+
+    # Check for dangerous system calls if AST-only
+    DANGEROUS_CALLS = {"system", "popen", "spawn"}
+    for node in ast.walk(parsed):
+        if isinstance(node, ast.Call):
+            if isinstance(node.func, ast.Attribute) and node.func.attr in DANGEROUS_CALLS:
+                if not allow_exec:
+                    return (False, "", f"AST validation blocked dangerous call: {node.func.attr}() requires explicit allow_exec=True")
+
+    if not allow_exec:
+        return (True, "AST syntax and structural validation passed (execution gated)", "")
+
+    # If allow_exec is True, run in subprocess with restricted environment
     os.makedirs(SCRATCH_DIR, exist_ok=True)
-    test_file = os.path.join(SCRATCH_DIR, f"sandbox_test_{os.getpid()}_{int(datetime.now().timestamp())}.py")
+    test_file = os.path.join(SCRATCH_DIR, f"sandbox_test_{os.getpid()}_{uuid.uuid4().hex[:8]}.py")
     try:
         with open(test_file, "w", encoding="utf-8") as f:
             f.write(test_code)
 
+        clean_env = {
+            "SYSTEMROOT": os.environ.get("SYSTEMROOT", ""),
+            "PATH": os.environ.get("PATH", ""),
+            "PYTHONPATH": "",
+        }
         result = subprocess.run(
             [sys.executable, test_file],
             capture_output=True,
             text=True,
+            env=clean_env,
             timeout=timeout_sec
         )
         return (result.returncode == 0, result.stdout, result.stderr)
@@ -83,19 +152,25 @@ def run_sandbox_validation(test_code, timeout_sec=5):
                 pass
 
 
-def synthesize_and_promote_skill(name, description, domain="general", test_code=None, library_dir=DEFAULT_LIBRARY_DIR):
+def synthesize_and_promote_skill(name, description, domain="general", test_code=None, library_dir=DEFAULT_LIBRARY_DIR, allow_exec=False):
     """
     Autonomous Synthesis Pipeline:
-    1. Author candidate SKILL.md
-    2. Sandbox verification (runs self-check test)
-    3. If valid -> promotes and writes to skills_library
-    4. Triggers re-indexing
+    1. Author candidate SKILL.md with frontmatter validation
+    2. Sandbox verification (AST check by default, subprocess only if allow_exec=True)
+    3. If valid -> promotes and writes to skills_library atomically via safe_atomic_replace
+    4. Triggers re-indexing with fail-loud error handling
     """
     clean_name, content = generate_skill_template(name, description, domain)
 
+    # Verify target directory containment (VULN-001 / path traversal)
+    lib_abs = os.path.abspath(library_dir)
+    target_dir = os.path.abspath(os.path.join(library_dir, clean_name))
+    if os.path.commonpath([lib_abs, target_dir]) != lib_abs:
+        raise ValueError(f"Target path '{target_dir}' escapes library directory '{lib_abs}'")
+
     # Step 2: Sandbox Validation
     if test_code:
-        success, stdout, stderr = run_sandbox_validation(test_code)
+        success, stdout, stderr = run_sandbox_validation(test_code, allow_exec=allow_exec)
         if not success:
             return {
                 "status": "failed",
@@ -104,13 +179,23 @@ def synthesize_and_promote_skill(name, description, domain="general", test_code=
                 "stdout": stdout
             }
 
-    # Step 3: Promote to Library
-    target_dir = os.path.join(library_dir, clean_name)
+    # Step 3: Promote to Library atomically
     os.makedirs(target_dir, exist_ok=True)
     target_skill_path = os.path.join(target_dir, "SKILL.md")
+    temp_skill_path = os.path.join(target_dir, f"tmp_skill_{os.getpid()}_{uuid.uuid4().hex[:8]}.md")
 
-    with open(target_skill_path, "w", encoding="utf-8") as f:
-        f.write(content)
+    try:
+        with open(temp_skill_path, "w", encoding="utf-8") as f:
+            f.write(content)
+            f.flush()
+            os.fsync(f.fileno())
+        safe_atomic_replace(temp_skill_path, target_skill_path)
+    finally:
+        if os.path.exists(temp_skill_path):
+            try:
+                os.remove(temp_skill_path)
+            except Exception:
+                pass
 
     # Step 4: Re-index into registry.json
     scripts_dir = os.path.dirname(os.path.abspath(__file__))
@@ -121,13 +206,19 @@ def synthesize_and_promote_skill(name, description, domain="general", test_code=
         reg_path = os.path.join(scripts_dir, "registry.json")
         build_index(reg_path)
     except Exception as e:
-        pass
+        return {
+            "status": "failed",
+            "stage": "indexing",
+            "error": f"Failed to rebuild registry: {type(e).__name__}: {e}",
+            "skill_name": clean_name,
+            "path": target_skill_path.replace("\\", "/")
+        }
 
     return {
         "status": "success",
         "skill_name": clean_name,
         "path": target_skill_path.replace("\\", "/"),
-        "promoted_at": datetime.now().isoformat()
+        "promoted_at": datetime.now(timezone.utc).isoformat()
     }
 
 
@@ -138,7 +229,8 @@ if __name__ == "__main__":
     parser.add_argument("--desc", "-d", required=True, help="Description of what the skill does")
     parser.add_argument("--domain", default="general", help="Technical domain")
     parser.add_argument("--test", "-t", default=None, help="Inline python test code to validate")
+    parser.add_argument("--allow-exec", action="store_true", help="Explicitly permit test subprocess execution")
     args = parser.parse_args()
 
-    result = synthesize_and_promote_skill(args.name, args.desc, args.domain, args.test)
+    result = synthesize_and_promote_skill(args.name, args.desc, args.domain, args.test, allow_exec=args.allow_exec)
     print(json.dumps(result, indent=2))

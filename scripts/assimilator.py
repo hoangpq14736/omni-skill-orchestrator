@@ -1,13 +1,10 @@
 #!/usr/bin/env python3
 """
-Omni-Kernel v4.1: Workspace Virtualization Engine (Assimilator)
+Omni-Kernel v4.1: Workspace Virtualization Engine (Assimilator - Hardened)
 Automatically discovers and assimilates local skills, rules, and conventions from ANY workspace.
 Completely non-destructive and read-only on the target repository.
 Equipped with AssimilatorGuard (Zero-Trust Sanitizer) to block Indirect Prompt Injections (IPI).
-
-Supported formats:
-- Skills: .agents/skills/*/SKILL.md, .gemini/skills/*/SKILL.md, skills/*/SKILL.md
-- Rules: GEMINI.md, CLAUDE.md, AGENTS.md, .cursorrules, .cursor/rules/*.mdc, .agents/rules/*.md
+Remediated against VULN-007 (symlink traversal) and VULN-009 (memory/file size bounds).
 """
 
 import os
@@ -17,7 +14,6 @@ import json
 import time
 import hashlib
 
-# Ensure scripts directory is on sys.path
 _SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 if _SCRIPT_DIR not in sys.path:
     sys.path.insert(0, _SCRIPT_DIR)
@@ -25,14 +21,36 @@ if _SCRIPT_DIR not in sys.path:
 from indexer import parse_frontmatter, extract_tokens
 from workspace_sanitizer import AssimilatorGuard, is_trusted_workspace
 
+# Upper bound limits to defend against resource exhaustion DoS (VULN-009)
+MAX_WORKSPACE_READ = 64 * 1024       # 64 KiB max per skill/rule file
+MAX_WORKSPACE_SKILLS = 50            # Max local skills scanned
+MAX_WORKSPACE_RULES = 100            # Max local rules scanned
+
 
 def get_workspace_hash(workspace_dir: str) -> str:
     """Generates a stable MD5 identifier for a workspace path."""
     return hashlib.md5(os.path.abspath(workspace_dir).lower().encode("utf-8")).hexdigest()[:12]
 
 
+def is_safe_workspace_file(file_path: str, workspace_dir: str) -> bool:
+    """
+    Verifies that file_path is a regular file, is NOT a symlink, and strictly resides
+    inside the canonical workspace directory tree (VULN-007).
+    """
+    if not file_path or not os.path.isfile(file_path):
+        return False
+    if os.path.islink(file_path):
+        return False
+    try:
+        ws_real = os.path.normcase(os.path.realpath(workspace_dir))
+        f_real = os.path.normcase(os.path.realpath(file_path))
+        return f_real.startswith(ws_real + os.sep) or f_real == ws_real
+    except Exception:
+        return False
+
+
 def find_workspace_skills(workspace_dir: str, is_trusted: bool = False, blocked_list: list = None) -> list:
-    """Scans for local skill definitions in standard agent folders with IPI guard."""
+    """Scans for local skill definitions in standard agent folders with IPI guard and symlink containment."""
     discovered = []
     if not workspace_dir or not os.path.exists(workspace_dir):
         return discovered
@@ -47,14 +65,24 @@ def find_workspace_skills(workspace_dir: str, is_trusted: bool = False, blocked_
     seen_paths = set()
     for pattern in search_patterns:
         for skill_file in glob.glob(pattern):
+            if len(discovered) >= MAX_WORKSPACE_SKILLS:
+                break
+
             norm_path = os.path.normpath(skill_file)
             if norm_path in seen_paths:
                 continue
             seen_paths.add(norm_path)
 
+            # VULN-007: Reject symlinks and paths escaping workspace root
+            if not is_safe_workspace_file(norm_path, workspace_dir):
+                continue
+
             try:
+                if os.path.getsize(norm_path) > MAX_WORKSPACE_READ:
+                    continue
+
                 with open(norm_path, "r", encoding="utf-8", errors="ignore") as f:
-                    content = f.read()
+                    content = f.read(MAX_WORKSPACE_READ)
 
                 # Zero-Trust Check for Untrusted Workspaces
                 if not is_trusted:
@@ -80,7 +108,7 @@ def find_workspace_skills(workspace_dir: str, is_trusted: bool = False, blocked_
                     "path": norm_path.replace("\\", "/"),
                     "description": desc,
                     "version": version,
-                    "quality_score": 95,  # Workspace local skills get high preference
+                    "quality_score": 95,
                     "mtime": int(os.path.getmtime(norm_path)),
                     "tokens": tokens,
                 })
@@ -91,14 +119,13 @@ def find_workspace_skills(workspace_dir: str, is_trusted: bool = False, blocked_
 
 
 def find_workspace_rules(workspace_dir: str, is_trusted: bool = False, blocked_list: list = None) -> list:
-    """Scans and extracts local rules from Cursor, Claude, Gemini, or Antigravity files with IPI guard."""
+    """Scans and extracts local rules with IPI guard, symlink containment, and bounded reading."""
     rules = []
     if not workspace_dir or not os.path.exists(workspace_dir):
         return rules
 
     seen_paths = set()
     rule_candidates = [
-        # Root markdown conventions
         ("GEMINI.md", os.path.normpath(os.path.join(workspace_dir, "GEMINI.md"))),
         ("CLAUDE.md", os.path.normpath(os.path.join(workspace_dir, "CLAUDE.md"))),
         ("AGENTS.md", os.path.normpath(os.path.join(workspace_dir, "AGENTS.md"))),
@@ -112,34 +139,37 @@ def find_workspace_rules(workspace_dir: str, is_trusted: bool = False, blocked_l
     ]
 
     for label, path in rule_candidates:
-        if os.path.isfile(path):
-            norm = os.path.normpath(path)
-            if norm in seen_paths:
-                continue
-            seen_paths.add(norm)
-            try:
-                with open(path, "r", encoding="utf-8", errors="ignore") as f:
-                    content = f.read(4000)  # Read first 4KB
+        if len(rules) >= MAX_WORKSPACE_RULES:
+            break
+        if not is_safe_workspace_file(path, workspace_dir):
+            continue
 
-                # Zero-Trust Check for Untrusted Workspaces
-                if not is_trusted:
-                    is_safe, violations = AssimilatorGuard.scan_rules(content, label)
-                    if not is_safe:
-                        print(f"⚠️ [Assimilator] BLOCKED RULE '{label}': {violations}", file=sys.stderr)
-                        if blocked_list is not None:
-                            blocked_list.append({"file": norm, "type": "rule", "source": label, "violations": violations})
-                        continue
+        norm = os.path.normpath(path)
+        if norm in seen_paths:
+            continue
+        seen_paths.add(norm)
+        try:
+            with open(path, "r", encoding="utf-8", errors="ignore") as f:
+                content = f.read(4000)
 
-                first_lines = [line.strip("# -*").strip() for line in content.splitlines() if line.strip() and not line.strip().startswith("```")][:3]
-                summary = " | ".join(first_lines) if first_lines else "Custom repository rules"
-                rules.append({
-                    "source": label,
-                    "path": norm.replace("\\", "/"),
-                    "summary": summary[:160],
-                    "content_preview": content[:500]
-                })
-            except Exception:
-                pass
+            if not is_trusted:
+                is_safe, violations = AssimilatorGuard.scan_rules(content, label)
+                if not is_safe:
+                    print(f"⚠️ [Assimilator] BLOCKED RULE '{label}': {violations}", file=sys.stderr)
+                    if blocked_list is not None:
+                        blocked_list.append({"file": norm, "type": "rule", "source": label, "violations": violations})
+                    continue
+
+            first_lines = [line.strip("# -*").strip() for line in content.splitlines() if line.strip() and not line.strip().startswith("```")][:3]
+            summary = " | ".join(first_lines) if first_lines else "Custom repository rules"
+            rules.append({
+                "source": label,
+                "path": norm.replace("\\", "/"),
+                "summary": summary[:160],
+                "content_preview": content[:500]
+            })
+        except Exception:
+            pass
 
     # Directory-based rules: .cursor/rules/*.mdc, .agents/rules/*.md, rules/*.md
     dir_patterns = [
@@ -152,35 +182,38 @@ def find_workspace_rules(workspace_dir: str, is_trusted: bool = False, blocked_l
     ]
     for pattern in dir_patterns:
         for r_file in glob.glob(pattern):
-            if os.path.isfile(r_file):
-                norm = os.path.normpath(r_file)
-                if norm in seen_paths:
-                    continue
-                seen_paths.add(norm)
-                try:
-                    rel_name = os.path.relpath(r_file, workspace_dir).replace("\\", "/")
-                    with open(r_file, "r", encoding="utf-8", errors="ignore") as f:
-                        content = f.read(2000)
+            if len(rules) >= MAX_WORKSPACE_RULES:
+                break
+            if not is_safe_workspace_file(r_file, workspace_dir):
+                continue
 
-                    # Zero-Trust Check for Untrusted Workspaces
-                    if not is_trusted:
-                        is_safe, violations = AssimilatorGuard.scan_rules(content, rel_name)
-                        if not is_safe:
-                            print(f"⚠️ [Assimilator] BLOCKED RULE '{rel_name}': {violations}", file=sys.stderr)
-                            if blocked_list is not None:
-                                blocked_list.append({"file": norm, "type": "rule", "source": rel_name, "violations": violations})
-                            continue
+            norm = os.path.normpath(r_file)
+            if norm in seen_paths:
+                continue
+            seen_paths.add(norm)
+            try:
+                rel_name = os.path.relpath(r_file, workspace_dir).replace("\\", "/")
+                with open(r_file, "r", encoding="utf-8", errors="ignore") as f:
+                    content = f.read(2000)
 
-                    first_lines = [line.strip("# -*").strip() for line in content.splitlines() if line.strip() and not line.strip().startswith("```")][:2]
-                    summary = " | ".join(first_lines) if first_lines else "Directory rule"
-                    rules.append({
-                        "source": rel_name,
-                        "path": norm.replace("\\", "/"),
-                        "summary": summary[:160],
-                        "content_preview": content[:400]
-                    })
-                except Exception:
-                    pass
+                if not is_trusted:
+                    is_safe, violations = AssimilatorGuard.scan_rules(content, rel_name)
+                    if not is_safe:
+                        print(f"⚠️ [Assimilator] BLOCKED RULE '{rel_name}': {violations}", file=sys.stderr)
+                        if blocked_list is not None:
+                            blocked_list.append({"file": norm, "type": "rule", "source": rel_name, "violations": violations})
+                        continue
+
+                first_lines = [line.strip("# -*").strip() for line in content.splitlines() if line.strip() and not line.strip().startswith("```")][:2]
+                summary = " | ".join(first_lines) if first_lines else "Directory rule"
+                rules.append({
+                    "source": rel_name,
+                    "path": norm.replace("\\", "/"),
+                    "summary": summary[:160],
+                    "content_preview": content[:400]
+                })
+            except Exception:
+                pass
 
     return rules
 
@@ -216,8 +249,7 @@ def main():
     args = parser.parse_args()
 
     result = assimilate_workspace(args.workspace)
-    if args.json or True:
-        print(json.dumps(result, indent=2, ensure_ascii=False))
+    print(json.dumps(result, indent=2, ensure_ascii=False))
 
 
 if __name__ == "__main__":
