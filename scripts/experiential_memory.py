@@ -658,6 +658,14 @@ def recall_traces(query_text: str,
         intersection = query_tokens.intersection(tr_tokens)
         if not intersection:
             continue
+        GENERIC_TRACE_STOPWORDS = {
+            "fix", "debug", "debugging", "error", "errors", "issue", "issues",
+            "code", "test", "testing", "file", "run", "build", "check", "in",
+            "of", "for", "the", "a", "an", "to", "with", "on", "and", "or", "is", "not"
+        }
+        specific_intersection = intersection - GENERIC_TRACE_STOPWORDS
+        if not specific_intersection:
+            continue
 
         # Jaccard + Overlap composite score
         overlap_score = len(intersection) / len(query_tokens)

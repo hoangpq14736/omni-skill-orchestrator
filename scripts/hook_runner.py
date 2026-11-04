@@ -569,7 +569,11 @@ def process_hook(payload: dict) -> dict:
     gatekeeper_text = None
     if is_arch:
         target_file = None
-        spec_match = re.search(r"\b([a-zA-Z0-9_\-]+\.(?:md|patch|py))\b", user_input, re.IGNORECASE)
+        spec_match = re.search(
+            r"\b((?:spec|plan|constitution|tasks|checklist|rfc[a-zA-Z0-9_\-]*|frc[a-zA-Z0-9_\-]*|omni_kernel_[a-zA-Z0-9_\-]*)\.(?:md|patch))\b",
+            user_input,
+            re.IGNORECASE,
+        )
         if spec_match:
             target_file = spec_match.group(1)
         verdict, meta = verify_critic_artifact(workspace_dir, target_file=target_file, user_prompt=raw_user_input)

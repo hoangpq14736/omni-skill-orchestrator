@@ -719,9 +719,14 @@ def extract_query_tokens(text):
         "debugging": ["debug", "systematic-debugging", "troubleshoot"],
         "fix": ["debug", "debugging", "systematic-debugging", "troubleshooting"],
         "docker": ["dockerfile", "container", "containers", "compose", "docker-patterns", "deployment-patterns"],
+        "dockerfile": ["docker", "container", "containers", "docker-patterns", "deployment-patterns"],
+        "k8s": ["kubernetes", "kubernetes-patterns", "deployment-patterns", "container"],
+        "kubernetes": ["k8s", "kubernetes-patterns", "deployment-patterns", "container"],
         "port": ["networking", "bind", "socket", "container", "docker-patterns", "systematic-debugging"],
         "conflict": ["collision", "troubleshooting", "systematic-debugging"],
         "sqlite": ["sql", "database", "database-migrations", "migrations", "backend-patterns", "wal", "concurrency"],
+        "postgres": ["postgresql", "postgres-patterns", "sql", "database", "database-migrations", "backend-patterns"],
+        "postgresql": ["postgres", "postgres-patterns", "sql", "database", "database-migrations", "backend-patterns"],
         "database": ["sql", "database-migrations", "migrations", "backend-patterns"],
         "lock": ["locking", "concurrency", "deadlock", "mutex", "systematic-debugging", "backend-patterns"],
         "migrate": ["migration", "migrations", "database-migrations"],
@@ -743,11 +748,19 @@ def extract_query_tokens(text):
             elif tok.endswith("s") and not tok.endswith("ss"):
                 tokens.add(tok[:-1])
 
-    # Expand with synonyms (matches both accented and unaccented variations)
+    # Expand with synonyms using strict word boundaries (prevents 'spec' matching 'inspect' or 'nap' matching 'snapshot')
+    raw_word_set = set(raw_words)
+    unaccented_word_set = set(raw_words_unaccented)
+    padded_lower = f" {' '.join(raw_words)} "
+    padded_unaccented = f" {' '.join(raw_words_unaccented)} "
     for phrase, syns in VI_EN_SYNONYMS.items():
         phrase_unaccented = strip_accents(phrase)
-        if phrase in text_lower or phrase_unaccented in text_unaccented:
-            tokens.update(syns)
+        if " " in phrase:
+            if f" {phrase} " in padded_lower or f" {phrase_unaccented} " in padded_unaccented:
+                tokens.update(syns)
+        else:
+            if phrase in raw_word_set or (len(phrase_unaccented) >= 4 and phrase_unaccented in unaccented_word_set):
+                tokens.update(syns)
 
     return tokens
 
@@ -811,22 +824,54 @@ def resolve_skill(intent_text="", workspace_dir=None, registry=None, top_k=3, af
         name = s["name"].lower()
         desc = s["description"].lower()
 
-        # Bonus for exact word or substring in name
-        for qt in query_tokens:
-            if qt and qt == name:
-                score += 80
-            elif qt and qt in name:
-                score += 35
-            elif qt and qt in desc:
-                score += 10
+        name_segments = [seg for seg in name.split("-") if seg]
+        GENERIC_SKILL_SEGMENTS = {
+            "fix", "debug", "debugging", "error", "errors", "issue", "issues",
+            "guide", "guidance", "pattern", "patterns", "tool", "tools", "helper",
+            "helpers", "workflow", "workflows", "review", "reviewer", "check",
+            "basics", "basic", "pro", "modern", "best", "practices", "practice",
+            "dev", "development", "managing", "setup", "config", "code", "coding",
+            "standards", "runtime", "layout", "cli", "sdk", "api", "build",
+            "optimize", "optimization", "create", "write", "read", "search",
+            "inspect", "analyze", "analysis", "mvp", "orch"
+        }
+        domain_segments = [seg for seg in name_segments if seg not in GENERIC_SKILL_SEGMENTS]
+        has_domain_match = (
+            any(seg in query_tokens for seg in domain_segments)
+            or any(qt == name for qt in query_tokens)
+        )
 
-        # Stack alignment bonus
+        # Bonus for exact skill name, segment-aware domain match, or description match
+        for qt in query_tokens:
+            if not qt:
+                continue
+            if qt == name:
+                score += 90
+            elif qt in name_segments:
+                if qt not in GENERIC_SKILL_SEGMENTS:
+                    score += 55
+                    if name_segments and name_segments[0] == qt:
+                        score += 20
+                elif has_domain_match:
+                    score += 12
+            elif len(qt) >= 4 and qt not in GENERIC_SKILL_SEGMENTS and qt in name:
+                score += 25
+            elif qt in desc:
+                score += 10 if qt not in GENERIC_SKILL_SEGMENTS else 3
+
+        # Stack alignment bonus (only full boost when skill is general or matches query domain)
         for st in stack_tags:
             if st and (st in name or st in desc):
-                score += 20
+                score += 20 if (has_domain_match or not domain_segments) else 6
 
         # Scope priority bonus
         score += SCOPE_PRIORITY.get(s["source_type"], 5)
+
+        # Narrow-topic plugin dampening when topic is absent from query
+        if "notebook" in name and not any(nt in query_tokens for nt in ["notebook", "notebooks", "jupyter", "ipynb", "colab"]):
+            score -= 65
+        if name == "managing-python-dependencies" and not any(dt in query_tokens for dt in ["dependency", "dependencies", "pip", "poetry", "uv", "venv", "virtualenv", "requirements", "pyproject", "package", "install"]):
+            score -= 65
 
         # Cloud/Vendor penalty if specific vendor/service is NOT requested
         CLOUD_INFRA_VENDORS = [
@@ -994,7 +1039,12 @@ def resolve_skill(intent_text="", workspace_dir=None, registry=None, top_k=3, af
     try:
         from dual_tier import calculate_task_complexity
         tier_assessment = calculate_task_complexity(intent_text, workspace_dir)
-    except Exception:
+    except Exception as e:
+        try:
+            from memory_utils import persist_diag
+            persist_diag(f"resolver.dual_tier: {type(e).__name__}: {e}", 256)
+        except Exception:
+            pass
         tier_assessment = {
             "score": 0, "tier": 1, "tier_name": "L1 Reflex",
             "recommend_subagent": False, "subagent_role": None, "factors": []
@@ -1004,14 +1054,25 @@ def resolve_skill(intent_text="", workspace_dir=None, registry=None, top_k=3, af
     try:
         from experiential_memory import recall_traces
         proven_traces = recall_traces(intent_text, workspace_dir=workspace_dir, top_k=2, allow_unscoped=True)
-    except Exception:
+    except Exception as e:
+        try:
+            from memory_utils import persist_diag
+            persist_diag(f"resolver.recall_traces: {type(e).__name__}: {e}", 256)
+        except Exception:
+            pass
+        sys.stderr.write(f"[!] Warning: resolver.recall_traces failed: {type(e).__name__}: {e}\n")
         proven_traces = []
 
     # Dynamic MCP Tool Routing via Omni-MCP Virtual Bus (<0.3ms)
     try:
         from mcp_gateway import route_mcp_tool
         dynamic_mcp_tools = route_mcp_tool(intent_text, top_k=2)
-    except Exception:
+    except Exception as e:
+        try:
+            from memory_utils import persist_diag
+            persist_diag(f"resolver.route_mcp_tool: {type(e).__name__}: {e}", 256)
+        except Exception:
+            pass
         dynamic_mcp_tools = []
 
     if unified:
