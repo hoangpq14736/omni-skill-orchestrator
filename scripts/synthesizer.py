@@ -109,7 +109,11 @@ def run_syntax_validation(test_code, timeout_sec=5, allow_exec=False):
         return (False, "", f"AST validation failed: SyntaxError: {e}")
 
     # Check for dangerous system calls, dynamic code evaluation, and unsafe modules (VULN-104, VULN-106)
-    PROHIBITED_MODULES = {"subprocess", "socket", "pty", "ctypes"}
+    PROHIBITED_MODULES = {"subprocess", "socket", "pty", "ctypes", "shutil"}
+    DANGEROUS_CALLS = {
+        "system", "popen", "spawn", "execv", "execve", "fork", "eval", "exec",
+        "__import__", "unlink", "remove", "rmdir", "removedirs", "kill", "rmtree", "getattr"
+    }
     for node in ast.walk(parsed):
         if isinstance(node, ast.Import):
             for alias in node.names:
@@ -120,13 +124,24 @@ def run_syntax_validation(test_code, timeout_sec=5, allow_exec=False):
                 return (False, "", f"AST validation blocked prohibited module import: '{node.module}'")
         elif isinstance(node, ast.Call):
             target_name = None
-            DANGEROUS_CALLS = {"system", "popen", "spawn", "execv", "execve", "fork", "eval", "exec", "__import__"}
             if isinstance(node.func, ast.Attribute) and node.func.attr in DANGEROUS_CALLS:
                 target_name = node.func.attr
             elif isinstance(node.func, ast.Name) and node.func.id in DANGEROUS_CALLS:
                 target_name = node.func.id
             if target_name:
                 return (False, "", f"AST validation blocked dangerous call: {target_name}() is prohibited by sandbox security policy")
+
+            # Check for destructive file open modes (w, a, x, +)
+            is_open = (isinstance(node.func, ast.Name) and node.func.id == "open") or (isinstance(node.func, ast.Attribute) and node.func.attr == "open")
+            if is_open:
+                mode_str = None
+                if len(node.args) >= 2 and isinstance(node.args[1], ast.Constant) and isinstance(node.args[1].value, str):
+                    mode_str = node.args[1].value
+                for kw in node.keywords:
+                    if kw.arg == "mode" and isinstance(kw.value, ast.Constant) and isinstance(kw.value.value, str):
+                        mode_str = kw.value.value
+                if mode_str and any(c in mode_str for c in ("w", "a", "x", "+")):
+                    return (False, "", f"AST validation blocked open() with destructive mode '{mode_str}'")
 
     if not allow_exec:
         return (True, "syntax_ok_not_executed: AST syntax and structural validation passed (execution gated)", "")

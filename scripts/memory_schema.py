@@ -185,6 +185,7 @@ CREATE TABLE IF NOT EXISTS l1_staging_log (
 );
 
 CREATE INDEX IF NOT EXISTS idx_staging_status_ws ON l1_staging_log (is_drained, workspace_hash, staging_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_staging_dedup ON l1_staging_log (session_id, timestamp, user_input, workspace_hash);
 
 -- ----------------------------------------------------------------------------
 -- Table 6: activation_events (Tier 3 Consolidation Staging Buffer)
@@ -205,6 +206,7 @@ CREATE TABLE IF NOT EXISTS activation_events (
 
 CREATE INDEX IF NOT EXISTS idx_event_pending ON activation_events(is_consolidated, timestamp);
 CREATE INDEX IF NOT EXISTS idx_events_status_ws ON activation_events (is_consolidated, workspace_dir, event_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_events_dedup ON activation_events (session_id, timestamp, user_input, workspace_dir);
 
 -- ----------------------------------------------------------------------------
 -- Table 7: consolidation_outbox (Durable Outbox Queue for Proven Traces)
@@ -389,6 +391,40 @@ def init_database(db_path: str = "omni_memory.db", isolation_level: Optional[str
                 # VULN-001 & VULN-003: Retain 32-hex legacy partition key when workspace_path is unresolvable; never map to arbitrary path
                 from memory_utils import persist_diag
                 persist_diag(f"Retaining unmapped legacy 32-hex partition {old_hash[:12]}", 256)
+
+        # Pre-collapse any existing duplicates in staging and activation tables before creating unique indexes (VULN-102)
+        if "l1_staging_log" in tables_exist:
+            conn.execute("""
+                DELETE FROM l1_staging_log
+                WHERE staging_id NOT IN (
+                    SELECT MIN(staging_id)
+                    FROM l1_staging_log
+                    GROUP BY session_id, timestamp, user_input, workspace_hash
+                );
+            """)
+        if "activation_events" in tables_exist:
+            conn.execute("""
+                DELETE FROM activation_events
+                WHERE event_id NOT IN (
+                    SELECT MIN(event_id)
+                    FROM activation_events
+                    GROUP BY session_id, timestamp, user_input, workspace_dir
+                );
+            """)
+
+        # Apply DDL tables and refresh triggers inside the same atomic savepoint (VULN-101)
+        ddl_stmts = []
+        cur_buf = []
+        for line in DDL_TABLES.splitlines(True):
+            cur_buf.append(line)
+            cand = "".join(cur_buf)
+            if sqlite3.complete_statement(cand):
+                s = cand.strip()
+                if s:
+                    ddl_stmts.append(s)
+                cur_buf = []
+        for stmt in ddl_stmts:
+            conn.execute(stmt)
         conn.execute(f"RELEASE SAVEPOINT {sp_mig};")
     except Exception as mig_err:
         try:
@@ -396,27 +432,25 @@ def init_database(db_path: str = "omni_memory.db", isolation_level: Optional[str
             conn.execute(f"RELEASE SAVEPOINT {sp_mig};")
         except Exception:
             pass
-        raise RuntimeError(f"Database migration from MD5 to SHA-256 failed: {mig_err}") from mig_err
+        raise RuntimeError(f"Database atomic migration and DDL setup failed: {mig_err}") from mig_err
 
-    # Atomic Migration: Refresh triggers and apply DDL in a single atomic transaction with explicit rollback (VULN-008)
-    atomic_ddl = f"""
-    BEGIN IMMEDIATE;
-    DROP TRIGGER IF EXISTS trg_episodic_after_update;
-    DROP TRIGGER IF EXISTS trg_episodic_prevent_ws_replace;
-    DROP TRIGGER IF EXISTS trg_episodic_prevent_cross_tenant_supersede;
-    DROP TRIGGER IF EXISTS trg_episodic_prevent_cross_tenant_supersede_insert;
-    DROP TRIGGER IF EXISTS trg_episodic_prevent_ws_update;
-    {DDL_TABLES}
-    COMMIT;
-    """
-    try:
-        conn.executescript(atomic_ddl)
-    except Exception as ddl_err:
-        try:
-            conn.execute("ROLLBACK;")
-        except Exception:
-            pass
-        raise RuntimeError(f"Atomic DDL migration failed: {type(ddl_err).__name__}: {ddl_err}") from ddl_err
+    # VULN-101: Mandatory post-condition verification: assert all 5 invariant tenant-isolation triggers are active
+    required_triggers = {
+        'trg_episodic_prevent_ws_update', 'trg_episodic_prevent_ws_replace',
+        'trg_episodic_prevent_cross_tenant_supersede', 'trg_episodic_prevent_cross_tenant_supersede_insert',
+        'trg_episodic_after_update'
+    }
+    active_triggers = {
+        r[0] for r in conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='trigger' AND name IN ("
+            "'trg_episodic_prevent_ws_update', 'trg_episodic_prevent_ws_replace', "
+            "'trg_episodic_prevent_cross_tenant_supersede', 'trg_episodic_prevent_cross_tenant_supersede_insert', "
+            "'trg_episodic_after_update');"
+        ).fetchall()
+    }
+    missing_triggers = required_triggers - active_triggers
+    if missing_triggers:
+        raise RuntimeError(f"CRITICAL INVARIANT VIOLATION: Database initialized without required security triggers: {missing_triggers}")
 
     # VULN-002: Verify consolidation_outbox has unique constraint or unique index for ON CONFLICT
     has_outbox = bool(conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='consolidation_outbox';").fetchone())

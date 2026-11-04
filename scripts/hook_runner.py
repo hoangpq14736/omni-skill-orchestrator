@@ -744,6 +744,14 @@ def main():
             raw_bytes = sys.stdin.read(262145).encode("utf-8")
         if len(raw_bytes) > 262144:
             sys.stderr.write("[!] Warning: stdin payload exceeded 256 KiB ceiling and was truncated\n")
+            try:
+                # Drain remaining bytes from pipe buffer to prevent blocking host writer process (Edge Case 2)
+                while True:
+                    chunk = sys.stdin.buffer.read(65536) if hasattr(sys.stdin, "buffer") else sys.stdin.read(65536)
+                    if not chunk:
+                        break
+            except Exception:
+                pass
             output = {
                 "injectSteps": [
                     {

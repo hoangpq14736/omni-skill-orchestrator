@@ -33,6 +33,7 @@ METADATA_EXCLUDED_FILES = {
 
 # Module concurrency lock
 _MCP_LOCK = threading.Lock()
+_MCP_REINDEXING = False
 _CACHED_MCP_INDEX = None
 _CACHED_MCP_TIME = 0.0
 _LAST_STALE_CHECK = 0.0
@@ -262,25 +263,43 @@ def is_mcp_stale(index_data: dict, base_dirs: list = None) -> bool:
 
 
 def get_mcp_index(force_refresh: bool = False, base_dirs: list = None) -> dict:
-    """Returns cached MCP index under module lock, reindexing if stale."""
-    global _CACHED_MCP_INDEX, _CACHED_MCP_TIME, _LAST_STALE_CHECK
+    """Returns cached MCP index with copy-on-write pointer swap and stale-while-revalidate (VULN-105)."""
+    global _CACHED_MCP_INDEX, _CACHED_MCP_TIME, _LAST_STALE_CHECK, _MCP_REINDEXING
     now = time.time()
 
     with _MCP_LOCK:
-        need_refresh = force_refresh or (_CACHED_MCP_INDEX is None)
+        curr_idx = _CACHED_MCP_INDEX
+        need_refresh = force_refresh or (curr_idx is None)
         if not need_refresh:
             if base_dirs is not None:
-                need_refresh = is_mcp_stale(_CACHED_MCP_INDEX, base_dirs)
+                need_refresh = is_mcp_stale(curr_idx, base_dirs)
             elif now - _LAST_STALE_CHECK > 1.5:
                 _LAST_STALE_CHECK = now
-                need_refresh = is_mcp_stale(_CACHED_MCP_INDEX, base_dirs) or (now - _CACHED_MCP_TIME > 120)
+                need_refresh = is_mcp_stale(curr_idx, base_dirs) or (now - _CACHED_MCP_TIME > 120)
 
-        if need_refresh:
-            servers = discover_mcp_servers(base_dirs)
-            _CACHED_MCP_INDEX = index_mcp_tools(servers)
-            _CACHED_MCP_TIME = now
-            _LAST_STALE_CHECK = now
-        return _CACHED_MCP_INDEX
+        if not need_refresh:
+            return curr_idx
+
+        # Stale-while-revalidate: if another thread is already reindexing and we have cached data,
+        # return existing index immediately without blocking (<0.02ms)
+        if _MCP_REINDEXING and curr_idx is not None:
+            return curr_idx
+
+        _MCP_REINDEXING = True
+
+    try:
+        # Scan filesystem and parse schemas OUTSIDE _MCP_LOCK to avoid blocking hook threads
+        servers = discover_mcp_servers(base_dirs)
+        new_index = index_mcp_tools(servers)
+        finish_time = time.time()
+        with _MCP_LOCK:
+            _CACHED_MCP_INDEX = new_index
+            _CACHED_MCP_TIME = finish_time
+            _LAST_STALE_CHECK = finish_time
+            return _CACHED_MCP_INDEX
+    finally:
+        with _MCP_LOCK:
+            _MCP_REINDEXING = False
 
 
 def route_mcp_tool(query_text: str,

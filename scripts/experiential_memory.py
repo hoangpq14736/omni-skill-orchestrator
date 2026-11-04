@@ -45,8 +45,39 @@ def tokenize(text: str) -> list:
     return list(set(tokens))
 
 
+def _get_traces_read_view(traces_path: str = None) -> list:
+    """Internal fast read-only view of traces list under _MEM_LOCK for sub-millisecond recall (VULN-103)."""
+    global _CACHE, _MEM_LOCK
+    path = traces_path or TRACES_FILE
+    abs_path = os.path.abspath(path)
+    if not os.path.exists(abs_path):
+        return []
+    with _MEM_LOCK:
+        try:
+            stat_res = os.stat(abs_path)
+            cache_sig = (stat_res.st_mtime_ns, stat_res.st_size, getattr(stat_res, "st_ino", 0))
+            cache_entry = _CACHE.get(abs_path)
+            if cache_entry is not None and cache_sig == cache_entry.get("sig") and (traces_path is None or traces_path == TRACES_FILE):
+                return list(cache_entry["data"].get("traces", []))
+            with open(abs_path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                scrubbed = []
+                for tr in data.get("traces", []):
+                    try:
+                        scrubbed.append(_redact_trace_dict(tr))
+                    except Exception as red_err:
+                        sys.stderr.write(f"[!] Warning: Dropping unredactable trace {tr.get('id', 'unknown')}: {red_err}\n")
+                data["traces"] = scrubbed
+                _CACHE[abs_path] = {"data": data, "sig": cache_sig}
+                return list(data.get("traces", []))
+        except Exception:
+            return []
+
+
 def load_traces(traces_path: str = None, bypass_cache: bool = False) -> dict:
-    """Loads stored execution traces using (mtime_ns, size, inode) cache guarded by _MEM_LOCK (VULN-003, VULN-004)."""
+    """Loads stored execution traces using (mtime_ns, size, inode) cache guarded by _MEM_LOCK (VULN-003, VULN-004, VULN-103).
+    Guarantees isolation against shared mutable state by returning an independent deep copy to public callers.
+    """
     global _CACHE, _MEM_LOCK
     path = traces_path or TRACES_FILE
     abs_path = os.path.abspath(path)
@@ -59,8 +90,7 @@ def load_traces(traces_path: str = None, bypass_cache: bool = False) -> dict:
             cache_sig = (stat_res.st_mtime_ns, stat_res.st_size, getattr(stat_res, "st_ino", 0))
             cache_entry = _CACHE.get(abs_path)
             if not bypass_cache and cache_entry is not None and cache_sig == cache_entry.get("sig") and (traces_path is None or traces_path == TRACES_FILE):
-                # VULN-105: Return cached dict directly without deepcopy to guarantee sub-millisecond hot-path recall (<0.3ms)
-                return cache_entry["data"]
+                return copy.deepcopy(cache_entry["data"])
             with open(abs_path, "r", encoding="utf-8") as f:
                 data = json.load(f)
                 scrubbed = []
@@ -72,7 +102,7 @@ def load_traces(traces_path: str = None, bypass_cache: bool = False) -> dict:
                         sys.stderr.write(f"[!] Warning: Dropping unredactable trace {tr.get('id', 'unknown')}: {red_err}\n")
                 data["traces"] = scrubbed
                 _CACHE[abs_path] = {"data": data, "sig": cache_sig}
-                return data
+                return copy.deepcopy(data)
         except json.JSONDecodeError as jde:
             # VULN-004: Corrupt JSON must raise, NOT return empty dict, to prevent overwriting prior traces
             sys.stderr.write(f"[!] LỖI load_traces: Traces file {abs_path} is corrupt JSON: {jde}\n")
@@ -579,11 +609,10 @@ def recall_traces(query_text: str,
         return []
 
     try:
-        data = load_traces(traces_path)
+        traces = _get_traces_read_view(traces_path)
     except Exception as load_err:
         sys.stderr.write(f"[!] Warning: recall_traces degraded gracefully on unreadable traces file: {load_err}\n")
         return []
-    traces = data.get("traces", [])
     if not traces:
         return []
 
@@ -645,7 +674,7 @@ def recall_traces(query_text: str,
 
         if final_score >= threshold:
             scored.append({
-                "trace": tr,
+                "trace": copy.deepcopy(tr),
                 "score": round(final_score, 3),
                 "matched_tokens": list(intersection)
             })

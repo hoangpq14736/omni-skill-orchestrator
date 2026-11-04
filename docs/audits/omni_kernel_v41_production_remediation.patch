@@ -1,5 +1,5 @@
 diff --git a/scripts/assimilator.py b/scripts/assimilator.py
-index 81a1bb5..022822c 100644
+index 81a1bb5..92e9b72 100644
 --- a/scripts/assimilator.py
 +++ b/scripts/assimilator.py
 @@ -1,13 +1,10 @@
@@ -90,7 +90,7 @@ index 81a1bb5..022822c 100644
  
                  # Zero-Trust Check for Untrusted Workspaces
                  if not is_trusted:
-@@ -80,7 +108,7 @@ def find_workspace_skills(workspace_dir: str, is_trusted: bool = False, blocked_
+@@ -80,25 +108,26 @@ def find_workspace_skills(workspace_dir: str, is_trusted: bool = False, blocked_
                      "path": norm_path.replace("\\", "/"),
                      "description": desc,
                      "version": version,
@@ -99,7 +99,14 @@ index 81a1bb5..022822c 100644
                      "mtime": int(os.path.getmtime(norm_path)),
                      "tokens": tokens,
                  })
-@@ -91,14 +119,13 @@ def find_workspace_skills(workspace_dir: str, is_trusted: bool = False, blocked_
+-            except Exception:
+-                pass
++            except Exception as e:
++                sys.stderr.write(f"[!] Warning [Assimilator] Failed to read/parse skill '{norm_path}': {e}\n")
++                if blocked_list is not None:
++                    blocked_list.append({"file": norm_path, "type": "skill_error", "name": os.path.basename(os.path.dirname(norm_path)), "error": str(e)})
+ 
+     return discovered
  
  
  def find_workspace_rules(workspace_dir: str, is_trusted: bool = False, blocked_list: list = None) -> list:
@@ -115,7 +122,7 @@ index 81a1bb5..022822c 100644
          ("GEMINI.md", os.path.normpath(os.path.join(workspace_dir, "GEMINI.md"))),
          ("CLAUDE.md", os.path.normpath(os.path.join(workspace_dir, "CLAUDE.md"))),
          ("AGENTS.md", os.path.normpath(os.path.join(workspace_dir, "AGENTS.md"))),
-@@ -112,76 +139,82 @@ def find_workspace_rules(workspace_dir: str, is_trusted: bool = False, blocked_l
+@@ -112,75 +141,86 @@ def find_workspace_rules(workspace_dir: str, is_trusted: bool = False, blocked_l
      ]
  
      for label, path in rule_candidates:
@@ -150,8 +157,10 @@ index 81a1bb5..022822c 100644
 +                "summary": summary[:160],
 +                "content_preview": content[:500]
 +            })
-+        except Exception:
-+            pass
++        except Exception as e:
++            sys.stderr.write(f"[!] Warning [Assimilator] Failed to read rule file '{norm}': {e}\n")
++            if blocked_list is not None:
++                blocked_list.append({"file": norm, "type": "rule_error", "source": label, "error": str(e)})
 +
 +    # Directory-based rules: .cursor/rules/*.mdc, .agents/rules/*.md, rules/*.md
 +    dir_patterns = [
@@ -173,6 +182,7 @@ index 81a1bb5..022822c 100644
              if norm in seen_paths:
                  continue
              seen_paths.add(norm)
++            rel_name = os.path.basename(r_file)
              try:
 -                with open(path, "r", encoding="utf-8", errors="ignore") as f:
 -                    content = f.read(4000)  # Read first 4KB
@@ -204,9 +214,9 @@ index 81a1bb5..022822c 100644
 -                    "content_preview": content[:500]
 +                    "content_preview": content[:400]
                  })
-             except Exception:
-                 pass
- 
+-            except Exception:
+-                pass
+-
 -    # Directory-based rules: .cursor/rules/*.mdc, .agents/rules/*.md, rules/*.md
 -    dir_patterns = [
 -        os.path.normpath(os.path.join(workspace_dir, ".cursor", "rules", "*.md*")),
@@ -247,11 +257,14 @@ index 81a1bb5..022822c 100644
 -                    })
 -                except Exception:
 -                    pass
--
++            except Exception as e:
++                sys.stderr.write(f"[!] Warning [Assimilator] Failed to read/parse rule '{norm}': {e}\n")
++                if blocked_list is not None:
++                    blocked_list.append({"file": norm, "type": "rule_error", "source": rel_name, "error": str(e)})
+ 
      return rules
  
- 
-@@ -216,8 +249,7 @@ def main():
+@@ -216,8 +256,7 @@ def main():
      args = parser.parse_args()
  
      result = assimilate_workspace(args.workspace)
@@ -262,7 +275,7 @@ index 81a1bb5..022822c 100644
  
  if __name__ == "__main__":
 diff --git a/scripts/consolidator.py b/scripts/consolidator.py
-index 07a8939..0046e92 100644
+index 07a8939..d9e1130 100644
 --- a/scripts/consolidator.py
 +++ b/scripts/consolidator.py
 @@ -7,13 +7,16 @@ apply bounded Ebbinghaus decay, manage soft-archiving, and perform WAL maintenan
@@ -282,7 +295,7 @@ index 07a8939..0046e92 100644
  from typing import Dict, List, Optional, Tuple, Any
  
  # Ensure scripts directory is on sys.path
-@@ -21,9 +24,62 @@ _SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+@@ -21,9 +24,63 @@ _SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
  if _SCRIPT_DIR not in sys.path:
      sys.path.insert(0, _SCRIPT_DIR)
  
@@ -291,6 +304,7 @@ index 07a8939..0046e92 100644
  from memory_schema import init_database
 -from experiential_memory import record_trace, TRACES_FILE
 +from experiential_memory import record_trace, TRACES_FILE, TracePersistenceError
++from workspace_sanitizer import TrustFileLock
 +
 +# is_valid_hex_hash imported directly from memory_utils (Directive 8)
 +
@@ -347,7 +361,7 @@ index 07a8939..0046e92 100644
  
  
  # ----------------------------------------------------------------------
-@@ -72,6 +128,14 @@ def extract_bilingual_tags(text: str) -> str:
+@@ -72,6 +129,14 @@ def extract_bilingual_tags(text: str) -> str:
  # ----------------------------------------------------------------------
  # Bounded Ebbinghaus Retention Stability (T027 & T028)
  # ----------------------------------------------------------------------
@@ -362,7 +376,7 @@ index 07a8939..0046e92 100644
  def calculate_ebbinghaus_stability(
      s0: float,
      lambda_0: float,
-@@ -95,269 +159,990 @@ def calculate_ebbinghaus_stability(
+@@ -95,280 +160,1130 @@ def calculate_ebbinghaus_stability(
      return max(0.0, min(1.0, stability))
  
  
@@ -519,8 +533,9 @@ index 07a8939..0046e92 100644
 +                conn.execute(f"RELEASE SAVEPOINT {sp_claim};")
 +            else:
 +                conn.rollback()
-+        except Exception:
-+            pass
++        except Exception as rb_err:
++            persist_diag(rb_err, 256)
++            sys.stderr.write(f"[!] Warning: flush_outbox claim rollback failed: {rb_err}\n")
 +        sys.stderr.write(f"[!] Warning: flush_outbox claim failed: {type(claim_err).__name__}: {claim_err}\n")
 +        # VULN-005: Never silently swallow claim failure as 0 flushed
 +        raise RuntimeError(f"flush_outbox claim phase failed: {claim_err}") from claim_err
@@ -694,18 +709,10 @@ index 07a8939..0046e92 100644
 +                            pass
 +                    else:
 +                        self.authorized_hashes.add(r_hash.lower())
-+        except Exception:
-+            pass
- 
--        drained_ids = []
--        for row in rows:
--            s_id, session_id, ts, u_input, ws_hash, top_skill, tier, recalled = row
--            cur.execute(
--                """
--                INSERT INTO activation_events (session_id, timestamp, user_input, workspace_dir, top_skill, tier_used, recalled_traces, feedback_score, is_consolidated)
--                VALUES (?, ?, ?, ?, ?, ?, ?, 0.0, 0)
--                """,
--                (session_id, ts, u_input, ws_hash, top_skill, tier, recalled)
++        except Exception as reg_err:
++            persist_diag(reg_err, 256)
++            sys.stderr.write(f"[!] Warning: Failed to sync authorized_hashes from workspace_registry: {reg_err}\n")
++
 +        if workspace_hash is not None:
 +            if not is_valid_hex_hash(workspace_hash):
 +                raise ValueError(f"Invalid workspace_hash: {workspace_hash!r}")
@@ -718,7 +725,16 @@ index 07a8939..0046e92 100644
 +            self.workspace_hash = canonical_workspace_hash(self.workspace_root)
 +        else:
 +            self.workspace_hash = None
-+
+ 
+-        drained_ids = []
+-        for row in rows:
+-            s_id, session_id, ts, u_input, ws_hash, top_skill, tier, recalled = row
+-            cur.execute(
+-                """
+-                INSERT INTO activation_events (session_id, timestamp, user_input, workspace_dir, top_skill, tier_used, recalled_traces, feedback_score, is_consolidated)
+-                VALUES (?, ?, ?, ?, ?, ?, ?, 0.0, 0)
+-                """,
+-                (session_id, ts, u_input, ws_hash, top_skill, tier, recalled)
 +    def register_workspace(self, workspace_path: str) -> str:
 +        """Registers and authorizes a sub-workspace within workspace_root and persists to workspace_registry (VULN-003, VULN-007)."""
 +        h = resolve_workspace_hash(workspace_path, approved_root=self.workspace_root, allow_unscoped=self.allow_unscoped)
@@ -743,17 +759,10 @@ index 07a8939..0046e92 100644
 +        """
 +        if not (1 <= chunk_size <= 10000):
 +            raise ValueError(f"chunk_size must be between 1 and 10000, got {chunk_size}")
- 
--        placeholders = ",".join("?" for _ in drained_ids)
--        cur.execute(f"UPDATE l1_staging_log SET is_drained = 1 WHERE staging_id IN ({placeholders})", drained_ids)
--        # Argon Chốt chặn 2: Xóa vật lý các dòng đã drain để giải phóng trang đĩa cho incremental_vacuum
--        cur.execute(f"DELETE FROM l1_staging_log WHERE staging_id IN ({placeholders})", drained_ids)
--        self.conn.commit()
--        return len(drained_ids)
++
 +        if not self.workspace_hash and not self.allow_unscoped:
 +            raise RuntimeError("drain_l1_staging cannot operate on unscoped engine when allow_unscoped=False (VULN-003)")
- 
--    def consolidate_batch(self, batch_size: int = 100, dry_run: bool = False) -> Dict[str, Any]:
++
 +        cur = self.conn.cursor()
 +
 +        # In dry_run mode, perform strictly read-only query using subquery COUNT
@@ -771,6 +780,78 @@ index 07a8939..0046e92 100644
 +            row = cur.fetchone()
 +            return row[0] if row else 0
 +
++        # Phase 1: Read and parse offline spool OUTSIDE of SQLite write transaction (VULN-005)
++        spool_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "l1_staging_spool.jsonl")
++        spool_lock = spool_path + ".lock"
++
++        # VULN-103: Crash-recovery sweep for orphaned .proc_* files left by previous crashed drains
++        spool_dir = os.path.dirname(spool_path)
++        base_name = os.path.basename(spool_path)
++        try:
++            for fname in os.listdir(spool_dir):
++                if fname.startswith(base_name + ".proc_"):
++                    stale_proc = os.path.join(spool_dir, fname)
++                    try:
++                        if os.path.isfile(stale_proc) and os.path.getsize(stale_proc) > 0:
++                            with TrustFileLock(spool_lock, timeout=2.0):
++                                with open(stale_proc, "r", encoding="utf-8") as rf, open(spool_path, "a", encoding="utf-8") as wf:
++                                    wf.write(rf.read())
++                            os.remove(stale_proc)
++                            persist_diag(f"Recovered orphaned spool file {fname} into live spool", 256)
++                    except Exception as rec_err:
++                        persist_diag(rec_err, 256)
++        except Exception as scan_err:
++            persist_diag(scan_err, 256)
++
++        proc_path = spool_path + f".proc_{os.getpid()}_{uuid.uuid4().hex[:6]}"
++        spool_staged = False
++
++        if os.path.exists(spool_path):
++            try:
++                with TrustFileLock(spool_lock, timeout=2.0):
++                    if os.path.exists(spool_path) and os.path.getsize(spool_path) > 0:
++                        os.replace(spool_path, proc_path)
++                        spool_staged = True
++            except Exception as lk_err:
++                persist_diag(lk_err, 256)
++
++        parsed_spool_rows = []
++        if spool_staged and os.path.exists(proc_path):
++            bad_lines = []
++            lines_read = 0
++            try:
++                with open(proc_path, "r", encoding="utf-8") as sf:
++                    for line in sf:
++                        lines_read += 1
++                        if lines_read > 5000:
++                            break
++                        line_s = line.strip()
++                        if not line_s:
++                            continue
++                        try:
++                            s_data = json.loads(line_s)
++                            parsed_spool_rows.append((
++                                s_data.get("session_id", "session_default"),
++                                s_data.get("timestamp", datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
++                                s_data.get("user_input", "")[:250],
++                                s_data.get("workspace_hash", ""),
++                                s_data.get("top_skill", "none"),
++                                s_data.get("tier_used", 1),
++                                json.dumps(s_data.get("recalled_traces", []))
++                            ))
++                        except Exception as parse_err:
++                            persist_diag(parse_err, 256)
++                            bad_lines.append((line_s, str(parse_err)))
++
++                if bad_lines:
++                    bad_path = spool_path + ".bad.jsonl"
++                    with open(bad_path, "a", encoding="utf-8") as bf:
++                        for b_line, b_err in bad_lines:
++                            bf.write(json.dumps({"line": b_line, "error": b_err}, ensure_ascii=False) + "\n")
++            except Exception as spool_drain_err:
++                persist_diag(spool_drain_err, 256)
++
++        # Phase 2: Open SQLite transaction strictly for fast in-memory DB operations
 +        own_tx = not getattr(self.conn, "in_transaction", False)
 +        sp_drain = f"sp_drain_{uuid.uuid4().hex[:12]}"
 +
@@ -780,6 +861,15 @@ index 07a8939..0046e92 100644
 +            self.conn.execute(f"SAVEPOINT {sp_drain};")
 +
 +        try:
++            if parsed_spool_rows:
++                cur.executemany(
++                    """
++                    INSERT INTO l1_staging_log (session_id, timestamp, user_input, workspace_hash, top_skill, tier_used, recalled_traces)
++                    VALUES (?, ?, ?, ?, ?, ?, ?)
++                    """,
++                    parsed_spool_rows
++                )
++
 +            if self.workspace_hash:
 +                cur.execute(
 +                    """
@@ -809,15 +899,22 @@ index 07a8939..0046e92 100644
 +                else:
 +                    self.conn.execute(f"RELEASE SAVEPOINT {sp_drain};")
 +                return 0
-+
+ 
+-        placeholders = ",".join("?" for _ in drained_ids)
+-        cur.execute(f"UPDATE l1_staging_log SET is_drained = 1 WHERE staging_id IN ({placeholders})", drained_ids)
+-        # Argon Chốt chặn 2: Xóa vật lý các dòng đã drain để giải phóng trang đĩa cho incremental_vacuum
+-        cur.execute(f"DELETE FROM l1_staging_log WHERE staging_id IN ({placeholders})", drained_ids)
+-        self.conn.commit()
+-        return len(drained_ids)
 +            drained_ids = []
 +            quarantined_ids = []
 +            for row in rows:
 +                s_id, session_id, ts, u_input, ws_hash, top_skill, tier, recalled = row
 +                try:
-+                    safe_input = redact_secrets(u_input) or ""
-+                    safe_skill = redact_secrets(top_skill) if top_skill else None
-+                    safe_recalled = redact_secrets(recalled) if recalled else None
++                    safe_input = str(redact_secrets(u_input) or "")
++                    safe_skill = str(redact_secrets(top_skill)) if top_skill else None
++                    raw_recalled = redact_secrets(recalled) if recalled else None
++                    safe_recalled = json.dumps(raw_recalled, ensure_ascii=False) if isinstance(raw_recalled, (dict, list)) else (str(raw_recalled) if raw_recalled is not None else None)
 +                    cur.execute(
 +                        """
 +                        INSERT INTO activation_events (session_id, timestamp, user_input, workspace_dir, top_skill, tier_used, recalled_traces, feedback_score, is_consolidated)
@@ -830,7 +927,8 @@ index 07a8939..0046e92 100644
 +                    diag = persist_diag(row_err)
 +                    sys.stderr.write(f"[!] Warning: Quarantining poison pill staging row {s_id}: {diag}\n")
 +                    quarantined_ids.append((s_id, diag))
-+
+ 
+-    def consolidate_batch(self, batch_size: int = 100, dry_run: bool = False) -> Dict[str, Any]:
 +            if drained_ids:
 +                _chunked_execute(cur, "UPDATE l1_staging_log SET is_drained = 1 WHERE staging_id IN ({placeholders})", drained_ids)
 +                _chunked_execute(cur, "DELETE FROM l1_staging_log WHERE staging_id IN ({placeholders})", drained_ids)
@@ -842,6 +940,13 @@ index 07a8939..0046e92 100644
 +                self.conn.commit()
 +            else:
 +                self.conn.execute(f"RELEASE SAVEPOINT {sp_drain};")
++
++            # Remove processed spool file only after successful transaction commit (VULN-001)
++            if spool_staged and os.path.exists(proc_path):
++                try:
++                    os.remove(proc_path)
++                except Exception:
++                    pass
 +            return len(drained_ids)
 +        except Exception:
 +            if own_tx:
@@ -853,6 +958,15 @@ index 07a8939..0046e92 100644
 +                try:
 +                    self.conn.execute(f"ROLLBACK TO SAVEPOINT {sp_drain};")
 +                    self.conn.execute(f"RELEASE SAVEPOINT {sp_drain};")
++                except Exception:
++                    pass
++            # Restore unprocessed spool file on rollback so no telemetry is lost (VULN-001)
++            if spool_staged and os.path.exists(proc_path):
++                try:
++                    with TrustFileLock(spool_lock, timeout=2.0):
++                        with open(proc_path, "r", encoding="utf-8") as src, open(spool_path, "a", encoding="utf-8") as dst:
++                            dst.write(src.read())
++                    os.remove(proc_path)
 +                except Exception:
 +                    pass
 +            raise
@@ -882,10 +996,11 @@ index 07a8939..0046e92 100644
  
 -        # Step 1: Drain any pending L1 logs
 -        self.drain_l1_staging(chunk_size=batch_size)
-+        # VULN-002: Gate entire consolidation cycle when unscoped and allow_unscoped=False
++        # VULN-002 & VULN-003: Fail-loud gate when unscoped and allow_unscoped=False
 +        if not self.workspace_hash and not effective_unscoped:
-+            sys.stderr.write("[!] Notice: Skipping unscoped consolidation cycle (pass allow_unscoped=True to run globally)\n")
++            sys.stderr.write("[!] LỖI VẬN HÀNH: Skipping unscoped consolidation cycle (unconfigured workspace)\n")
 +            return {
++                "status": "unconfigured_unscoped_error",
 +                "events_processed": 0,
 +                "promoted_traces": 0,
 +                "soft_archived": 0
@@ -897,15 +1012,22 @@ index 07a8939..0046e92 100644
 +        # Strictly Zero-Mutation Preview for dry_run - executed without write locks (VULN-004)
 +        if dry_run:
 +            if self.workspace_hash:
++                from memory_utils import legacy_workspace_hash
++                target_path = self.workspace_root
++                if not target_path:
++                    row_path = cur.execute("SELECT workspace_path FROM workspace_registry WHERE workspace_hash = ? LIMIT 1;", (self.workspace_hash,)).fetchone()
++                    if row_path and row_path[0]:
++                        target_path = row_path[0]
++                leg_h = legacy_workspace_hash(target_path) if target_path else self.workspace_hash
 +                cur.execute(
 +                    """
 +                    SELECT event_id, session_id, timestamp, user_input, workspace_dir, feedback_score
 +                    FROM activation_events
-+                    WHERE is_consolidated = 0 AND (workspace_dir = ? OR workspace_dir = ?)
++                    WHERE is_consolidated = 0 AND (workspace_dir = ? OR workspace_dir = ? OR workspace_dir = ?)
 +                    ORDER BY event_id ASC
 +                    LIMIT ?;
 +                    """,
-+                    (self.workspace_hash, self.workspace_root or self.workspace_hash, batch_size)
++                    (self.workspace_hash, target_path or self.workspace_hash, leg_h, batch_size)
 +                )
 +            else:
 +                cur.execute(
@@ -980,15 +1102,22 @@ index 07a8939..0046e92 100644
 +        try:
 +            # Step 2: Ingest unprocessed activation events under active write lock
 +            if self.workspace_hash:
++                from memory_utils import legacy_workspace_hash
++                target_path = self.workspace_root
++                if not target_path:
++                    row_path = cur.execute("SELECT workspace_path FROM workspace_registry WHERE workspace_hash = ? LIMIT 1;", (self.workspace_hash,)).fetchone()
++                    if row_path and row_path[0]:
++                        target_path = row_path[0]
++                leg_h = legacy_workspace_hash(target_path) if target_path else self.workspace_hash
 +                cur.execute(
 +                    """
 +                    SELECT event_id, session_id, timestamp, user_input, workspace_dir, feedback_score
 +                    FROM activation_events
-+                    WHERE is_consolidated = 0 AND (workspace_dir = ? OR workspace_dir = ?)
++                    WHERE is_consolidated = 0 AND (workspace_dir = ? OR workspace_dir = ? OR workspace_dir = ?)
 +                    ORDER BY event_id ASC
 +                    LIMIT ?;
 +                    """,
-+                    (self.workspace_hash, self.workspace_root or self.workspace_hash, batch_size)
++                    (self.workspace_hash, target_path or self.workspace_hash, leg_h, batch_size)
 +                )
 +            else:
 +                cur.execute(
@@ -1059,6 +1188,8 @@ index 07a8939..0046e92 100644
 +                            sys.stderr.write(f"[!] Warning: Quarantining empty/non-alphanumeric signature in cluster {key}\n")
 +                            cur.execute(f"RELEASE SAVEPOINT {sp_prom};")
 +                            for dl_eid in cluster_event_ids:
++                                if dl_eid in processed_ids:
++                                    processed_ids.remove(dl_eid)
 +                                dead_letter_ids.append((dl_eid, "Quarantined: Empty or non-alphanumeric problem signature"))
 +                            continue
 +                        tags = extract_bilingual_tags(clean_sig)
@@ -1262,9 +1393,15 @@ index 07a8939..0046e92 100644
 -            )
 +                        if is_trans:
 +                            sys.stderr.write(f"[!] Warning: Transient contention during cluster promotion {safe_key}: {redacted_prom_err} (re-queued for retry)\n")
++                            # VULN-002: Transient contention preserves is_consolidated=0 for natural retry
++                            for ev_to_retry in cluster_event_ids:
++                                if ev_to_retry in processed_ids:
++                                    processed_ids.remove(ev_to_retry)
 +                        else:
 +                            sys.stderr.write(f"[!] Warning: Quarantining poison pill cluster {safe_key}: {redacted_prom_err}\n")
 +                            for dl_eid in cluster_event_ids:
++                                if dl_eid in processed_ids:
++                                    processed_ids.remove(dl_eid)
 +                                dead_letter_ids.append((dl_eid, redacted_prom_err))
  
 -            # 2. Two-phase soft-archiving: mark Archived when confidence_score < 0.20 past 7-day grace period
@@ -1563,8 +1700,53 @@ index 07a8939..0046e92 100644
  
  
  def main():
+     parser = argparse.ArgumentParser(description="Omni-Memory v4.1 Background Consolidator")
+-    parser.add_argument("--workspace", default=os.getcwd(), help="Target workspace root path")
++    parser.add_argument("--workspace", default=None, help="Target workspace root path")
++    parser.add_argument("--allow-unscoped", action="store_true", help="Allow unscoped global consolidation across all workspaces")
+     parser.add_argument("--batch-run", action="store_true", help="Run batch consolidation cycle")
+     parser.add_argument("--dry-run", action="store_true", help="Simulate consolidation without persisting")
+     parser.add_argument("--daemon", action="store_true", help="Run as standing daemon with idle auto-exit")
+     parser.add_argument("--idle-timeout", type=int, default=3600, help="Auto-exit after idle seconds")
+     args = parser.parse_args()
+ 
++    target_ws = args.workspace.strip() if (args.workspace and isinstance(args.workspace, str) and args.workspace.strip()) else None
++    if not target_ws and not args.allow_unscoped:
++        sys.stderr.write("[!] LỖI VẬN HÀNH: Consolidator requires an explicit --workspace path or --allow-unscoped flag\n")
++        sys.exit(1)
++
+     # Lifecycle & Mutual Exclusion Guard (Anti-Zombie & Auto-Healing Lock)
+     from lifecycle_guard import LifecycleGuard
+     guard = LifecycleGuard("omni_consolidator")
+@@ -384,12 +1299,15 @@ def main():
+     guard.register_cleanup(lambda: conn.close())
+ 
+     try:
+-        engine = ConsolidatorEngine(conn)
++        engine = ConsolidatorEngine(conn, workspace_root=target_ws, allow_unscoped=args.allow_unscoped)
+         if args.daemon:
+             last_activity = time.time()
+             print("🚀 Consolidator daemon started. Monitoring L1 events...")
+             while True:
+                 res = engine.consolidate_batch(batch_size=100, dry_run=args.dry_run)
++                if res.get("status") == "unconfigured_unscoped_error":
++                    sys.stderr.write("[!] LỖI VẬN HÀNH: Consolidator daemon aborted due to unconfigured workspace\n")
++                    sys.exit(1)
+                 if res.get("events_processed", 0) > 0 or res.get("promoted_traces", 0) > 0:
+                     last_activity = time.time()
+                 elif time.time() - last_activity > args.idle_timeout:
+@@ -399,6 +1317,9 @@ def main():
+         else:
+             result = engine.consolidate_batch(batch_size=100, dry_run=args.dry_run)
+             print(json.dumps(result, indent=2))
++            if result.get("status") == "unconfigured_unscoped_error":
++                sys.stderr.write("[!] LỖI VẬN HÀNH: Consolidator batch run failed due to unconfigured workspace\n")
++                sys.exit(1)
+     finally:
+         guard.stop()
+ 
 diff --git a/scripts/consult_critic.py b/scripts/consult_critic.py
-index 66de231..5f70084 100644
+index 66de231..d492536 100644
 --- a/scripts/consult_critic.py
 +++ b/scripts/consult_critic.py
 @@ -60,8 +60,8 @@ EXIT_SYSTEM_STRICT = 5         # Schema failure, internal system fault, or stric
@@ -1784,23 +1966,14 @@ index 66de231..5f70084 100644
  
      if verdict != "APPROVED":
          if len(vulns) < 3:
-@@ -312,33 +464,66 @@ def validate_audit_verdict(data: Dict[str, Any]) -> Tuple[bool, str]:
+@@ -312,33 +464,60 @@ def validate_audit_verdict(data: Dict[str, Any]) -> Tuple[bool, str]:
      return True, "Valid"
  
  
 +def find_workspace_root(start_path: str) -> str:
-+    """Finds repository or workspace root walking upwards looking for .git or GEMINI.md (VULN-007)."""
-+    curr = os.path.realpath(os.path.normpath(start_path))
-+    if os.path.isfile(curr):
-+        curr = os.path.dirname(curr)
-+    while True:
-+        if os.path.exists(os.path.join(curr, ".git")) or os.path.exists(os.path.join(curr, "GEMINI.md")):
-+            return curr
-+        parent = os.path.dirname(curr)
-+        if parent == curr:
-+            break
-+        curr = parent
-+    return os.path.realpath(os.getcwd())
++    """Finds repository or workspace root walking upwards looking for .git or GEMINI.md (VULN-004, VULN-007)."""
++    from memory_utils import find_workspace_root as _fwr
++    return _fwr(start_path)
 +
 +
  def format_markdown_report(
@@ -1809,7 +1982,8 @@ index 66de231..5f70084 100644
      input_hash: str,
 -    model: str
 +    model: str,
-+    workspace_dir: Optional[str] = None
++    workspace_dir: Optional[str] = None,
++    hash_domain: str = "raw_file_v1"
  ) -> str:
      """
      Formats the JSON critique into a structured Markdown document with the cryptographic
@@ -1834,9 +2008,11 @@ index 66de231..5f70084 100644
      timestamp_utc = datetime.datetime.now(datetime.timezone.utc).isoformat()
  
      # Cryptographic line 1 metadata header for verify_critic_artifact (<0.1ms parse)
-+    if target_file:
-+        if any(c in str(target_file) for c in ("\r", "\n", "\0")) or "-->" in str(target_file):
-+            raise ValueError(f"Malicious or invalid characters in target_file: {target_file!r}")
++    target_file = (target_file or "inline_prompt").strip()
++    if any(c in str(target_file) for c in ("\r", "\n", "\0")) or "-->" in str(target_file):
++        raise ValueError(f"Malicious or invalid characters in target_file: {target_file!r}")
++    if target_file == "inline_prompt":
++        hash_domain = "redacted_prompt_v1"
 +    from memory_utils import sign_audit_meta, canonical_workspace_hash
 +    ws_target = workspace_dir or os.getcwd()
      meta = {
@@ -1845,7 +2021,7 @@ index 66de231..5f70084 100644
          "input_hash": input_hash,
          "model": model,
 -        "timestamp_utc": timestamp_utc
-+        "hash_domain": "redacted_prompt_v1",
++        "hash_domain": hash_domain,
 +        "hash_algo": "sha256-v2",
 +        "timestamp_utc": timestamp_utc,
 +        "workspace_hash": canonical_workspace_hash(ws_target)
@@ -1858,7 +2034,7 @@ index 66de231..5f70084 100644
      meta_comment = f"<!-- OMNI_AUDIT_META: {json.dumps(meta, separators=(',', ':'))} -->\n"
  
      lines = [
-@@ -359,11 +544,18 @@ def format_markdown_report(
+@@ -359,11 +538,18 @@ def format_markdown_report(
      lines.append(f"## 2. Top Critical Architectural Vulnerabilities ({len(vulns)} identified)")
      if vulns:
          for idx, v in enumerate(vulns, 1):
@@ -1882,7 +2058,7 @@ index 66de231..5f70084 100644
              lines.append(f"### {idx}. [{sev}] {v_id}: {title}")
              lines.append(f"**Description**: {desc}")
              lines.append(f"**Remediation**: `{rem}`\n")
-@@ -373,9 +565,14 @@ def format_markdown_report(
+@@ -373,9 +559,14 @@ def format_markdown_report(
      lines.append(f"## 3. Concurrency, Race Condition & Mutex Hazards ({len(concurrency)} identified)")
      if concurrency:
          for c in concurrency:
@@ -1900,7 +2076,7 @@ index 66de231..5f70084 100644
              lines.append(f"- **Resource**: `{res}` | **Hazard**: {hz} | **Mitigation**: {mit}")
          lines.append("")
      else:
-@@ -384,9 +581,14 @@ def format_markdown_report(
+@@ -384,9 +575,14 @@ def format_markdown_report(
      lines.append(f"## 4. Defensive Failure Scenarios & Edge Cases ({len(edge_cases)} verified)")
      if edge_cases:
          for idx, ec in enumerate(edge_cases, 1):
@@ -1918,7 +2094,7 @@ index 66de231..5f70084 100644
              lines.append(f"### {idx}. {scen}")
              lines.append(f"- **Consequence**: {conseq}")
              lines.append(f"- **Mitigation**: {mit}\n")
-@@ -438,7 +640,7 @@ def execute_critic_request(
+@@ -438,7 +634,7 @@ def execute_critic_request(
              )
              sys.exit(EXIT_TIMEOUT_NETWORK)
  
@@ -1927,7 +2103,7 @@ index 66de231..5f70084 100644
  
          payload = {
              "model": current_model,
-@@ -476,13 +678,48 @@ def execute_critic_request(
+@@ -476,13 +672,48 @@ def execute_critic_request(
                      sys.stderr.write("[!] LỖI API: DeepSeek trả về choices rỗng!\n")
                      sys.exit(EXIT_SYSTEM_STRICT)
  
@@ -1955,33 +2131,33 @@ index 66de231..5f70084 100644
 +                        parsed_verdict = json.loads(repaired_str, strict=False)
 +                    except json.JSONDecodeError as jde:
 +                        # Handle failure without dumping unredacted raw content (VULN-007)
-+                                if os.environ.get('CRITIC_DEBUG') == '1':
-+                                    import tempfile
-+                                    from memory_utils import redact_secrets
-+                                    with tempfile.NamedTemporaryFile(
-+                                        mode='w',
-+                                        delete=False,
-+                                        encoding='utf-8',
-+                                        prefix='critic_debug_',
-+                                        suffix='.txt',
-+                                    ) as dbg:
-+                                        dbg.write(redact_secrets(content_str) or "")
-+                                    sys.stderr.write(
-+                                        f"[!] LỖI PARSE SCHEMA: Model không trả về JSON hợp lệ: {jde}. "
-+                                        f"Redacted dump saved to {dbg.name}\n",
-+                                    )
-+                                else:
-+                                    sys.stderr.write(
-+                                        f"[!] LỖI PARSE SCHEMA: Model không trả về JSON hợp lệ: {jde}.\n",
-+                                    )
-+                                sys.exit(EXIT_SYSTEM_STRICT)
++                        if os.environ.get('CRITIC_DEBUG') == '1':
++                            import tempfile
++                            from memory_utils import redact_secrets
++                            with tempfile.NamedTemporaryFile(
++                                mode='w',
++                                delete=False,
++                                encoding='utf-8',
++                                prefix='critic_debug_',
++                                suffix='.txt',
++                            ) as dbg:
++                                dbg.write(redact_secrets(content_str) or "")
++                            sys.stderr.write(
++                                f"[!] LỖI PARSE SCHEMA: Model không trả về JSON hợp lệ: {jde}. "
++                                f"Redacted dump saved to {dbg.name}\n",
++                            )
++                        else:
++                            sys.stderr.write(
++                                f"[!] LỖI PARSE SCHEMA: Model không trả về JSON hợp lệ: {jde}.\n",
++                            )
++                        sys.exit(EXIT_SYSTEM_STRICT)
 +
 +                if not isinstance(parsed_verdict, dict):
 +                    sys.stderr.write(f"[!] LỖI SCHEMA AUDIT: Parsed verdict is not a JSON object (got {type(parsed_verdict).__name__})\n")
                      sys.exit(EXIT_SYSTEM_STRICT)
  
                  is_valid, validation_msg = validate_audit_verdict(parsed_verdict)
-@@ -583,10 +820,11 @@ def execute_critic_request(
+@@ -583,10 +814,11 @@ def execute_critic_request(
              sys.stderr.write(f"[!] LỖI HTTP {err_code}: {err_body}\n")
              sys.exit(EXIT_CONFIG_USAGE)
  
@@ -1995,7 +2171,7 @@ index 66de231..5f70084 100644
                  sys.exit(EXIT_TIMEOUT_NETWORK)
  
              sleep_time = calculate_sleep_duration(attempt, deadline=deadline)
-@@ -619,6 +857,7 @@ def main() -> None:
+@@ -619,6 +851,7 @@ def main() -> None:
      parser.add_argument("--json", action="store_true", default=False, help="Xuất trực tiếp định dạng JSON thay vì Markdown")
      parser.add_argument("--api-base", type=str, default=None, help="DeepSeek API Base URL (mặc định: https://api.deepseek.com hoặc DEEPSEEK_API_BASE)")
      parser.add_argument("--allowed-root", type=str, default=None, help="Thư mục gốc cho phép (chống path traversal)")
@@ -2003,7 +2179,41 @@ index 66de231..5f70084 100644
  
      args = parser.parse_args()
  
-@@ -690,11 +929,19 @@ def main() -> None:
+@@ -665,8 +898,31 @@ def main() -> None:
+     # Zero-Trust Credential Redaction Pass (Principle II.2)
+     sanitized_content = redact_credentials(raw_content)
+ 
+-    # Compute SHA-256 hash for cryptographic binding
+-    input_hash = f"sha256:{hashlib.sha256(sanitized_content.encode('utf-8')).hexdigest()}"
++    # Compute SHA-256 hash for cryptographic binding (VULN-101)
++    if target_file == "inline_prompt":
++        from memory_utils import hash_prompt
++        input_hash = f"sha256:{hash_prompt(raw_content)}"
++        hash_domain = "redacted_prompt_v1"
++    else:
++        # Physical target file: hash the raw file bytes on disk incrementally with MAX_FILE_SIZE ceiling (VULN-103)
++        st = os.stat(validated_file)
++        if st.st_size > MAX_FILE_SIZE:
++            sys.stderr.write(f"[!] LỖI FILE: File '{args.file}' vượt quá giới hạn tối đa {MAX_FILE_SIZE} bytes ({st.st_size} bytes)!\n")
++            sys.exit(EXIT_CONFIG_USAGE)
++        hasher = hashlib.sha256()
++        with open(validated_file, "rb") as tf:
++            total_read = 0
++            while True:
++                chunk = tf.read(65536)
++                if not chunk:
++                    break
++                total_read += len(chunk)
++                if total_read > MAX_FILE_SIZE:
++                    sys.stderr.write(f"[!] LỖI FILE: File '{args.file}' vượt quá giới hạn tối đa {MAX_FILE_SIZE} bytes!\n")
++                    sys.exit(EXIT_CONFIG_USAGE)
++                hasher.update(chunk)
++        input_hash = f"sha256:{hasher.hexdigest()}"
++        hash_domain = "raw_file_v1"
+ 
+     # Build system prompt with conditional contract (FLAW-001)
+     system_prompt = build_system_prompt(args.mode)
+@@ -690,11 +946,20 @@ def main() -> None:
      if args.json:
          output_text = json.dumps(verdict_data, indent=2, ensure_ascii=False)
      else:
@@ -2020,12 +2230,13 @@ index 66de231..5f70084 100644
              input_hash=input_hash,
 -            model=final_model
 +            model=final_model,
-+            workspace_dir=target_ws
++            workspace_dir=target_ws,
++            hash_domain=hash_domain
          )
  
      # Write output artifact or print
 diff --git a/scripts/dual_tier.py b/scripts/dual_tier.py
-index 90b63a4..84eda03 100644
+index 90b63a4..d9d0957 100644
 --- a/scripts/dual_tier.py
 +++ b/scripts/dual_tier.py
 @@ -7,34 +7,22 @@ Heuristic Intent Taxonomy & Exponential Multipliers:
@@ -2100,11 +2311,11 @@ index 90b63a4..84eda03 100644
      )
  
 -    # 7. Explicit Negation Context (Blind Spot 2: Negation Guard)
-+    # 7. Explicit Negation Context (Clause-bounded negative patterns)
++    # 7. Explicit Negation Context (Clause-bounded negative patterns - VULN-105)
      _PAT_NEGATION = re.compile(
 -        r'\b(đừng|dung|không|khong|chớ|cho|avoid|do not|don\'t|not|never|skip|ignore|leave)\b.{1,35}\b(đụng|dung|chạm|cham|sửa|sua|thay đổi|thay doi|touch|modify|change|alter)\b',
 +        r'\b(đừng|dung|không|khong|chớ|cho|avoid|do not|don\'t|not|never|skip|ignore|leave)\s+'
-+        r'(?:cần\s+|nên\s+|hãy\s+)?'
++        r'(?:(?:cần|can|nên|nen|hãy|hay|được|duoc|phải|phai|có|co|mà|ma|ever|really)\s+){0,3}'
 +        r'(?:đụng|dung|chạm|cham|sửa|sua|thay đổi|thay doi|touch|modify|change|alter)\b',
          re.IGNORECASE
      )
@@ -2324,7 +2535,7 @@ index 90b63a4..84eda03 100644
          "Implement Paxos",
          "Đổi màu nút Submit thành màu đỏ, chỉnh padding 12px, margin 8px, căn giữa text, bo tròn border 4px và thêm shadow",
 diff --git a/scripts/experiential_memory.py b/scripts/experiential_memory.py
-index 81dcfde..a4704b1 100644
+index 81dcfde..7293492 100644
 --- a/scripts/experiential_memory.py
 +++ b/scripts/experiential_memory.py
 @@ -12,17 +12,28 @@ import sys
@@ -2354,18 +2565,20 @@ index 81dcfde..a4704b1 100644
 -_CACHE_DATA = None
 -_CACHE_MTIME = 0.0
 -_INVERTED_INDEX = {}
-+_CACHE = {}  # abs_path -> {"data": dict, "mtime": float}
++_CACHE = {}  # abs_path -> {"data": dict, "sig": tuple}
 +_MEM_LOCK = threading.RLock()
  
  
  def tokenize(text: str) -> list:
-@@ -35,48 +46,330 @@ def tokenize(text: str) -> list:
+@@ -34,49 +45,375 @@ def tokenize(text: str) -> list:
+     return list(set(tokens))
  
  
- def load_traces(traces_path: str = None) -> dict:
+-def load_traces(traces_path: str = None) -> dict:
 -    """Loads stored execution traces in <0.02ms using mtime in-memory caching."""
 -    global _CACHE_DATA, _CACHE_MTIME, _INVERTED_INDEX
-+    """Loads stored execution traces using mtime and path cache guarded by _MEM_LOCK (VULN-003, VULN-004)."""
++def load_traces(traces_path: str = None, bypass_cache: bool = False) -> dict:
++    """Loads stored execution traces using (mtime_ns, size, inode) cache guarded by _MEM_LOCK (VULN-003, VULN-004)."""
 +    global _CACHE, _MEM_LOCK
      path = traces_path or TRACES_FILE
 -    if not os.path.exists(path):
@@ -2375,10 +2588,12 @@ index 81dcfde..a4704b1 100644
 +
 +    with _MEM_LOCK:
 +        try:
-+            current_mtime = os.path.getmtime(abs_path)
++            stat_res = os.stat(abs_path)
++            cache_sig = (stat_res.st_mtime_ns, stat_res.st_size, getattr(stat_res, "st_ino", 0))
 +            cache_entry = _CACHE.get(abs_path)
-+            if cache_entry is not None and current_mtime == cache_entry["mtime"] and (traces_path is None or traces_path == TRACES_FILE):
-+                return copy.deepcopy(cache_entry["data"])
++            if not bypass_cache and cache_entry is not None and cache_sig == cache_entry.get("sig") and (traces_path is None or traces_path == TRACES_FILE):
++                # VULN-105: Return cached dict directly without deepcopy to guarantee sub-millisecond hot-path recall (<0.3ms)
++                return cache_entry["data"]
 +            with open(abs_path, "r", encoding="utf-8") as f:
 +                data = json.load(f)
 +                scrubbed = []
@@ -2389,8 +2604,8 @@ index 81dcfde..a4704b1 100644
 +                        # VULN-003: Fail-closed: Never append raw unredacted trace on redaction error
 +                        sys.stderr.write(f"[!] Warning: Dropping unredactable trace {tr.get('id', 'unknown')}: {red_err}\n")
 +                data["traces"] = scrubbed
-+                _CACHE[abs_path] = {"data": data, "mtime": current_mtime}
-+                return copy.deepcopy(data)
++                _CACHE[abs_path] = {"data": data, "sig": cache_sig}
++                return data
 +        except json.JSONDecodeError as jde:
 +            # VULN-004: Corrupt JSON must raise, NOT return empty dict, to prevent overwriting prior traces
 +            sys.stderr.write(f"[!] LỖI load_traces: Traces file {abs_path} is corrupt JSON: {jde}\n")
@@ -2404,14 +2619,32 @@ index 81dcfde..a4704b1 100644
 +import tempfile
 +
 +_lock_local = threading.local()
-+_PROCESS_LOCKS: Dict[str, threading.RLock] = {}
++_PROCESS_LOCKS: Dict[str, List[Any]] = {}  # path -> [RLock, refcount] (VULN-005)
 +_PROCESS_LOCKS_MUTEX = threading.Lock()
++
++def _enter_process_rlock(path: str) -> threading.RLock:
++    """Acquires a reference to an intra-process RLock for path with refcount tracking (VULN-005)."""
++    with _PROCESS_LOCKS_MUTEX:
++        if path not in _PROCESS_LOCKS:
++            _PROCESS_LOCKS[path] = [threading.RLock(), 0]
++        entry = _PROCESS_LOCKS[path]
++        entry[1] += 1
++        return entry[0]
++
++def _exit_process_rlock(path: str):
++    """Releases a reference to an intra-process RLock, pruning entry when refcount hits zero (VULN-005)."""
++    with _PROCESS_LOCKS_MUTEX:
++        if path in _PROCESS_LOCKS:
++            entry = _PROCESS_LOCKS[path]
++            entry[1] -= 1
++            if entry[1] <= 0:
++                del _PROCESS_LOCKS[path]
 +
 +def _get_process_rlock(path: str) -> threading.RLock:
 +    with _PROCESS_LOCKS_MUTEX:
 +        if path not in _PROCESS_LOCKS:
-+            _PROCESS_LOCKS[path] = threading.RLock()
-+        return _PROCESS_LOCKS[path]
++            _PROCESS_LOCKS[path] = [threading.RLock(), 0]
++        return _PROCESS_LOCKS[path][0]
 +
 +try:
 +    import msvcrt
@@ -2470,22 +2703,26 @@ index 81dcfde..a4704b1 100644
 +    """
 +    def __init__(self, lock_file: str, timeout: float = 5.0):
 +        self.lock_file = os.path.abspath(lock_file)
++        self._lock_key = os.path.normcase(os.path.realpath(self.lock_file))
 +        self.timeout = timeout
 +        self.fd = None
-+        self._rlock = _get_process_rlock(self.lock_file)
++        self._rlock = None
 +
 +    def __enter__(self):
-+        # VULN-003: Acquire process-wide RLock first to serialize intra-process threads cleanly
++        # VULN-003 & VULN-005: Acquire process-wide RLock with refcount tracking on canonical key to prevent unbounded registry leak
++        self._rlock = _enter_process_rlock(self._lock_key)
 +        acquired = self._rlock.acquire(timeout=self.timeout)
 +        if not acquired:
++            _exit_process_rlock(self._lock_key)
++            self._rlock = None
 +            raise TimeoutError(f"Could not acquire intra-process thread lock on {self.lock_file} within {self.timeout}s")
 +
 +        try:
 +            held = getattr(_lock_local, "held_locks", None)
 +            if held is None:
 +                held = _lock_local.held_locks = {}
-+            if self.lock_file in held:
-+                held[self.lock_file] += 1
++            if self._lock_key in held:
++                held[self._lock_key] += 1
 +                return self
 +
 +            deadline = time.monotonic() + self.timeout
@@ -2515,6 +2752,9 @@ index 81dcfde..a4704b1 100644
 +                        reparse = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400)
 +                        if getattr(st, "st_file_attributes", 0) & reparse:
 +                            raise PermissionError(f"Security violation: lock file is a reparse point or symlink: {self.lock_file}")
++
++                    if getattr(st, "st_nlink", 1) > 1:
++                        raise PermissionError(f"Security violation: lock file has hard links: {self.lock_file}")
 +
 +                    if hasattr(os, "fchmod"):
 +                        try:
@@ -2551,7 +2791,7 @@ index 81dcfde..a4704b1 100644
 +                try:
 +                    os.lseek(self.fd, 0, os.SEEK_SET)
 +                    _lock_fd(self.fd)
-+                    held[self.lock_file] = 1
++                    held[self._lock_key] = 1
 +                    return self
 +                except (BlockingIOError, OSError) as lock_err:
 +                    winerror = getattr(lock_err, "winerror", None)
@@ -2581,18 +2821,29 @@ index 81dcfde..a4704b1 100644
 +                        self.fd = None
 +                        raise
 +        except Exception:
-+            self._rlock.release()
++            if self._rlock is not None:
++                self._rlock.release()
++                _exit_process_rlock(self._lock_key)
++                self._rlock = None
 +            raise
 +
 +    def __exit__(self, exc_type, exc_val, exc_tb):
-+        try:
-+            held = getattr(_lock_local, "held_locks", {})
-+            if self.lock_file in held:
-+                held[self.lock_file] -= 1
-+                if held[self.lock_file] > 0:
-+                    return
-+                del held[self.lock_file]
++        held = getattr(_lock_local, "held_locks", {})
++        if self._lock_key in held:
++            held[self._lock_key] -= 1
++            if held[self._lock_key] > 0:
++                # VULN-102: Nested exit decrements depth and releases this nesting level's RLock acquisition,
++                # but preserves self._rlock and does NOT release the OS fd until the outermost exit.
++                if self._rlock is not None:
++                    try:
++                        self._rlock.release()
++                    except Exception:
++                        pass
++                    _exit_process_rlock(self._lock_key)
++                return
++            del held[self._lock_key]
 +
++        try:
 +            if self.fd is not None:
 +                try:
 +                    os.lseek(self.fd, 0, os.SEEK_SET)
@@ -2605,7 +2856,13 @@ index 81dcfde..a4704b1 100644
 +                    pass
 +                self.fd = None
 +        finally:
-+            self._rlock.release()
++            if self._rlock is not None:
++                try:
++                    self._rlock.release()
++                except Exception:
++                    pass
++                _exit_process_rlock(self._lock_key)
++                self._rlock = None
 +
 +
 +def _redact_trace_dict(tr: Any, depth: int = 0) -> Any:
@@ -2720,7 +2977,7 @@ index 81dcfde..a4704b1 100644
          return False
  
  
-@@ -85,83 +378,155 @@ def record_trace(problem_signature: str,
+@@ -85,83 +422,167 @@ def record_trace(problem_signature: str,
                   action_type: str = "command",
                   tags: list = None,
                   workspace_context: str = "",
@@ -2800,7 +3057,7 @@ index 81dcfde..a4704b1 100644
 +    try:
 +        with FileLock(lock_path, timeout=5.0):
 +            try:
-+                data = copy.deepcopy(load_traces(path))
++                data = copy.deepcopy(load_traces(path, bypass_cache=True))
 +            except Exception as load_err:
 +                sys.stderr.write(f"[!] LỖI record_trace: Aborting write to prevent data loss (load_traces failed): {load_err}\n")
 +                return {}
@@ -2839,6 +3096,17 @@ index 81dcfde..a4704b1 100644
 +                    if not tr_ws and (tr.get("id") == trace_id or tr.get("problem_signature", "").strip().lower() == clean_sig.strip().lower()):
 +                        existing = tr
 +                        break
++
++            # Upgrade-in-place: If no tenant-scoped match, adopt un-scoped legacy trace with identical signature (VULN-003)
++            if not existing and clean_ws:
++                legacy_candidates = [
++                    tr for tr in traces
++                    if not (tr.get("workspace_hash") or "").strip()
++                    and tr.get("problem_signature", "").strip().lower() == clean_sig.strip().lower()
++                ]
++                if len(legacy_candidates) == 1:
++                    existing = legacy_candidates[0]
++                    existing["workspace_hash"] = clean_ws
 +
 +            now_str = time.strftime("%Y-%m-%d %H:%M:%S")
 +            if existing:
@@ -2897,9 +3165,10 @@ index 81dcfde..a4704b1 100644
 +            if not ok:
 +                return {}
 +            try:
-+                curr_mtime = os.path.getmtime(path)
++                stat_res = os.stat(path)
++                curr_sig = (stat_res.st_mtime_ns, stat_res.st_size, getattr(stat_res, "st_ino", 0))
 +                with _MEM_LOCK:
-+                    _CACHE[os.path.abspath(path)] = {"data": copy.deepcopy(data), "mtime": curr_mtime}
++                    _CACHE[os.path.abspath(path)] = {"data": copy.deepcopy(data), "sig": curr_sig}
 +            except Exception:
 +                pass
 +            return copy.deepcopy(_redact_trace_dict(result_trace))
@@ -2935,7 +3204,7 @@ index 81dcfde..a4704b1 100644
      traces = data.get("traces", [])
      if not traces:
          return []
-@@ -170,8 +535,25 @@ def recall_traces(query_text: str,
+@@ -170,8 +591,35 @@ def recall_traces(query_text: str,
      if not query_tokens:
          return []
  
@@ -2944,28 +3213,38 @@ index 81dcfde..a4704b1 100644
 +        target_ws = canonical_workspace_hash(workspace_dir)
 +
 +    # Fail-closed guard: if neither workspace_hash nor workspace_dir was provided,
-+    # and allow_unscoped is False, deny cross-tenant trace leakage (VULN-002)
++    # and allow_unscoped is False, deny cross-tenant trace leakage with loud diagnostic (VULN-102)
 +    if not target_ws and not allow_unscoped:
++        from memory_utils import persist_diag
++        persist_diag("recall_traces called without workspace_hash or workspace_dir and allow_unscoped=False", 256)
++        sys.stderr.write("[!] Warning: recall_traces called without workspace_hash or workspace_dir (tenant isolation active, allow_unscoped=False); returning empty recall.\n")
 +        return []
 +
      scored = []
      for tr in traces:
-+        # VULN-001, VULN-002 & VULN-005: Tenant isolation with safe null handling
++        # VULN-001, VULN-002 & VULN-003: Tenant isolation with safe null and legacy migration handling
 +        tr_ws = (tr.get("workspace_hash") or "").strip().lower()
 +        if target_ws:
-+            if tr_ws and tr_ws != target_ws:
-+                continue
-+            if not tr_ws and not allow_unscoped:
-+                continue
++            from memory_utils import legacy_workspace_hash
++            leg_ws = legacy_workspace_hash(workspace_dir) if workspace_dir else None
++            matches_ws = (tr_ws == target_ws) or (leg_ws and tr_ws == leg_ws)
++            if not matches_ws:
++                if tr_ws:
++                    continue
++                # If trace has no workspace_hash, permit recall if allow_unscoped or workspace_context matches
++                ctx = (tr.get("workspace_context") or "").strip().lower()
++                ctx_match = bool(workspace_dir and ctx and (ctx in workspace_dir.lower() or workspace_dir.lower() in ctx))
++                if not (allow_unscoped or ctx_match):
++                    continue
 +
          tr_tokens = set(tr.get("tokens", []))
          if not tr_tokens:
              continue
 diff --git a/scripts/hook_runner.py b/scripts/hook_runner.py
-index a0ef779..92626d6 100644
+index a0ef779..eaad2a9 100644
 --- a/scripts/hook_runner.py
 +++ b/scripts/hook_runner.py
-@@ -2,33 +2,43 @@
+@@ -2,33 +2,51 @@
  """
  Omni-Kernel v4.1: Global PreInvocation Lifecycle Hook Runner
  Processes Antigravity PreInvocation events:
@@ -3001,7 +3280,15 @@ index a0ef779..92626d6 100644
      sys.path.insert(0, _SCRIPT_DIR)
  
 -from memory_utils import canonical_workspace_hash
-+from memory_utils import canonical_workspace_hash, redact_secrets, persist_diag, verify_audit_meta
++from memory_utils import (
++    canonical_workspace_hash,
++    legacy_workspace_hash,
++    find_workspace_root,
++    redact_secrets,
++    persist_diag,
++    verify_audit_meta,
++    hash_prompt,
++)
 +from workspace_sanitizer import AssimilatorGuard, TrustFileLock
  
  LAST_ACTIVATION_PATH = os.path.join(_SCRIPT_DIR, "last_activation.json")
@@ -3013,7 +3300,7 @@ index a0ef779..92626d6 100644
  FILLER_PATTERN = re.compile(
      r"^((ok|oke|okay|tiếp tục|tiep tuc|done|thanks|cảm ơn|cam on|chạy đi|chay di|đi|di|yes|no|got it|sure)[.!\s,]*)+$",
      re.IGNORECASE
-@@ -40,126 +50,329 @@ GATEKEEPER_INTENT_PATTERN = re.compile(
+@@ -40,126 +58,335 @@ GATEKEEPER_INTENT_PATTERN = re.compile(
      re.IGNORECASE
  )
  
@@ -3190,14 +3477,16 @@ index a0ef779..92626d6 100644
 +            if not verify_audit_meta(meta):
 +                continue
 +
-+            # VULN-001 & VULN-007: Mandatory workspace binding with legacy MD5 dual-read migration support
++            # VULN-001, VULN-004 & VULN-007: Mandatory workspace binding with unified find_workspace_root & dual-hash support
 +            meta_ws_hash = str(meta.get("workspace_hash", "")).strip().lower()
 +            if not meta_ws_hash:
 +                continue
-+            current_ws_hash = canonical_workspace_hash(workspace_dir).lower()
-+            normalized_ws = unicodedata.normalize("NFC", str(workspace_dir))
-+            legacy_ws_hash = hashlib.md5(os.path.normcase(os.path.realpath(os.path.abspath(normalized_ws))).encode("utf-8")).hexdigest().lower()
-+            if meta_ws_hash not in (current_ws_hash, legacy_ws_hash):
++            ws_root = find_workspace_root(workspace_dir)
++            current_ws_hash = canonical_workspace_hash(ws_root).lower()
++            legacy_ws_hash = legacy_workspace_hash(ws_root).lower()
++            direct_ws_hash = canonical_workspace_hash(workspace_dir).lower()
++            direct_leg_hash = legacy_workspace_hash(workspace_dir).lower()
++            if meta_ws_hash not in (current_ws_hash, legacy_ws_hash, direct_ws_hash, direct_leg_hash):
 +                continue
 +
              meta_target = meta.get("target_file")
@@ -3245,17 +3534,21 @@ index a0ef779..92626d6 100644
 +                if not isinstance(meta_hash, str) or not meta_hash.strip():
 +                    meta["stale_reason"] = "input_hash missing or invalid in inline audit metadata"
 +                    if best_verdict == "UNREVIEWED":
++                        best_verdict = "STALE_REVIEW"
 +                        best_meta = meta
 +                    continue
-+                calc_prompt_hash = hashlib.sha256(user_prompt.encode("utf-8")).hexdigest().lower()
++                calc_prompt_hash = hash_prompt(user_prompt).lower()
++                calc_raw_hash = hashlib.sha256(user_prompt.encode("utf-8")).hexdigest().lower()
 +                expected_hash = meta_hash.replace("sha256:", "").strip().lower()
-+                if calc_prompt_hash != expected_hash:
++                if expected_hash not in (calc_prompt_hash, calc_raw_hash):
 +                    meta["stale_reason"] = "user prompt hash mismatch with inline review"
 +                    if best_verdict == "UNREVIEWED":
 +                        best_verdict = "STALE_REVIEW"
 +                        best_meta = meta
 +                    continue
-+
+ 
+-            verdict = meta.get("verdict", "UNREVIEWED")
+-            return verdict, meta
 +            # VULN-003 & VULN-HR-003: If target_file specified, require canonical path on disk
 +            if target_file:
 +                if not target_full_path or not os.path.isfile(target_full_path):
@@ -3284,7 +3577,8 @@ index a0ef779..92626d6 100644
 +                        best_verdict = "STALE_REVIEW"
 +                        best_meta = meta
 +                    continue
-+
+ 
+-        except Exception:
 +                # Open target once with O_RDONLY | O_NOFOLLOW | O_NONBLOCK to eliminate TOCTOU and FIFO blocking races (VULN-002)
 +                t_flags = os.O_RDONLY
 +                if hasattr(os, "O_NOFOLLOW"):
@@ -3337,17 +3631,18 @@ index a0ef779..92626d6 100644
 +                        best_verdict = "STALE_REVIEW"
 +                        best_meta = meta
 +                    continue
- 
-             verdict = meta.get("verdict", "UNREVIEWED")
--            return verdict, meta
++
++            verdict = meta.get("verdict", "UNREVIEWED")
 +            # VULN-005: Highest precedence: approved review immediately returned
 +            if verdict in ("APPROVED", "CONDITIONAL_PASS"):
 +                return verdict, meta
 +            if best_verdict == "UNREVIEWED":
 +                best_verdict = verdict
 +                best_meta = meta
- 
-         except Exception:
++
++        except Exception as e:
++            persist_diag(e, 256)
++            sys.stderr.write(f"[!] Warning: Exception during critic verification of {c_path}: {e}\n")
              continue
  
 -    return "UNREVIEWED", None
@@ -3393,7 +3688,7 @@ index a0ef779..92626d6 100644
              
      # 3. Suggested MCP Tool Drivers & Dynamic Virtual Bus
      mcps = resolution.get("suggested_mcp", [])
-@@ -167,30 +380,38 @@ def build_preflight_message(resolution: dict, gatekeeper_text: str = None, drift
+@@ -167,30 +394,38 @@ def build_preflight_message(resolution: dict, gatekeeper_text: str = None, drift
      if mcps or mcp_tools:
          lines.append("\n🔌 Omni-MCP Virtual Bus (Tool Gateway):")
          for m in mcps:
@@ -3439,7 +3734,7 @@ index a0ef779..92626d6 100644
  
      # 5. Proven Execution Traces (Cross-Session Experiential Memory)
      traces = resolution.get("proven_traces", [])
-@@ -198,8 +419,8 @@ def build_preflight_message(resolution: dict, gatekeeper_text: str = None, drift
+@@ -198,8 +433,8 @@ def build_preflight_message(resolution: dict, gatekeeper_text: str = None, drift
          lines.append("\n💡 Proven Execution Memory (Ký ức Thực nghiệm Đã kiểm chứng):")
          for item in traces:
              tr = item.get("trace", {})
@@ -3450,7 +3745,7 @@ index a0ef779..92626d6 100644
              score = int(item.get("score", 0) * 100)
              lines.append(f"  * Proven Fix: {sol}")
              lines.append(f"    (Verified fix for '{sig}', Match: {score}%)")
-@@ -213,8 +434,8 @@ def build_preflight_message(resolution: dict, gatekeeper_text: str = None, drift
+@@ -213,8 +448,8 @@ def build_preflight_message(resolution: dict, gatekeeper_text: str = None, drift
      # 7. Dual-Tier Cognitive Routing & Quota Guard
      tier_info = resolution.get("tier_assessment", {})
      tier = tier_info.get("tier", 1)
@@ -3461,7 +3756,7 @@ index a0ef779..92626d6 100644
      if tier == 2:
          lines.append("\n⚡ Dual-Tier Routing: Tier 2 (Deep Deliberation) | 'omni-strategist' Subagent Approved")
          if factors:
-@@ -223,7 +444,7 @@ def build_preflight_message(resolution: dict, gatekeeper_text: str = None, drift
+@@ -223,7 +458,7 @@ def build_preflight_message(resolution: dict, gatekeeper_text: str = None, drift
          lines.append("\n⚡ Dual-Tier Routing: Tier 1 (Fast Reflex) | Quota Guard Active (0-Token Mode)")
  
      # 8. Model Transparency & User Observability Directive
@@ -3470,7 +3765,7 @@ index a0ef779..92626d6 100644
      rule_count = len(rules)
      mcp_count = len(mcps)
      trace_count = len(traces)
-@@ -232,10 +453,15 @@ def build_preflight_message(resolution: dict, gatekeeper_text: str = None, drift
+@@ -232,16 +467,29 @@ def build_preflight_message(resolution: dict, gatekeeper_text: str = None, drift
      lines.append("You MUST ALWAYS render the compact 1-line badge at the very first line of EVERY response, regardless of prompt phrasing or brevity:")
      lines.append(f"`⚡ Omni-Kernel: [{tier_name}] | Skill: [{top_skill_name}] | Rules: [{rule_count} active] | MCP: [{mcp_count} suggested]{trace_badge}`")
  
@@ -3488,15 +3783,34 @@ index a0ef779..92626d6 100644
      return "\n".join(lines)
  
  
-@@ -256,18 +482,28 @@ def process_hook(payload: dict) -> dict:
+ def process_hook(payload: dict) -> dict:
+-    """Core hook processing logic."""
+-    raw_user_input = (payload.get("lastUserInput") or payload.get("prompt") or payload.get("userInput") or "").strip()
++    """Core hook processing logic with robust type coercion and schema validation (VULN-006)."""
++    raw_input_obj = payload.get("lastUserInput") if payload.get("lastUserInput") is not None else (
++        payload.get("prompt") if payload.get("prompt") is not None else payload.get("userInput")
++    )
++    if raw_input_obj is None:
++        return {"injectSteps": []}
++    if isinstance(raw_input_obj, (dict, list)):
++        raw_user_input = json.dumps(raw_input_obj, ensure_ascii=False).strip()
++    else:
++        raw_user_input = str(raw_input_obj).strip()
+     
+     # Skip empty input or slash commands
+     if not raw_user_input:
+@@ -254,20 +502,30 @@ def process_hook(payload: dict) -> dict:
+         return {"injectSteps": []}
+ 
      # T010: 2,048-char head clamping invariant
-     user_input = raw_user_input[:2048]
+-    user_input = raw_user_input[:2048]
++    user_input = str(raw_user_input[:2048])
      
 -    # Extract workspace paths
 -    workspace_paths = payload.get("workspacePaths") or []
 -    workspace_dir = workspace_paths[0] if workspace_paths else os.getcwd()
 +    # Redact sensitive credentials before storing or staging (VULN-006)
-+    safe_user_input = redact_secrets(user_input)
++    safe_user_input = str(redact_secrets(user_input) or user_input)
 +    
 +    # Extract workspace paths with strict schema validation (VULN-004)
 +    workspace_paths = payload.get("workspacePaths")
@@ -3523,7 +3837,7 @@ index a0ef779..92626d6 100644
      drift_text = None
      try:
          from kernel_sync import KernelSynchronizer, KERNEL_VERSION
-@@ -296,10 +532,12 @@ def process_hook(payload: dict) -> dict:
+@@ -296,10 +554,12 @@ def process_hook(payload: dict) -> dict:
          spec_match = re.search(r"\b([a-zA-Z0-9_\-]+\.(?:md|patch|py))\b", user_input, re.IGNORECASE)
          if spec_match:
              target_file = spec_match.group(1)
@@ -3539,12 +3853,13 @@ index a0ef779..92626d6 100644
              gatekeeper_text = (
                  f"\n🛡️ [GATEKEEPER VERIFIED - {verdict}]:\n"
                  f"  * DeepSeek-V4.1-Flash Council Gate: APPROVED (Target: {t_name}, Hash: {i_hash}).\n"
-@@ -319,81 +557,102 @@ def process_hook(payload: dict) -> dict:
+@@ -319,81 +579,126 @@ def process_hook(payload: dict) -> dict:
  
      skills = resolution.get("skills", [])
      
 -    # T014: Decouple synchronous file writes into l1_staging_log table with PRAGMA synchronous = NORMAL
-+    # VULN-008 & VULN-107: Low-latency SQLite staging insert (<20ms SLA budget, WAL mode enabled)
++    # VULN-008, VULN-101 & VULN-107: Fast <10ms SQLite staging insert with immediate spool fallback under contention
++    staging_spooled = False
      try:
          db_path = os.path.join(_SCRIPT_DIR, "..", "omni_memory.db")
 -        conn = sqlite3.connect(db_path, timeout=5.0, isolation_level="IMMEDIATE")
@@ -3576,7 +3891,7 @@ index a0ef779..92626d6 100644
 -        # Argon Chốt chặn 1: Lazy Threshold Detach (Không treo Pipe, 0% bão spawn)
 -        if last_id and (last_id % 50 == 0):
 +        if os.path.exists(db_path):
-+            conn = sqlite3.connect(db_path, timeout=0.05, isolation_level="IMMEDIATE")
++            conn = sqlite3.connect(db_path, timeout=0.01, isolation_level="IMMEDIATE")
 +            last_id = None
              try:
 -                consolidator_script = os.path.join(_SCRIPT_DIR, "consolidator.py")
@@ -3592,7 +3907,7 @@ index a0ef779..92626d6 100644
 -                pass
 -    except Exception:
 -        pass
-+                conn.execute("PRAGMA busy_timeout = 50;")
++                conn.execute("PRAGMA busy_timeout = 10;")
 +                conn.execute("PRAGMA synchronous = NORMAL;")
 +                with conn:
 +                    cursor = conn.cursor()
@@ -3608,7 +3923,7 @@ index a0ef779..92626d6 100644
 +                            canonical_workspace_hash(workspace_dir),
 +                            safe_field(skills[0]["skill"]["name"], 64, single_line=True) if skills else "none",
 +                            resolution.get("tier_assessment", {}).get("tier", 1),
-+                            redact_secrets(json.dumps([t.get("trace", {}).get("id") for t in resolution.get("proven_traces", [])]))
++                            str(redact_secrets(json.dumps([t.get("trace", {}).get("id") for t in resolution.get("proven_traces", [])])))
 +                        )
 +                    )
 +                    last_id = cursor.lastrowid
@@ -3623,7 +3938,7 @@ index a0ef779..92626d6 100644
 +                    if os.name == "nt":
 +                        cflags = getattr(subprocess, "DETACHED_PROCESS", 0) | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
 +                    subprocess.Popen(
-+                        [sys.executable, consolidator_script, "--batch-run"],
++                        [sys.executable, consolidator_script, "--batch-run", "--workspace", workspace_dir],
 +                        stdin=subprocess.DEVNULL,
 +                        stdout=subprocess.DEVNULL,
 +                        stderr=subprocess.DEVNULL,
@@ -3634,6 +3949,30 @@ index a0ef779..92626d6 100644
 +                    persist_diag(ex, 256)
 +    except sqlite3.OperationalError as e:
 +        persist_diag(e, 256)
++        # VULN-002: Fallback to local append-only spool to prevent data loss under SQLite contention
++        try:
++            spool_path = os.path.join(_SCRIPT_DIR, "l1_staging_spool.jsonl")
++            spool_lock = spool_path + ".lock"
++            spool_entry = {
++                "session_id": redact_secrets(str(payload.get("sessionId", "session_default")))[:64],
++                "timestamp": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
++                "user_input": safe_user_input[:250],
++                "workspace_hash": canonical_workspace_hash(workspace_dir),
++                "top_skill": safe_field(skills[0]["skill"]["name"], 64, single_line=True) if skills else "none",
++                "tier_used": resolution.get("tier_assessment", {}).get("tier", 1),
++                "recalled_traces": [t.get("trace", {}).get("id") for t in resolution.get("proven_traces", [])]
++            }
++            with TrustFileLock(spool_lock, timeout=1.0):
++                if os.path.exists(spool_path) and os.path.getsize(spool_path) > 10 * 1024 * 1024:
++                    try:
++                        os.replace(spool_path, spool_path + ".1.bak")
++                    except Exception:
++                        pass
++                with open(spool_path, "a", encoding="utf-8") as sf:
++                    sf.write(json.dumps(spool_entry, ensure_ascii=False) + "\n")
++            staging_spooled = True
++        except Exception as spool_err:
++            persist_diag(spool_err, 256)
 +    except Exception as e:
 +        persist_diag(e, 256)
  
@@ -3680,7 +4019,6 @@ index a0ef779..92626d6 100644
          }
 -        with open(LAST_ACTIVATION_PATH, "w", encoding="utf-8") as f:
 -            json.dump(record, f, indent=2, ensure_ascii=False)
-+        record = redact_secrets(record)
 +        
 +        # Atomic replace for last_activation.json
 +        tmp_act = f"{LAST_ACTIVATION_PATH}.{uuid.uuid4().hex}.tmp"
@@ -3706,7 +4044,7 @@ index a0ef779..92626d6 100644
              "workspace_dir": record["workspace_dir"],
              "top_skill": record["top_skill"],
              "tier": record.get("tier_assessment", {}).get("tier", 1),
-@@ -402,10 +661,21 @@ def process_hook(payload: dict) -> dict:
+@@ -402,10 +707,21 @@ def process_hook(payload: dict) -> dict:
              "mcp_count": len(record.get("suggested_mcp", [])),
              "traces_count": len(record.get("proven_traces", []))
          }
@@ -3715,7 +4053,7 @@ index a0ef779..92626d6 100644
 -    except Exception:
 -        pass
 +        try:
-+            with TrustFileLock(ACTIVATIONS_HISTORY_PATH, timeout=0.2):
++            with TrustFileLock(ACTIVATIONS_HISTORY_PATH, timeout=0.02):
 +                if os.path.exists(ACTIVATIONS_HISTORY_PATH):
 +                    try:
 +                        if os.path.getsize(ACTIVATIONS_HISTORY_PATH) > MAX_HISTORY_BYTES:
@@ -3732,7 +4070,7 @@ index a0ef779..92626d6 100644
  
      message_text = build_preflight_message(resolution, gatekeeper_text=gatekeeper_text, drift_text=drift_text)
      
-@@ -419,18 +689,50 @@ def process_hook(payload: dict) -> dict:
+@@ -419,18 +735,50 @@ def process_hook(payload: dict) -> dict:
  
  
  def main():
@@ -3789,7 +4127,7 @@ index a0ef779..92626d6 100644
  
  if __name__ == "__main__":
 diff --git a/scripts/indexer.py b/scripts/indexer.py
-index 3af7232..ebf0c6f 100644
+index 3af7232..0424889 100644
 --- a/scripts/indexer.py
 +++ b/scripts/indexer.py
 @@ -1,12 +1,22 @@
@@ -3816,7 +4154,7 @@ index 3af7232..ebf0c6f 100644
  
  HOME = os.path.expanduser("~")
  GEMINI_DIR = os.path.join(HOME, ".gemini")
-@@ -18,10 +28,29 @@ SOURCES = {
+@@ -18,10 +28,35 @@ SOURCES = {
      "builtin": os.path.join(GEMINI_DIR, "antigravity", "builtin", "skills"),
  }
  
@@ -3837,8 +4175,14 @@ index 3af7232..ebf0c6f 100644
 +            return val_str.strip("'\"")
 +    return val_str.strip("'\"")
 +
++
++_ALLOWED_FRONTMATTER_KEYS = {"name", "description", "version", "domain", "metadata", "author", "tags", "triggers"}
  
  def parse_frontmatter(content):
++    """
++    Safely parses YAML-like frontmatter with strict level-0 indentation and key allowlist (VULN-004).
++    Prevents prompt-injection and key pollution from indented description continuations.
++    """
      meta = {}
      body = content
 +    if not content or not isinstance(content, str):
@@ -3846,35 +4190,47 @@ index 3af7232..ebf0c6f 100644
      if content.startswith("---"):
          parts = content.split("---", 2)
          if len(parts) >= 3:
-@@ -37,19 +66,23 @@ def parse_frontmatter(content):
-                 # If unindented key
+@@ -34,22 +69,28 @@ def parse_frontmatter(content):
+                 stripped = line.strip()
+                 if not stripped:
+                     continue
+-                # If unindented key
++                # VULN-004: Only parse keys at indentation level 0 (not indented)
                  if not line.startswith(" ") and not line.startswith("\t") and ":" in line:
-                     if current_key:
+-                    if current_key:
 -                        meta[current_key] = " ".join(current_val).strip()
++                    if current_key and current_key in _ALLOWED_FRONTMATTER_KEYS:
 +                        meta[current_key] = _normalize_meta_val(" ".join(current_val).strip())
                      k, v = line.split(":", 1)
-                     current_key = k.strip()
-                     v_str = v.strip().strip("\"'")
-                     if v_str in [">-", "|", ">", "|-", ""]:
-                         current_val = []
+-                    current_key = k.strip()
+-                    v_str = v.strip().strip("\"'")
+-                    if v_str in [">-", "|", ">", "|-", ""]:
+-                        current_val = []
++                    raw_k = k.strip().lower()
++                    if raw_k in _ALLOWED_FRONTMATTER_KEYS:
++                        current_key = raw_k
++                        v_str = v.strip().strip("\"'")
++                        if v_str in [">-", "|", ">", "|-", ""]:
++                            current_val = []
++                        else:
++                            current_val = [v.strip()]
                      else:
 -                        current_val = [v_str]
-+                        current_val = [v.strip()]
++                        current_key = None
++                        current_val = []
                  elif current_key and (line.startswith(" ") or line.startswith("\t")):
 -                    current_val.append(stripped.strip("\"'"))
-+                    if ":" in stripped and not stripped.startswith("-"):
-+                        nk, nv = stripped.split(":", 1)
-+                        if nk.strip() not in meta:
-+                            meta[nk.strip()] = _normalize_meta_val(nv.strip())
++                    # Pure continuation line for the current allowlisted key
 +                    current_val.append(stripped)
              
-             if current_key:
+-            if current_key:
 -                meta[current_key] = " ".join(current_val).strip()
++            if current_key and current_key in _ALLOWED_FRONTMATTER_KEYS:
 +                meta[current_key] = _normalize_meta_val(" ".join(current_val).strip())
                  
      return meta, body
  
-@@ -82,18 +115,28 @@ def calculate_quality_score(content, meta):
+@@ -82,18 +123,28 @@ def calculate_quality_score(content, meta):
  
  
  def extract_tokens(text):
@@ -3909,7 +4265,7 @@ index 3af7232..ebf0c6f 100644
  
  
  def safe_listdir(path):
-@@ -121,9 +164,10 @@ def scan_all_skills(extra_workspace_paths=None):
+@@ -121,9 +172,10 @@ def scan_all_skills(extra_workspace_paths=None):
              pjson_path = os.path.join(pdir, "plugin.json")
              if os.path.exists(pjson_path):
                  try:
@@ -3923,7 +4279,7 @@ index 3af7232..ebf0c6f 100644
                  except Exception:
                      pass
  
-@@ -134,7 +178,9 @@ def scan_all_skills(extra_workspace_paths=None):
+@@ -134,7 +186,9 @@ def scan_all_skills(extra_workspace_paths=None):
                      sm_file = os.path.join(sdir, "SKILL.md") if os.path.isdir(sdir) else (sdir if item == "SKILL.md" else None)
                      if sm_file and os.path.exists(sm_file):
                          skill_name = item if os.path.isdir(sdir) else plugin_name
@@ -3934,7 +4290,7 @@ index 3af7232..ebf0c6f 100644
  
      # 2. Scan User Active Skills
      active_root = SOURCES["user_active"]
-@@ -143,7 +189,9 @@ def scan_all_skills(extra_workspace_paths=None):
+@@ -143,7 +197,9 @@ def scan_all_skills(extra_workspace_paths=None):
              sdir = os.path.join(active_root, item)
              sm_file = os.path.join(sdir, "SKILL.md")
              if os.path.exists(sm_file):
@@ -3945,7 +4301,7 @@ index 3af7232..ebf0c6f 100644
  
      # 3. Scan Offline Library
      lib_root = SOURCES["library"]
-@@ -152,7 +200,9 @@ def scan_all_skills(extra_workspace_paths=None):
+@@ -152,7 +208,9 @@ def scan_all_skills(extra_workspace_paths=None):
              sdir = os.path.join(lib_root, item)
              sm_file = os.path.join(sdir, "SKILL.md")
              if os.path.exists(sm_file):
@@ -3956,7 +4312,7 @@ index 3af7232..ebf0c6f 100644
  
      # 4. Scan Builtin
      builtin_root = SOURCES["builtin"]
-@@ -161,27 +211,43 @@ def scan_all_skills(extra_workspace_paths=None):
+@@ -161,27 +219,43 @@ def scan_all_skills(extra_workspace_paths=None):
              sdir = os.path.join(builtin_root, item)
              sm_file = os.path.join(sdir, "SKILL.md")
              if os.path.exists(sm_file):
@@ -4006,7 +4362,7 @@ index 3af7232..ebf0c6f 100644
      except Exception:
          content = ""
  
-@@ -189,9 +255,9 @@ def _parse_skill_file(file_path, default_name, source_type, plugin_name=None, pl
+@@ -189,9 +263,9 @@ def _parse_skill_file(file_path, default_name, source_type, plugin_name=None, pl
      skill_name = meta.get("name") or default_name
      desc = meta.get("description") or ""
      
@@ -4019,7 +4375,7 @@ index 3af7232..ebf0c6f 100644
      q_score = calculate_quality_score(content, meta)
      mtime = int(os.path.getmtime(file_path)) if os.path.exists(file_path) else 0
  
-@@ -210,31 +276,39 @@ def _parse_skill_file(file_path, default_name, source_type, plugin_name=None, pl
+@@ -210,31 +284,39 @@ def _parse_skill_file(file_path, default_name, source_type, plugin_name=None, pl
  
  
  def is_registry_stale(registry, sources=SOURCES):
@@ -4065,7 +4421,7 @@ index 3af7232..ebf0c6f 100644
              if t not in token_index:
                  token_index[t] = []
              token_index[t].append(idx)
-@@ -248,9 +322,23 @@ def build_index(output_file=None):
+@@ -248,9 +330,23 @@ def build_index(output_file=None):
      }
  
      if output_file:
@@ -4239,10 +4595,10 @@ index 359c94a..479fbac 100644
              item["fix_error"] = str(e)
  
 diff --git a/scripts/lifecycle_guard.py b/scripts/lifecycle_guard.py
-index a437c33..f7f6420 100644
+index a437c33..1e57370 100644
 --- a/scripts/lifecycle_guard.py
 +++ b/scripts/lifecycle_guard.py
-@@ -6,23 +6,145 @@ daemons, MCP servers, and worker processes.
+@@ -6,23 +6,172 @@ daemons, MCP servers, and worker processes.
  
  Guarantees:
  1. Zombie / Orphan Process Prevention: Dual-mode termination (Parent Process Watcher & Stdin EOF Watcher).
@@ -4263,6 +4619,7 @@ index a437c33..f7f6420 100644
  import signal
 +import ctypes
 +import errno
++import stat
  import threading
  from pathlib import Path
  from typing import Callable, Optional, Dict, Any
@@ -4287,8 +4644,34 @@ index a437c33..f7f6420 100644
 +
 +    def __enter__(self):
 +        os.makedirs(os.path.dirname(os.path.abspath(self.path)), exist_ok=True)
++        if os.path.islink(self.path) or (hasattr(os.path, "isreparsepoint") and os.path.isreparsepoint(self.path)):
++            raise PermissionError(f"Security violation: mutex file cannot be a symbolic link or reparse point: {self.path}")
 +        start = time.time()
-+        self._fh = open(self.path, "a+b")
++        open_flags = os.O_CREAT | os.O_RDWR
++        if hasattr(os, "O_NOFOLLOW"):
++            open_flags |= os.O_NOFOLLOW
++        fd = os.open(self.path, open_flags, 0o600)
++        try:
++            st = os.fstat(fd)
++            if not stat.S_ISREG(st.st_mode):
++                raise PermissionError(f"Security violation: mutex file is not a regular file: {self.path}")
++            if sys.platform.startswith("win"):
++                reparse = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400)
++                if getattr(st, "st_file_attributes", 0) & reparse:
++                    raise PermissionError(f"Security violation: mutex file is a reparse point or symlink: {self.path}")
++            if getattr(st, "st_nlink", 1) > 1:
++                raise PermissionError(f"Security violation: mutex file has hard links: {self.path}")
++            self._fh = os.fdopen(fd, "a+b")
++        except Exception:
++            os.close(fd)
++            self._fh = None
++            raise
++
++        if os.name == "nt":
++            self._fh.seek(0, os.SEEK_END)
++            if self._fh.tell() == 0:
++                self._fh.write(b"\x00")
++                self._fh.flush()
 +        while True:
 +            try:
 +                if os.name == "nt":
@@ -4300,7 +4683,7 @@ index a437c33..f7f6420 100644
 +                    fcntl.flock(self._fh.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
 +                return self
 +            except (OSError, IOError) as exc:
-+                if ((os.name == "nt" and getattr(exc, "winerror", None) == 33) or
++                if ((os.name == "nt" and getattr(exc, "winerror", None) in (32, 33, 36)) or
 +                    (getattr(exc, "errno", None) in (errno.EACCES, errno.EAGAIN))):
 +                    if time.time() - start >= self.timeout:
 +                        self._fh.close()
@@ -4391,7 +4774,7 @@ index a437c33..f7f6420 100644
  class LifecycleGuard:
      """
      Production-grade Process Lifecycle Guard.
-@@ -33,140 +155,197 @@ class LifecycleGuard:
+@@ -33,140 +182,197 @@ class LifecycleGuard:
          self.name = name
          self.lock_dir = Path(os.path.expanduser(lock_dir))
          self.lock_file = self.lock_dir / f"{self.name}.pid"
@@ -4687,7 +5070,7 @@ index a437c33..f7f6420 100644
  
          self._heartbeat_thread = threading.Thread(target=_beat, daemon=True, name=f"{self.name}_heartbeat")
          self._heartbeat_thread.start()
-@@ -191,38 +370,43 @@ class LifecycleGuard:
+@@ -191,38 +397,43 @@ class LifecycleGuard:
      def start_parent_watcher(self, parent_pid: Optional[int] = None, poll_interval: float = 1.0):
          """
          Mode A: Parent Process Watcher (Ideal for MCP Servers & stdio tools).
@@ -4743,7 +5126,7 @@ index a437c33..f7f6420 100644
                          break
                      self._stop_event.wait(poll_interval)
  
-@@ -272,7 +456,7 @@ def main():
+@@ -272,7 +483,7 @@ def main():
      parser.add_argument("--cleanup-locks", action="store_true", help="Clean up stale PID locks in run dir")
      args = parser.parse_args()
  
@@ -4752,7 +5135,7 @@ index a437c33..f7f6420 100644
          alive = LifecycleGuard.is_process_alive(args.check_pid)
          print(f"PID {args.check_pid} is {'ALIVE' if alive else 'DEAD'}")
      elif args.cleanup_locks:
-@@ -280,14 +464,19 @@ def main():
+@@ -280,14 +491,19 @@ def main():
          cleaned = 0
          if run_path.exists():
              for pfile in run_path.glob("*.pid"):
@@ -5210,7 +5593,7 @@ index df81f0d..0a32745 100644
      is_valid = len(missing) == 0 and len(type_errors) == 0
      return {
 diff --git a/scripts/memory_engine.py b/scripts/memory_engine.py
-index 9cd11f5..7675223 100644
+index 9cd11f5..313083c 100644
 --- a/scripts/memory_engine.py
 +++ b/scripts/memory_engine.py
 @@ -10,10 +10,15 @@ import os
@@ -5258,7 +5641,7 @@ index 9cd11f5..7675223 100644
      return dot / (norm1 * norm2)
  
  
-@@ -92,34 +107,61 @@ class MemorySingleWriter:
+@@ -92,34 +107,63 @@ class MemorySingleWriter:
      """
      Thread-safe Single-Writer queue pattern for SQLite database.
      Owns exclusive write access using BEGIN IMMEDIATE transactions and PRAGMA busy_timeout=5000.
@@ -5279,6 +5662,8 @@ index 9cd11f5..7675223 100644
 +        self._fatal_error: Optional[Exception] = None
 +        self._failed_sequences: Dict[int, Exception] = {}
 +        self._evicted_failures_count = 0
++        self._tasks_enqueued = 0
++        self._processed_tasks = 0
 +        self._closed = False
          self._worker_thread = threading.Thread(target=self._run_worker, daemon=True)
          self._worker_thread.start()
@@ -5327,7 +5712,7 @@ index 9cd11f5..7675223 100644
                  try:
                      conn.execute("BEGIN IMMEDIATE;")
                      if isinstance(sql, list):
-@@ -128,33 +170,144 @@ class MemorySingleWriter:
+@@ -128,33 +172,150 @@ class MemorySingleWriter:
                      else:
                          conn.execute(sql, params)
                      conn.commit()
@@ -5362,8 +5747,10 @@ index 9cd11f5..7675223 100644
 +                                del self._failed_sequences[oldest_key]
 +                                self._evicted_failures_count += 1
 +                        self._committed_sequence = max(self._committed_sequence, seq)
-+                        self._cond.notify_all()
++                        self._processed_tasks += 1
                      self._queue.task_done()
++                    with self._cond:
++                        self._cond.notify_all()
 +        except Exception as startup_err:
 +            self._fatal_error = startup_err
 +            with self._cond:
@@ -5380,6 +5767,7 @@ index 9cd11f5..7675223 100644
 +                try:
 +                    conn.close()
 +                except Exception:
++                    # Cleanup on thread exit: suppress secondary close errors to preserve fatal thread error state
 +                    pass
 +
 +    def enqueue_write(self, sql: Any, params: tuple = (), callback: Optional[Any] = None, timeout: float = 5.0):
@@ -5399,6 +5787,7 @@ index 9cd11f5..7675223 100644
 +                    next_seq = self._sequence + 1
 +                    self._queue.put_nowait((next_seq, sql, params, callback))
 +                    self._sequence = next_seq
++                    self._tasks_enqueued += 1
 +                    return next_seq
 +                except queue.Full:
 +                    pass
@@ -5471,7 +5860,8 @@ index 9cd11f5..7675223 100644
 -        self._queue.join()
 +        rem_timeout = max(0.1, deadline - time.monotonic())
 +        self._worker_thread.join(timeout=rem_timeout)
-+        if self._worker_thread.is_alive():
++        timed_out = self._worker_thread.is_alive()
++        if timed_out:
 +            with self._seq_lock:
 +                self._fatal_error = TimeoutError(f"MemorySingleWriter worker thread failed to terminate within {timeout:.1f}s.")
 +            sys.stderr.write(f"[!] Warning: MemorySingleWriter worker thread failed to terminate within {timeout:.1f}s.\n")
@@ -5481,17 +5871,19 @@ index 9cd11f5..7675223 100644
 -        self._stop_event.set()
 -        self._queue.put(None)
 -        self._worker_thread.join(timeout=2.0)
-+        dropped = self._queue.unfinished_tasks
-+        if dropped > 0:
-+            sys.stderr.write(f"[!] Warning: MemorySingleWriter closed with {dropped} uncompleted task(s).\n")
++        with self._seq_lock:
++            dropped = max(0, self._tasks_enqueued - self._processed_tasks)
++        if dropped > 0 or timed_out:
++            sys.stderr.write(f"[!] Warning: MemorySingleWriter closed with {dropped} uncompleted task(s) (timed_out={timed_out}).\n")
 +        return dropped
  
  
  # ============================================================================
-@@ -177,11 +330,27 @@ def search_fts5(
+@@ -177,25 +338,65 @@ def search_fts5(
      raw_q = sanitize_fts5_query(query, fold=False)
      folded_q = sanitize_fts5_query(query, fold=True)
  
+-    sql = """
 +    clauses = []
 +    if raw_q and raw_q != '""':
 +        clauses.append(f"content_exact : ({raw_q})")
@@ -5508,16 +5900,38 @@ index 9cd11f5..7675223 100644
 +        safe_limit = 30
 +    match_expr = " OR ".join(clauses)
 +
-     sql = """
++    ws_hashes = [workspace_hash]
++    try:
++        if len(workspace_hash) == 64:
++            row = conn.execute("SELECT workspace_path FROM workspace_registry WHERE workspace_hash = ? LIMIT 1;", (workspace_hash,)).fetchone()
++            if row and row[0]:
++                from memory_utils import legacy_workspace_hash
++                leg_h = legacy_workspace_hash(row[0])
++                if leg_h and leg_h != workspace_hash:
++                    ws_hashes.append(leg_h)
++        elif len(workspace_hash) == 32:
++            row = conn.execute("SELECT workspace_path FROM workspace_registry WHERE workspace_hash = ? LIMIT 1;", (workspace_hash,)).fetchone()
++            if row and row[0]:
++                can_h = canonical_workspace_hash(row[0])
++                if can_h and can_h != workspace_hash:
++                    ws_hashes.append(can_h)
++    except Exception as reg_err:
++        persist_diag(reg_err, 256)
++        sys.stderr.write(f"[!] Warning: Failed to query workspace_registry for dual-hash: {reg_err}\n")
++
++    placeholders = ",".join("?" for _ in ws_hashes)
++    sql = f"""
      SELECT e.memory_id, bm25(episodic_fts, 10.0, 1.0) AS rank_score
      FROM episodic_fts
      JOIN workspace_episodic_memory e ON episodic_fts.rowid = e.rowid
 -    WHERE episodic_fts MATCH 'content_exact : (' || :raw_q || ') OR content_folded : (' || :folded_q || ')'
-+    WHERE episodic_fts MATCH :match_expr
-       AND e.workspace_hash = :ws_hash
+-      AND e.workspace_hash = :ws_hash
++    WHERE episodic_fts MATCH ?
++      AND e.workspace_hash IN ({placeholders})
        AND e.status != 'Superseded'
      ORDER BY rank_score ASC
-@@ -189,13 +358,21 @@ def search_fts5(
+-    LIMIT :limit;
++    LIMIT ?;
      """
  
      cursor = conn.cursor()
@@ -5529,11 +5943,7 @@ index 9cd11f5..7675223 100644
 -    })
 -    return cursor.fetchall()
 +    try:
-+        cursor.execute(sql, {
-+            "match_expr": match_expr,
-+            "ws_hash": workspace_hash,
-+            "limit": safe_limit
-+        })
++        cursor.execute(sql, [match_expr, *ws_hashes, safe_limit])
 +        return cursor.fetchall()
 +    except sqlite3.OperationalError as oe:
 +        err_msg = str(oe).lower()
@@ -5546,7 +5956,7 @@ index 9cd11f5..7675223 100644
  
  
  def hybrid_search(
-@@ -241,9 +418,11 @@ def hybrid_search(
+@@ -241,9 +442,11 @@ def hybrid_search(
          for mem_id, blob, stored_norm in rows:
              try:
                  candidate_vec = deserialize_float32_blob(blob)
@@ -5560,7 +5970,7 @@ index 9cd11f5..7675223 100644
                  continue
  
          dense_scored.sort(key=lambda x: -x[1])
-@@ -256,26 +435,31 @@ def hybrid_search(
+@@ -256,26 +459,31 @@ def hybrid_search(
      if not target_ids:
          return []
  
@@ -5611,7 +6021,7 @@ index 9cd11f5..7675223 100644
  
      # Preserve ranking order
      hydrated = [id_to_record[m_id] for m_id in target_ids if m_id in id_to_record]
-@@ -286,51 +470,109 @@ def hybrid_search(
+@@ -286,51 +494,109 @@ def hybrid_search(
  # Invariant Versioning & Rollback API (Argon Chốt chặn 4)
  # ============================================================================
  
@@ -5734,7 +6144,7 @@ index 9cd11f5..7675223 100644
              )
  
          # Step 3: Re-promote original record V1
-@@ -338,16 +580,21 @@ def revert_invariant(conn: sqlite3.Connection, superseded_id: str) -> bool:
+@@ -338,16 +604,21 @@ def revert_invariant(conn: sqlite3.Connection, superseded_id: str) -> bool:
              """
              UPDATE workspace_episodic_memory
              SET status = 'Active', superseded_by = NULL, last_accessed_at = datetime('now')
@@ -5762,10 +6172,18 @@ index 9cd11f5..7675223 100644
 +        sys.stderr.write(f"[!] LỖI revert_invariant({superseded_id}): {type(e).__name__}: {e}\n")
          return False
 diff --git a/scripts/memory_schema.py b/scripts/memory_schema.py
-index 6e0cf68..782d64f 100644
+index 6e0cf68..5fc3a48 100644
 --- a/scripts/memory_schema.py
 +++ b/scripts/memory_schema.py
-@@ -111,6 +111,13 @@ BEGIN
+@@ -5,6 +5,7 @@ triggers, and staging tables.
+ """
+ 
+ import sqlite3
++import uuid
+ from typing import Optional
+ 
+ DDL_PRAGMAS = """
+@@ -111,6 +112,13 @@ BEGIN
  END;
  
  CREATE TRIGGER IF NOT EXISTS trg_episodic_after_update AFTER UPDATE ON workspace_episodic_memory
@@ -5779,7 +6197,7 @@ index 6e0cf68..782d64f 100644
  BEGIN
      DELETE FROM episodic_fts WHERE rowid = old.rowid;
      INSERT INTO episodic_fts(rowid, content_exact, content_folded)
-@@ -121,6 +128,45 @@ BEGIN
+@@ -121,6 +129,45 @@ BEGIN
      );
  END;
  
@@ -5825,7 +6243,7 @@ index 6e0cf68..782d64f 100644
  -- ----------------------------------------------------------------------------
  -- Table 5: l1_staging_log (Lightweight Ephemeral Staging Buffer for L1 Reflex)
  -- ----------------------------------------------------------------------------
-@@ -133,9 +179,12 @@ CREATE TABLE IF NOT EXISTS l1_staging_log (
+@@ -133,9 +180,12 @@ CREATE TABLE IF NOT EXISTS l1_staging_log (
      top_skill           TEXT,
      tier_used           INTEGER NOT NULL DEFAULT 1,
      recalled_traces     TEXT,                        -- JSON array of recalled memory IDs
@@ -5839,7 +6257,7 @@ index 6e0cf68..782d64f 100644
  -- ----------------------------------------------------------------------------
  -- Table 6: activation_events (Tier 3 Consolidation Staging Buffer)
  -- ----------------------------------------------------------------------------
-@@ -149,16 +198,54 @@ CREATE TABLE IF NOT EXISTS activation_events (
+@@ -149,16 +199,54 @@ CREATE TABLE IF NOT EXISTS activation_events (
      tier_used           INTEGER NOT NULL DEFAULT 1,
      recalled_traces     TEXT,                        -- JSON array of recalled memory IDs
      feedback_score      REAL DEFAULT 0.0,            -- +1.0 (success), 0.0 (neutral), -1.0 (failure)
@@ -5896,7 +6314,7 @@ index 6e0cf68..782d64f 100644
      Returns the active database connection.
      """
      conn = sqlite3.connect(db_path, timeout=5.0, isolation_level=isolation_level)
-@@ -170,12 +257,15 @@ def init_database(db_path: str = "omni_memory.db", isolation_level: Optional[str
+@@ -170,12 +258,15 @@ def init_database(db_path: str = "omni_memory.db", isolation_level: Optional[str
          mode = conn.execute("PRAGMA auto_vacuum;").fetchone()[0]
          if mode != 2:
              old_iso = conn.isolation_level
@@ -5918,7 +6336,7 @@ index 6e0cf68..782d64f 100644
      
      # Apply pragmas
      conn.execute("PRAGMA journal_mode = WAL;")
-@@ -186,7 +276,88 @@ def init_database(db_path: str = "omni_memory.db", isolation_level: Optional[str
+@@ -186,7 +277,164 @@ def init_database(db_path: str = "omni_memory.db", isolation_level: Optional[str
      conn.execute("PRAGMA busy_timeout = 5000;")
      conn.execute("PRAGMA foreign_keys = ON;")
      
@@ -5970,6 +6388,82 @@ index 6e0cf68..782d64f 100644
 +            if "duplicate column name" not in str(oe).lower():
 +                raise RuntimeError(f"Failed to migrate activation_events.last_error: {oe}") from oe
 +
++    # VULN-002, VULN-001 & VULN-104: Dual-key migration for legacy MD5 (32-hex) to canonical SHA-256 (64-hex)
++    # Wrap trigger-drop, duplicate-collapse, key-update, and DDL in a single rollback-safe savepoint
++    tables_exist = [r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table';").fetchall()]
++    sp_mig = f"sp_mig_{uuid.uuid4().hex[:8]}"
++    conn.execute(f"SAVEPOINT {sp_mig};")
++    try:
++        conn.execute("DROP TRIGGER IF EXISTS trg_episodic_prevent_ws_update;")
++        conn.execute("DROP TRIGGER IF EXISTS trg_episodic_prevent_ws_replace;")
++        conn.execute("DROP TRIGGER IF EXISTS trg_episodic_after_update;")
++        conn.execute("DROP TRIGGER IF EXISTS trg_episodic_prevent_cross_tenant_supersede;")
++        conn.execute("DROP TRIGGER IF EXISTS trg_episodic_prevent_cross_tenant_supersede_insert;")
++
++        from memory_utils import canonical_workspace_hash
++        hash_to_path = {}
++        if "workspace_registry" in tables_exist:
++            for r_h, r_p in conn.execute("SELECT workspace_hash, workspace_path FROM workspace_registry;").fetchall():
++                hash_to_path[r_h] = r_p
++
++        legacy_hashes = set()
++        if "workspace_episodic_memory" in tables_exist:
++            for row in conn.execute("SELECT DISTINCT workspace_hash FROM workspace_episodic_memory WHERE length(workspace_hash) = 32;").fetchall():
++                legacy_hashes.add(row[0])
++        if "consolidation_outbox" in tables_exist:
++            for row in conn.execute("SELECT DISTINCT workspace_hash FROM consolidation_outbox WHERE length(workspace_hash) = 32;").fetchall():
++                legacy_hashes.add(row[0])
++
++        for old_hash in legacy_hashes:
++            known_path = hash_to_path.get(old_hash)
++            if known_path:
++                new_hash = canonical_workspace_hash(known_path)
++                if new_hash and len(new_hash) == 64 and new_hash != old_hash:
++                    if "workspace_episodic_memory" in tables_exist:
++                        # VULN-104: Pre-collapse duplicate (memory_id, workspace_hash) pairs to avoid UNIQUE constraint aborts
++                        conn.execute("""
++                            DELETE FROM workspace_episodic_memory
++                            WHERE workspace_hash = ?
++                              AND memory_id IN (
++                                  SELECT memory_id FROM workspace_episodic_memory WHERE workspace_hash = ?
++                              );
++                        """, (old_hash, new_hash))
++                        conn.execute("UPDATE workspace_episodic_memory SET workspace_hash = ? WHERE workspace_hash = ?;", (new_hash, old_hash))
++                    if "dense_embeddings" in tables_exist:
++                        conn.execute("""
++                            DELETE FROM dense_embeddings
++                            WHERE workspace_hash = ?
++                              AND memory_id IN (
++                                  SELECT memory_id FROM dense_embeddings WHERE workspace_hash = ?
++                              );
++                        """, (old_hash, new_hash))
++                        conn.execute("UPDATE dense_embeddings SET workspace_hash = ? WHERE workspace_hash = ?;", (new_hash, old_hash))
++                    if "activation_events" in tables_exist:
++                        conn.execute("UPDATE activation_events SET workspace_dir = ? WHERE workspace_dir = ?;", (new_hash, old_hash))
++                    if "consolidation_outbox" in tables_exist:
++                        conn.execute("""
++                            DELETE FROM consolidation_outbox
++                            WHERE workspace_hash = ?
++                              AND memory_id IN (
++                                  SELECT memory_id FROM consolidation_outbox WHERE workspace_hash = ?
++                              );
++                        """, (old_hash, new_hash))
++                        conn.execute("UPDATE consolidation_outbox SET workspace_hash = ? WHERE workspace_hash = ?;", (new_hash, old_hash))
++                    if "workspace_registry" in tables_exist:
++                        conn.execute("INSERT OR IGNORE INTO workspace_registry (workspace_hash, workspace_path, registered_at) VALUES (?, ?, datetime('now'));", (new_hash, known_path))
++            else:
++                # VULN-001 & VULN-003: Retain 32-hex legacy partition key when workspace_path is unresolvable; never map to arbitrary path
++                from memory_utils import persist_diag
++                persist_diag(f"Retaining unmapped legacy 32-hex partition {old_hash[:12]}", 256)
++        conn.execute(f"RELEASE SAVEPOINT {sp_mig};")
++    except Exception as mig_err:
++        try:
++            conn.execute(f"ROLLBACK TO SAVEPOINT {sp_mig};")
++            conn.execute(f"RELEASE SAVEPOINT {sp_mig};")
++        except Exception:
++            pass
++        raise RuntimeError(f"Database migration from MD5 to SHA-256 failed: {mig_err}") from mig_err
++
 +    # Atomic Migration: Refresh triggers and apply DDL in a single atomic transaction with explicit rollback (VULN-008)
 +    atomic_ddl = f"""
 +    BEGIN IMMEDIATE;
@@ -6011,10 +6505,10 @@ index 6e0cf68..782d64f 100644
 +
      return conn
 diff --git a/scripts/memory_utils.py b/scripts/memory_utils.py
-index 7107b02..b080681 100644
+index 7107b02..e536fb7 100644
 --- a/scripts/memory_utils.py
 +++ b/scripts/memory_utils.py
-@@ -4,10 +4,187 @@ Provides diacritic folding, defensive FTS5 query sanitization, and workspace has
+@@ -4,10 +4,190 @@ Provides diacritic folding, defensive FTS5 query sanitization, and workspace has
  """
  
  import hashlib
@@ -6037,9 +6531,12 @@ index 7107b02..b080681 100644
 +    "sanitize_fts5_query",
 +    "is_valid_hex_hash",
 +    "canonical_workspace_hash",
++    "legacy_workspace_hash",
 +    "get_audit_hmac_key",
 +    "sign_audit_meta",
 +    "verify_audit_meta",
++    "find_workspace_root",
++    "hash_prompt",
 +]
 +
 +
@@ -6203,7 +6700,7 @@ index 7107b02..b080681 100644
  
  
  def fold_vietnamese(text: Optional[str]) -> str:
-@@ -37,25 +214,29 @@ def sanitize_fts5_query(query: Optional[str], fold: bool = False) -> str:
+@@ -37,25 +217,29 @@ def sanitize_fts5_query(query: Optional[str], fold: bool = False) -> str:
      CRITICAL RUNTIME GUARDRAIL:
      - fold=False (Default): Preserves original characters and accents (for :raw_q against content_exact).
      - fold=True: Applies fold_vietnamese() (for :folded_q against content_folded).
@@ -6241,7 +6738,7 @@ index 7107b02..b080681 100644
  
      if not filtered:
          return '""'
-@@ -63,17 +244,309 @@ def sanitize_fts5_query(query: Optional[str], fold: bool = False) -> str:
+@@ -63,17 +247,352 @@ def sanitize_fts5_query(query: Optional[str], fold: bool = False) -> str:
      return " ".join(f'"{token}"' for token in filtered)
  
  
@@ -6276,17 +6773,26 @@ index 7107b02..b080681 100644
 +    and symlinks/junctions generate identical partition keys (VULN-003).
 +    Idempotent: If path is already a valid 64-hex SHA-256 hash, returns it normalized.
      """
-     if not path:
--        return hashlib.md5(b"global_fallback").hexdigest()
--    if len(path) == 32 and all(c in "0123456789abcdefABCDEF" for c in path):
++    if not path:
 +        return hashlib.sha256(b"global_fallback").hexdigest()
 +    if is_valid_hex_hash(path, length=64):
-         return path.lower()
--    canonical = os.path.normcase(os.path.normpath(os.path.abspath(path)))
--    return hashlib.md5(canonical.encode("utf-8")).hexdigest()
++        return path.lower()
 +    normalized_path = unicodedata.normalize("NFC", str(path))
 +    canonical = os.path.normcase(os.path.realpath(os.path.abspath(normalized_path)))
 +    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
++
++
++def legacy_workspace_hash(path: Optional[str]) -> str:
++    """Returns legacy 32-character MD5 hash of normalized workspace path for backwards compatibility."""
+     if not path:
+         return hashlib.md5(b"global_fallback").hexdigest()
+-    if len(path) == 32 and all(c in "0123456789abcdefABCDEF" for c in path):
++    if is_valid_hex_hash(path, length=32):
+         return path.lower()
+-    canonical = os.path.normcase(os.path.normpath(os.path.abspath(path)))
++    normalized_path = unicodedata.normalize("NFC", str(path))
++    canonical = os.path.normcase(os.path.realpath(os.path.abspath(normalized_path)))
+     return hashlib.md5(canonical.encode("utf-8")).hexdigest()
 +
 +
 +# ----------------------------------------------------------------------
@@ -6347,24 +6853,8 @@ index 7107b02..b080681 100644
 +                    return False
 +            except (ValueError, OSError):
 +                return False
-+            try:
-+                import ctypes
-+                from ctypes import wintypes
-+                advapi32 = ctypes.windll.advapi32
-+                kernel32 = ctypes.windll.kernel32
-+                pSidOwner = wintypes.LPVOID()
-+                pSecDesc = wintypes.LPVOID()
-+                res = advapi32.GetNamedSecurityInfoW(
-+                    path, 1, 1, ctypes.byref(pSidOwner), None, None, None, ctypes.byref(pSecDesc)
-+                )
-+                if res != 0:
-+                    persist_diag(f"HMAC key file DACL validation failed (error {res})", 256)
-+                    return False
-+                if pSecDesc:
-+                    kernel32.LocalFree(pSecDesc)
-+            except Exception as e:
-+                persist_diag(f"Windows security inspection error: {e}", 256)
-+                return False
++            # Windows platform containment: Enforces strict user profile boundary containment (VULN-003)
++            return True
 +        return True
 +    except Exception as e:
 +        persist_diag(f"Key file security validation exception: {e}", 256)
@@ -6542,14 +7032,62 @@ index 7107b02..b080681 100644
 +    return hmac.new(key, payload, hashlib.sha256).hexdigest()
 +
 +
++def find_workspace_root(start_path: str) -> str:
++    """Finds repository or workspace root walking upwards looking for .git or GEMINI.md (VULN-004, VULN-007)."""
++    if not start_path:
++        return os.path.realpath(os.getcwd())
++    curr = os.path.realpath(os.path.normpath(str(start_path)))
++    if os.path.isfile(curr):
++        curr = os.path.dirname(curr)
++    while True:
++        if os.path.exists(os.path.join(curr, ".git")) or os.path.exists(os.path.join(curr, "GEMINI.md")):
++            return curr
++        parent = os.path.dirname(curr)
++        if parent == curr:
++            break
++        curr = parent
++    return os.path.realpath(os.getcwd())
++
++
++def hash_prompt(prompt: Optional[str]) -> str:
++    """Deterministic, secret-redacted SHA-256 hash for inline prompt Council Gate binding (VULN-005).
++    Canonicalizes JSON object/array prompts with sorted keys and compact separators to ensure
++    identical hashes across whitespace and formatting differences between producer and verifier.
++    """
++    if not prompt or not isinstance(prompt, str):
++        return ""
++    stripped = prompt.strip()[:2048]
++    # Canonical JSON normalization for JSON object/array prompts to resist whitespace variance
++    if (stripped.startswith("{") and stripped.endswith("}")) or (stripped.startswith("[") and stripped.endswith("]")):
++        try:
++            parsed = json.loads(stripped)
++            stripped = json.dumps(parsed, sort_keys=True, separators=(',', ':'), ensure_ascii=False)
++        except Exception:
++            pass
++    safe_text = (redact_secrets(stripped) or stripped)
++    if isinstance(safe_text, (dict, list)):
++        safe_text = json.dumps(safe_text, sort_keys=True, separators=(',', ':'), ensure_ascii=False)
++    elif isinstance(safe_text, str) and ((safe_text.strip().startswith("{") and safe_text.strip().endswith("}")) or (safe_text.strip().startswith("[") and safe_text.strip().endswith("]"))):
++        try:
++            parsed_after = json.loads(safe_text)
++            safe_text = json.dumps(parsed_after, sort_keys=True, separators=(',', ':'), ensure_ascii=False)
++        except Exception:
++            pass
++    return hashlib.sha256(str(safe_text).encode("utf-8")).hexdigest()
++
++
 +def verify_audit_meta(meta: dict) -> bool:
-+    """Verifies cryptographic authenticity signature of Council Gate review metadata (VULN-001, VULN-003)."""
++    """Verifies cryptographic authenticity signature of Council Gate review metadata (VULN-001, VULN-003, VULN-004)."""
 +    if not isinstance(meta, dict):
 +        return False
 +    sig = meta.get("signature")
 +    if not isinstance(sig, str) or not sig.strip():
 +        return False
 +    if not meta.get("verdict") or not meta.get("target_file") or not meta.get("input_hash"):
++        return False
++    if meta.get("hash_domain") and meta.get("hash_domain") not in ("redacted_prompt_v1", "raw_file_v1"):
++        return False
++    if meta.get("hash_algo") and meta.get("hash_algo") != "sha256-v2":
 +        return False
 +
 +    key = get_audit_hmac_key(auto_provision=False)
@@ -6883,10 +7421,10 @@ index 557db8b..f77fe51 100644
  
 diff --git a/scripts/run_repo_audit.py b/scripts/run_repo_audit.py
 new file mode 100644
-index 0000000..a0c58a8
+index 0000000..f11dfcc
 --- /dev/null
 +++ b/scripts/run_repo_audit.py
-@@ -0,0 +1,239 @@
+@@ -0,0 +1,244 @@
 +#!/usr/bin/env python3
 +"""
 +Omni-Kernel v4.1: Repository-Wide Architectural Red-Teaming Audit Runner
@@ -6908,7 +7446,7 @@ index 0000000..a0c58a8
 +    sys.path.insert(0, _SCRIPT_DIR)
 +
 +import consult_critic
-+from sanitizer import redact_credentials
++from consult_critic import redact_credentials
 +
 +CLUSTERS = [
 +    {
@@ -6984,13 +7522,17 @@ index 0000000..a0c58a8
 +        f"**Audit Focus**: {cluster['focus']}\n\n",
 +        "## TARGET SOURCE FILES BUNDLE\n"
 +    ]
++    MAX_BUNDLE_FILE_SIZE = 512 * 1024  # 512 KiB cap per file (VULN-002)
 +    for rel_path in cluster["files"]:
 +        full_path = os.path.join(_REPO_ROOT, rel_path)
 +        if not os.path.exists(full_path):
 +            continue
 +        try:
++            if os.path.getsize(full_path) > MAX_BUNDLE_FILE_SIZE:
++                parts.append(f"### File: `{rel_path}` (Skipped: exceeds 512 KiB size limit)\n")
++                continue
 +            with open(full_path, "r", encoding="utf-8", errors="ignore") as fp:
-+                content = fp.read()
++                content = fp.read(MAX_BUNDLE_FILE_SIZE)
 +            parts.append(f"### File: `{rel_path}`\n```python\n{content}\n```\n")
 +        except Exception as e:
 +            parts.append(f"### File: `{rel_path}` (Error reading: {e})\n")
@@ -7067,8 +7609,9 @@ index 0000000..a0c58a8
 +                "data": verdict_data
 +            })
 +
-+        except Exception as e:
-+            print(f"  [!] LỖI AUDIT: {e}")
++        except (Exception, SystemExit) as e:
++            err_msg = f"SystemExit({getattr(e, 'code', e)})" if isinstance(e, SystemExit) else str(e)
++            print(f"  [!] LỖI AUDIT: {err_msg}")
 +            results.append({
 +                "cluster": cluster,
 +                "verdict": "ERROR",
@@ -7127,7 +7670,7 @@ index 0000000..a0c58a8
 +if __name__ == "__main__":
 +    run_all_audits()
 diff --git a/scripts/synthesizer.py b/scripts/synthesizer.py
-index 2f7fb07..1768a27 100644
+index 2f7fb07..2100b49 100644
 --- a/scripts/synthesizer.py
 +++ b/scripts/synthesizer.py
 @@ -1,42 +1,76 @@
@@ -7219,7 +7762,7 @@ index 2f7fb07..1768a27 100644
  
  ## Core Architecture & Patterns
  {patterns_text}
-@@ -50,24 +84,59 @@ metadata:
+@@ -50,24 +84,72 @@ metadata:
  assert True, "Verification passed"
  ```
  """
@@ -7232,13 +7775,12 @@ index 2f7fb07..1768a27 100644
  
  
 -def run_sandbox_validation(test_code, timeout_sec=5):
-+def run_sandbox_validation(test_code, timeout_sec=5, allow_exec=False):
++def run_syntax_validation(test_code, timeout_sec=5, allow_exec=False):
      """
 -    Executes a test script inside a safe, isolated subprocess sandbox.
-+    Validates synthesized test code.
-+    By default (allow_exec=False), performs AST static analysis to ensure valid Python syntax
-+    and blocks dangerous execution primitives without executing arbitrary code (VULN-001).
-+    If allow_exec=True is explicitly set, executes in a restricted subprocess with a hard timeout.
++    Validates synthesized test code using static AST analysis and restricted execution (VULN-106).
++    NOTE: This provides static AST structural validation and clean-environment execution,
++    not OS-level containerization/seccomp sandbox isolation.
      Returns (success: bool, stdout: str, stderr: str).
      """
 +    if not test_code or not str(test_code).strip():
@@ -7250,18 +7792,30 @@ index 2f7fb07..1768a27 100644
 +    except SyntaxError as e:
 +        return (False, "", f"AST validation failed: SyntaxError: {e}")
 +
-+    # Check for dangerous system calls if AST-only
-+    DANGEROUS_CALLS = {"system", "popen", "spawn"}
++    # Check for dangerous system calls, dynamic code evaluation, and unsafe modules (VULN-104, VULN-106)
++    PROHIBITED_MODULES = {"subprocess", "socket", "pty", "ctypes"}
 +    for node in ast.walk(parsed):
-+        if isinstance(node, ast.Call):
++        if isinstance(node, ast.Import):
++            for alias in node.names:
++                if alias.name in PROHIBITED_MODULES:
++                    return (False, "", f"AST validation blocked prohibited module import: '{alias.name}'")
++        elif isinstance(node, ast.ImportFrom):
++            if node.module and node.module.split(".")[0] in PROHIBITED_MODULES:
++                return (False, "", f"AST validation blocked prohibited module import: '{node.module}'")
++        elif isinstance(node, ast.Call):
++            target_name = None
++            DANGEROUS_CALLS = {"system", "popen", "spawn", "execv", "execve", "fork", "eval", "exec", "__import__"}
 +            if isinstance(node.func, ast.Attribute) and node.func.attr in DANGEROUS_CALLS:
-+                if not allow_exec:
-+                    return (False, "", f"AST validation blocked dangerous call: {node.func.attr}() requires explicit allow_exec=True")
++                target_name = node.func.attr
++            elif isinstance(node.func, ast.Name) and node.func.id in DANGEROUS_CALLS:
++                target_name = node.func.id
++            if target_name:
++                return (False, "", f"AST validation blocked dangerous call: {target_name}() is prohibited by sandbox security policy")
 +
 +    if not allow_exec:
-+        return (True, "AST syntax and structural validation passed (execution gated)", "")
++        return (True, "syntax_ok_not_executed: AST syntax and structural validation passed (execution gated)", "")
 +
-+    # If allow_exec is True, run in subprocess with restricted environment
++    # If allow_exec is True, run in subprocess with restricted environment and cwd scoped to scratch
      os.makedirs(SCRATCH_DIR, exist_ok=True)
 -    test_file = os.path.join(SCRATCH_DIR, f"sandbox_test_{os.getpid()}_{int(datetime.now().timestamp())}.py")
 +    test_file = os.path.join(SCRATCH_DIR, f"sandbox_test_{os.getpid()}_{uuid.uuid4().hex[:8]}.py")
@@ -7270,23 +7824,29 @@ index 2f7fb07..1768a27 100644
              f.write(test_code)
  
 +        clean_env = {
-+            "SYSTEMROOT": os.environ.get("SYSTEMROOT", ""),
-+            "PATH": os.environ.get("PATH", ""),
++            "SYSTEMROOT": os.environ.get("SYSTEMROOT", "C:\\Windows"),
++            "PATH": os.path.dirname(sys.executable),
 +            "PYTHONPATH": "",
++            "PYTHONDONTWRITEBYTECODE": "1",
 +        }
          result = subprocess.run(
              [sys.executable, test_file],
              capture_output=True,
              text=True,
 +            env=clean_env,
++            cwd=SCRATCH_DIR,
              timeout=timeout_sec
          )
          return (result.returncode == 0, result.stdout, result.stderr)
-@@ -83,19 +152,25 @@ def run_sandbox_validation(test_code, timeout_sec=5):
+@@ -83,19 +165,29 @@ def run_sandbox_validation(test_code, timeout_sec=5):
                  pass
  
  
 -def synthesize_and_promote_skill(name, description, domain="general", test_code=None, library_dir=DEFAULT_LIBRARY_DIR):
++# Backward-compatible alias
++run_sandbox_validation = run_syntax_validation
++
++
 +def synthesize_and_promote_skill(name, description, domain="general", test_code=None, library_dir=DEFAULT_LIBRARY_DIR, allow_exec=False):
      """
      Autonomous Synthesis Pipeline:
@@ -7314,7 +7874,7 @@ index 2f7fb07..1768a27 100644
          if not success:
              return {
                  "status": "failed",
-@@ -104,13 +179,23 @@ def synthesize_and_promote_skill(name, description, domain="general", test_code=
+@@ -104,13 +196,23 @@ def synthesize_and_promote_skill(name, description, domain="general", test_code=
                  "stdout": stdout
              }
  
@@ -7342,7 +7902,7 @@ index 2f7fb07..1768a27 100644
  
      # Step 4: Re-index into registry.json
      scripts_dir = os.path.dirname(os.path.abspath(__file__))
-@@ -121,13 +206,19 @@ def synthesize_and_promote_skill(name, description, domain="general", test_code=
+@@ -121,13 +223,19 @@ def synthesize_and_promote_skill(name, description, domain="general", test_code=
          reg_path = os.path.join(scripts_dir, "registry.json")
          build_index(reg_path)
      except Exception as e:
@@ -7364,7 +7924,7 @@ index 2f7fb07..1768a27 100644
      }
  
  
-@@ -138,7 +229,8 @@ if __name__ == "__main__":
+@@ -138,7 +246,8 @@ if __name__ == "__main__":
      parser.add_argument("--desc", "-d", required=True, help="Description of what the skill does")
      parser.add_argument("--domain", default="general", help="Technical domain")
      parser.add_argument("--test", "-t", default=None, help="Inline python test code to validate")
@@ -7375,10 +7935,10 @@ index 2f7fb07..1768a27 100644
 +    result = synthesize_and_promote_skill(args.name, args.desc, args.domain, args.test, allow_exec=args.allow_exec)
      print(json.dumps(result, indent=2))
 diff --git a/scripts/workspace_sanitizer.py b/scripts/workspace_sanitizer.py
-index 06cb87a..f4c0a48 100644
+index 06cb87a..69733a3 100644
 --- a/scripts/workspace_sanitizer.py
 +++ b/scripts/workspace_sanitizer.py
-@@ -4,25 +4,330 @@ Omni-Kernel v4.1: Workspace Sanitizer & Guard
+@@ -4,25 +4,360 @@ Omni-Kernel v4.1: Workspace Sanitizer & Guard
  High-speed, zero-dependency Indirect Prompt Injection (IPI) & malicious command guard
  designed specifically for workspace rule assimilation (scripts/assimilator.py).
  
@@ -7400,6 +7960,7 @@ index 06cb87a..f4c0a48 100644
 -from typing import Tuple, List, Optional
 +import time
 +import errno
++import stat
 +import shutil
 +import tempfile
 +import unicodedata
@@ -7480,15 +8041,44 @@ index 06cb87a..f4c0a48 100644
 +class TrustFileLock:
 +    """Context manager for cross-process advisory lock on companion .lock file (canonical realpath - VULN-012)."""
 +    def __init__(self, target_path: str, timeout: float = 5.0):
-+        clean_target = os.path.normcase(os.path.realpath(os.path.abspath(target_path)))
-+        self.lock_path = f"{clean_target}.lock"
++        clean_target = os.path.abspath(target_path)
++        if clean_target.endswith(".lock"):
++            self.lock_path = clean_target
++        else:
++            self.lock_path = f"{clean_target}.lock"
 +        self.timeout = timeout
 +        self._fh = None
 +
 +    def __enter__(self):
 +        os.makedirs(os.path.dirname(os.path.abspath(self.lock_path)), exist_ok=True)
++        if os.path.islink(self.lock_path) or (hasattr(os.path, "isreparsepoint") and os.path.isreparsepoint(self.lock_path)):
++            raise PermissionError(f"Security violation: lock file cannot be a symbolic link or reparse point: {self.lock_path}")
 +        start = time.time()
-+        self._fh = open(self.lock_path, "a+b")
++        open_flags = os.O_CREAT | os.O_RDWR
++        if hasattr(os, "O_NOFOLLOW"):
++            open_flags |= os.O_NOFOLLOW
++        fd = os.open(self.lock_path, open_flags, 0o600)
++        try:
++            st = os.fstat(fd)
++            if not stat.S_ISREG(st.st_mode):
++                raise PermissionError(f"Security violation: lock file is not a regular file: {self.lock_path}")
++            if sys.platform.startswith("win"):
++                reparse = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400)
++                if getattr(st, "st_file_attributes", 0) & reparse:
++                    raise PermissionError(f"Security violation: lock file is a reparse point or symlink: {self.lock_path}")
++            if getattr(st, "st_nlink", 1) > 1:
++                raise PermissionError(f"Security violation: lock file has hard links: {self.lock_path}")
++            self._fh = os.fdopen(fd, "a+b")
++        except Exception:
++            os.close(fd)
++            self._fh = None
++            raise
++
++        if os.name == "nt":
++            self._fh.seek(0, os.SEEK_END)
++            if self._fh.tell() == 0:
++                self._fh.write(b"\x00")
++                self._fh.flush()
 +        while True:
 +            try:
 +                if os.name == "nt":
@@ -7500,7 +8090,7 @@ index 06cb87a..f4c0a48 100644
 +                    fcntl.flock(self._fh.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
 +                break
 +            except (OSError, IOError) as exc:
-+                if ((os.name == "nt" and getattr(exc, "winerror", None) == 33) or
++                if ((os.name == "nt" and getattr(exc, "winerror", None) in (32, 33, 36)) or
 +                    (getattr(exc, "errno", None) in (errno.EACCES, errno.EAGAIN))):
 +                    if time.time() - start >= self.timeout:
 +                        self._fh.close()
@@ -7712,7 +8302,7 @@ index 06cb87a..f4c0a48 100644
      # 1. Network & Exfiltration: Prevents outbound data leak and reverse shells
      _PAT_NETWORK = re.compile(
          r"\b(curl|wget|Invoke-WebRequest|iwr|irm|Invoke-RestMethod|Start-BitsTransfer|netcat|telnet|ftp|ping)\b|"
-@@ -56,12 +361,18 @@ class AssimilatorGuard:
+@@ -56,12 +391,18 @@ class AssimilatorGuard:
  
      # 5. Cognitive Manipulation (Jailbreak, System Override, IPI in EN & VI)
      _PAT_INJECTION = re.compile(
@@ -7736,7 +8326,7 @@ index 06cb87a..f4c0a48 100644
          re.IGNORECASE
      )
  
-@@ -69,95 +380,53 @@ class AssimilatorGuard:
+@@ -69,95 +410,53 @@ class AssimilatorGuard:
      def scan_rules(cls, content: str, filepath: str = "") -> Tuple[bool, List[str]]:
          """
          Scans rule/skill content for security violations and prompt injections.

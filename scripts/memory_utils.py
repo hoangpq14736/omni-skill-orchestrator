@@ -549,29 +549,29 @@ def find_workspace_root(start_path: str) -> str:
 
 def hash_prompt(prompt: Optional[str]) -> str:
     """Deterministic, secret-redacted SHA-256 hash for inline prompt Council Gate binding (VULN-005).
-    Canonicalizes JSON object/array prompts with sorted keys and compact separators to ensure
-    identical hashes across whitespace and formatting differences between producer and verifier.
+    Canonical pipeline: redact_secrets -> NFKC/JCS normalization -> truncate to 2048 -> SHA-256.
+    Ensures secrets straddling the 2048-char boundary are redacted identically before truncation.
     """
     if not prompt or not isinstance(prompt, str):
         return ""
-    stripped = prompt.strip()[:2048]
-    # Canonical JSON normalization for JSON object/array prompts to resist whitespace variance
-    if (stripped.startswith("{") and stripped.endswith("}")) or (stripped.startswith("[") and stripped.endswith("]")):
-        try:
-            parsed = json.loads(stripped)
-            stripped = json.dumps(parsed, sort_keys=True, separators=(',', ':'), ensure_ascii=False)
-        except Exception:
-            pass
-    safe_text = (redact_secrets(stripped) or stripped)
+    # Step 1: Redact secrets first before any truncation to avoid cutting secrets in half
+    safe_text = redact_secrets(prompt) or prompt
+    # Step 2: Unicode normalization (NFKC)
+    import unicodedata
+    if isinstance(safe_text, str):
+        safe_text = unicodedata.normalize("NFKC", safe_text).strip()
+    # Step 3: Canonical JSON normalization for JSON object/array prompts to resist whitespace variance
     if isinstance(safe_text, (dict, list)):
         safe_text = json.dumps(safe_text, sort_keys=True, separators=(',', ':'), ensure_ascii=False)
-    elif isinstance(safe_text, str) and ((safe_text.strip().startswith("{") and safe_text.strip().endswith("}")) or (safe_text.strip().startswith("[") and safe_text.strip().endswith("]"))):
+    elif isinstance(safe_text, str) and ((safe_text.startswith("{") and safe_text.endswith("}")) or (safe_text.startswith("[") and safe_text.endswith("]"))):
         try:
-            parsed_after = json.loads(safe_text)
-            safe_text = json.dumps(parsed_after, sort_keys=True, separators=(',', ':'), ensure_ascii=False)
+            parsed = json.loads(safe_text)
+            safe_text = json.dumps(parsed, sort_keys=True, separators=(',', ':'), ensure_ascii=False)
         except Exception:
             pass
-    return hashlib.sha256(str(safe_text).encode("utf-8")).hexdigest()
+    # Step 4: Truncate to max 2048 characters
+    clamped = str(safe_text)[:2048]
+    return hashlib.sha256(clamped.encode("utf-8")).hexdigest()
 
 
 def verify_audit_meta(meta: dict) -> bool:

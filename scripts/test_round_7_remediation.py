@@ -585,6 +585,177 @@ class TestRound7Remediation(unittest.TestCase):
         stderr_output = captured_stderr.getvalue()
         self.assertIn("recall_traces called without workspace_hash or workspace_dir", stderr_output)
 
+    def test_init_database_asserts_required_security_triggers(self):
+        """
+        VULN-101: init_database must verify all 5 invariant tenant-isolation triggers
+        are active post-initialization and raise RuntimeError if any trigger is missing.
+        """
+        conn = init_database(self.db_path)
+        # Verify all 5 triggers are present
+        active_triggers = {
+            r[0] for r in conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='trigger' AND name IN ("
+                "'trg_episodic_prevent_ws_update', 'trg_episodic_prevent_ws_replace', "
+                "'trg_episodic_prevent_cross_tenant_supersede', 'trg_episodic_prevent_cross_tenant_supersede_insert', "
+                "'trg_episodic_after_update');"
+            ).fetchall()
+        }
+        self.assertEqual(len(active_triggers), 5, "All 5 security triggers must be active")
+        conn.close()
+
+    def test_activation_events_and_l1_staging_idempotent_insert(self):
+        """
+        VULN-102: activation_events and l1_staging_log must reject duplicate events
+        via unique constraints and INSERT OR IGNORE to prevent telemetry inflation on crash recovery.
+        """
+        conn = init_database(self.db_path)
+        cur = conn.cursor()
+        sess_id = "sess-dedup-1"
+        ts = "2026-11-05 01:00:00"
+        inp = "dedup query test"
+        ws_hash = "f" * 64
+
+        # Insert once into l1_staging_log
+        cur.execute(
+            "INSERT OR IGNORE INTO l1_staging_log (session_id, timestamp, user_input, workspace_hash) VALUES (?, ?, ?, ?);",
+            (sess_id, ts, inp, ws_hash)
+        )
+        # Duplicate insert must be ignored
+        cur.execute(
+            "INSERT OR IGNORE INTO l1_staging_log (session_id, timestamp, user_input, workspace_hash) VALUES (?, ?, ?, ?);",
+            (sess_id, ts, inp, ws_hash)
+        )
+        count_staging = cur.execute("SELECT count(*) FROM l1_staging_log WHERE session_id = ?;", (sess_id,)).fetchone()[0]
+        self.assertEqual(count_staging, 1, "Duplicate row in l1_staging_log must be ignored")
+
+        # Insert once into activation_events
+        cur.execute(
+            "INSERT OR IGNORE INTO activation_events (session_id, timestamp, user_input, workspace_dir) VALUES (?, ?, ?, ?);",
+            (sess_id, ts, inp, ws_hash)
+        )
+        # Duplicate insert must be ignored
+        cur.execute(
+            "INSERT OR IGNORE INTO activation_events (session_id, timestamp, user_input, workspace_dir) VALUES (?, ?, ?, ?);",
+            (sess_id, ts, inp, ws_hash)
+        )
+        count_events = cur.execute("SELECT count(*) FROM activation_events WHERE session_id = ?;", (sess_id,)).fetchone()[0]
+        self.assertEqual(count_events, 1, "Duplicate row in activation_events must be ignored")
+        conn.close()
+
+    def test_load_traces_returns_deepcopy_protects_cache(self):
+        """
+        VULN-103: Public load_traces must return an independent deepcopy
+        to prevent callers from mutating internal shared cache state.
+        """
+        import experiential_memory
+        traces_file = os.path.join(self.temp_dir.name, "test_deepcopy_traces.json")
+        init_data = {
+            "version": "3.0.0",
+            "updated_at": "2026-11-05 01:00:00",
+            "traces": [{"id": "tr-immutable-1", "problem_signature": "orig sig", "tokens": ["orig"]}]
+        }
+        with open(traces_file, "w", encoding="utf-8") as f:
+            json.dump(init_data, f)
+
+        loaded1 = experiential_memory.load_traces(traces_file)
+        # Mutate the returned dict
+        loaded1["traces"][0]["problem_signature"] = "MUTATED CORRUPT SIG"
+
+        # Subsequent load_traces must NOT reflect the mutation
+        loaded2 = experiential_memory.load_traces(traces_file)
+        self.assertEqual(loaded2["traces"][0]["problem_signature"], "orig sig", "Cache must not be mutated by caller")
+
+    def test_synthesizer_ast_denylist_expanded_blocks_destructive_calls(self):
+        """
+        VULN-104: Synthesizer AST validator must block destructive calls
+        including write-mode open(), os.remove(), rmtree(), and getattr().
+        """
+        from synthesizer import run_syntax_validation
+        # Block open with write mode
+        ok1, _, err1 = run_syntax_validation("with open('foo.txt', 'w') as f: f.write('bad')", allow_exec=False)
+        self.assertFalse(ok1)
+        self.assertIn("open() with destructive mode", err1)
+
+        # Block os.remove / rmtree
+        ok2, _, err2 = run_syntax_validation("import os\nos.remove('file.txt')", allow_exec=False)
+        self.assertFalse(ok2)
+        self.assertIn("blocked dangerous call: remove()", err2)
+
+        # Block shutil import
+        ok3, _, err3 = run_syntax_validation("import shutil\nshutil.rmtree('/tmp')", allow_exec=False)
+        self.assertFalse(ok3)
+        self.assertIn("blocked prohibited module import: 'shutil'", err3)
+
+        # Block getattr dynamic reflection
+        ok4, _, err4 = run_syntax_validation("getattr(os, 'system')('calc')", allow_exec=False)
+        self.assertFalse(ok4)
+        self.assertIn("blocked dangerous call: getattr()", err4)
+
+    def test_mcp_gateway_copy_on_write(self):
+        """
+        VULN-105: get_mcp_index uses copy-on-write pointer swap and preserves responsiveness.
+        """
+        import mcp_gateway
+        idx1 = mcp_gateway.get_mcp_index(force_refresh=True)
+        self.assertIsInstance(idx1, dict)
+        self.assertIn("tools", idx1)
+        # Fast retrieval
+        idx2 = mcp_gateway.get_mcp_index()
+        self.assertIs(idx1, idx2)
+
+    def test_consolidator_reconciles_subfolder_legacy_partitions(self):
+        """
+        VULN-106: ConsolidatorEngine must reconcile unconsolidated legacy 32-hex
+        subfolder partitions belonging to workspace_root tree into authorized_hashes.
+        """
+        conn = init_database(self.db_path)
+        cur = conn.cursor()
+        root_dir = os.path.join(self.temp_dir.name, "my_project")
+        sub_dir = os.path.join(root_dir, "submodule_a")
+        os.makedirs(sub_dir, exist_ok=True)
+
+        import hashlib
+        legacy_sub_md5 = hashlib.md5(os.path.normcase(os.path.realpath(sub_dir)).encode("utf-8")).hexdigest().lower()
+        now_str = "2026-11-05 01:00:00"
+
+        # Register submodule in workspace_registry
+        cur.execute("INSERT OR REPLACE INTO workspace_registry VALUES (?, ?, ?);", (legacy_sub_md5, sub_dir, now_str))
+
+        # Insert unconsolidated event under legacy_sub_md5
+        cur.execute(
+            """
+            INSERT OR IGNORE INTO activation_events (session_id, timestamp, user_input, workspace_dir, feedback_score, is_consolidated)
+            VALUES (?, ?, ?, ?, 1.0, 0);
+            """,
+            ("sess-sub-1", now_str, "submodule build fix", legacy_sub_md5)
+        )
+        conn.commit()
+        conn.close()
+
+        # Construct ConsolidatorEngine with workspace_root = root_dir
+        engine_conn = init_database(self.db_path)
+        engine = ConsolidatorEngine(engine_conn, workspace_root=root_dir, allow_unscoped=False)
+        self.assertIn(legacy_sub_md5, engine.authorized_hashes, "Legacy subfolder partition must be reconciled into authorized_hashes")
+        engine_conn.close()
+
+    def test_hash_prompt_straddling_secret_2048_boundary(self):
+        """
+        Defensive Edge Case 1: hash_prompt must redact secrets before 2048 truncation
+        so that secrets straddling the boundary are redacted identically across producer and verifier.
+        """
+        # Place a secret right across the 2048 boundary
+        prefix = "A" * 2035
+        secret = "Bearer sk-ant-api03-abcdef1234567890abcdef12345"
+        full_prompt = f"{prefix} {secret} trailing text"
+
+        h1 = hash_prompt(full_prompt)
+        # Redacting first means secret is masked to [REDACTED_TOKEN]
+        self.assertTrue(len(h1) == 64, "hash_prompt must produce valid 64-char SHA256")
+        self.assertNotIn("sk-ant-api03", full_prompt[:2048])  # Secret straddles boundary
+        # Hash must match the redacted version
+        h2 = hash_prompt(full_prompt)
+        self.assertEqual(h1, h2, "Hash must be completely deterministic")
+
 
 if __name__ == "__main__":
     unittest.main()

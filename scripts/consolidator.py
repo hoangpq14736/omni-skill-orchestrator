@@ -472,6 +472,23 @@ class ConsolidatorEngine:
                             pass
                     else:
                         self.authorized_hashes.add(r_hash.lower())
+
+            # VULN-106: Reconcile unconsolidated legacy 32-hex subfolder partitions belonging to workspace_root tree
+            if self.workspace_root:
+                canon_root_md5 = hashlib.md5(os.path.normcase(os.path.realpath(os.path.abspath(unicodedata.normalize("NFC", str(self.workspace_root))))).encode("utf-8")).hexdigest().lower()
+                self.authorized_hashes.add(canon_root_md5)
+                c.execute("SELECT DISTINCT workspace_dir FROM activation_events WHERE is_consolidated = 0 AND length(workspace_dir) = 32;")
+                norm_root = os.path.normcase(os.path.normpath(os.path.realpath(os.path.abspath(self.workspace_root))))
+                for (uncons_h,) in c.fetchall():
+                    if uncons_h and uncons_h.lower() not in self.authorized_hashes:
+                        reg_match = c.execute("SELECT workspace_path FROM workspace_registry WHERE lower(workspace_hash) = ?;", (uncons_h.lower(),)).fetchone()
+                        if reg_match and reg_match[0]:
+                            try:
+                                norm_cand = os.path.normcase(os.path.normpath(os.path.realpath(os.path.abspath(reg_match[0]))))
+                                if os.path.commonpath([norm_root, norm_cand]) == norm_root:
+                                    self.authorized_hashes.add(uncons_h.lower())
+                            except Exception:
+                                pass
         except Exception as reg_err:
             persist_diag(reg_err, 256)
             sys.stderr.write(f"[!] Warning: Failed to sync authorized_hashes from workspace_registry: {reg_err}\n")
@@ -537,7 +554,7 @@ class ConsolidatorEngine:
         spool_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "l1_staging_spool.jsonl")
         spool_lock = spool_path + ".lock"
 
-        # VULN-103: Crash-recovery sweep for orphaned .proc_* files left by previous crashed drains
+        # VULN-103 & VULN-102: Crash-recovery sweep for orphaned .proc_* files left by previous crashed drains
         spool_dir = os.path.dirname(spool_path)
         base_name = os.path.basename(spool_path)
         try:
@@ -546,10 +563,12 @@ class ConsolidatorEngine:
                     stale_proc = os.path.join(spool_dir, fname)
                     try:
                         if os.path.isfile(stale_proc) and os.path.getsize(stale_proc) > 0:
+                            recovered_tmp = f"{stale_proc}.rec_{uuid.uuid4().hex[:6]}"
+                            os.replace(stale_proc, recovered_tmp)
                             with TrustFileLock(spool_lock, timeout=2.0):
-                                with open(stale_proc, "r", encoding="utf-8") as rf, open(spool_path, "a", encoding="utf-8") as wf:
+                                with open(recovered_tmp, "r", encoding="utf-8") as rf, open(spool_path, "a", encoding="utf-8") as wf:
                                     wf.write(rf.read())
-                            os.remove(stale_proc)
+                            os.remove(recovered_tmp)
                             persist_diag(f"Recovered orphaned spool file {fname} into live spool", 256)
                     except Exception as rec_err:
                         persist_diag(rec_err, 256)
@@ -617,7 +636,7 @@ class ConsolidatorEngine:
             if parsed_spool_rows:
                 cur.executemany(
                     """
-                    INSERT INTO l1_staging_log (session_id, timestamp, user_input, workspace_hash, top_skill, tier_used, recalled_traces)
+                    INSERT OR IGNORE INTO l1_staging_log (session_id, timestamp, user_input, workspace_hash, top_skill, tier_used, recalled_traces)
                     VALUES (?, ?, ?, ?, ?, ?, ?)
                     """,
                     parsed_spool_rows
@@ -664,7 +683,7 @@ class ConsolidatorEngine:
                     safe_recalled = json.dumps(raw_recalled, ensure_ascii=False) if isinstance(raw_recalled, (dict, list)) else (str(raw_recalled) if raw_recalled is not None else None)
                     cur.execute(
                         """
-                        INSERT INTO activation_events (session_id, timestamp, user_input, workspace_dir, top_skill, tier_used, recalled_traces, feedback_score, is_consolidated)
+                        INSERT OR IGNORE INTO activation_events (session_id, timestamp, user_input, workspace_dir, top_skill, tier_used, recalled_traces, feedback_score, is_consolidated)
                         VALUES (?, ?, ?, ?, ?, ?, ?, 0.0, 0)
                         """,
                         (session_id, ts, safe_input, ws_hash, safe_skill, tier, safe_recalled)
@@ -757,15 +776,23 @@ class ConsolidatorEngine:
                     if row_path and row_path[0]:
                         target_path = row_path[0]
                 leg_h = legacy_workspace_hash(target_path) if target_path else self.workspace_hash
+                match_hashes = set(self.authorized_hashes) if self.authorized_hashes else set()
+                match_hashes.add(self.workspace_hash)
+                if target_path:
+                    match_hashes.add(target_path)
+                if leg_h:
+                    match_hashes.add(leg_h)
+                query_hashes = list(match_hashes)
+                placeholders = ",".join("?" for _ in query_hashes)
                 cur.execute(
-                    """
+                    f"""
                     SELECT event_id, session_id, timestamp, user_input, workspace_dir, feedback_score
                     FROM activation_events
-                    WHERE is_consolidated = 0 AND (workspace_dir = ? OR workspace_dir = ? OR workspace_dir = ?)
+                    WHERE is_consolidated = 0 AND workspace_dir IN ({placeholders})
                     ORDER BY event_id ASC
                     LIMIT ?;
                     """,
-                    (self.workspace_hash, target_path or self.workspace_hash, leg_h, batch_size)
+                    (*query_hashes, batch_size)
                 )
             else:
                 cur.execute(
@@ -847,15 +874,23 @@ class ConsolidatorEngine:
                     if row_path and row_path[0]:
                         target_path = row_path[0]
                 leg_h = legacy_workspace_hash(target_path) if target_path else self.workspace_hash
+                match_hashes = set(self.authorized_hashes) if self.authorized_hashes else set()
+                match_hashes.add(self.workspace_hash)
+                if target_path:
+                    match_hashes.add(target_path)
+                if leg_h:
+                    match_hashes.add(leg_h)
+                query_hashes = list(match_hashes)
+                placeholders = ",".join("?" for _ in query_hashes)
                 cur.execute(
-                    """
+                    f"""
                     SELECT event_id, session_id, timestamp, user_input, workspace_dir, feedback_score
                     FROM activation_events
-                    WHERE is_consolidated = 0 AND (workspace_dir = ? OR workspace_dir = ? OR workspace_dir = ?)
+                    WHERE is_consolidated = 0 AND workspace_dir IN ({placeholders})
                     ORDER BY event_id ASC
                     LIMIT ?;
                     """,
-                    (self.workspace_hash, target_path or self.workspace_hash, leg_h, batch_size)
+                    (*query_hashes, batch_size)
                 )
             else:
                 cur.execute(
