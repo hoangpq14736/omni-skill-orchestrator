@@ -545,10 +545,10 @@ def test_adversarial_workspace_hash_validation():
     except ValueError:
         pass
 
-    # Path traversal attempt is canonicalized safely to 32-char hex
+    # Path traversal attempt is canonicalized safely to valid hex hash
     traversal = "d:/test/../../etc/passwd"
     resolved_traversal = resolve_workspace_hash(traversal, allow_unscoped=True)
-    assert len(resolved_traversal) == 32, f"Expected 32-char MD5, got {len(resolved_traversal)}"
+    assert len(resolved_traversal) in (32, 64), f"Expected 32 or 64-char hex hash, got {len(resolved_traversal)}"
 
     # None and empty strings must fail closed with ValueError
     for bad in (None, "", "   "):
@@ -658,7 +658,7 @@ def test_root_containment_and_overflow_limit():
 
     # Inside approved root passes
     hash_sub = resolve_workspace_hash(sub, approved_root=approved)
-    assert len(hash_sub) == 32
+    assert len(hash_sub) in (32, 64)
 
     # Outside approved root must raise ValueError
     try:

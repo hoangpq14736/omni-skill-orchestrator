@@ -16,6 +16,7 @@ import os
 import sqlite3
 import sys
 import time
+import unicodedata
 from typing import Dict, List, Optional, Tuple, Any
 
 # Ensure scripts directory is on sys.path
