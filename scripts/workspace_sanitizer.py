@@ -19,6 +19,7 @@ import sys
 import json
 import time
 import errno
+import stat
 import shutil
 import tempfile
 import unicodedata
@@ -109,8 +110,25 @@ class TrustFileLock:
 
     def __enter__(self):
         os.makedirs(os.path.dirname(os.path.abspath(self.lock_path)), exist_ok=True)
+        if os.path.islink(self.lock_path) or (hasattr(os.path, "isreparsepoint") and os.path.isreparsepoint(self.lock_path)):
+            raise PermissionError(f"Security violation: lock file cannot be a symbolic link or reparse point: {self.lock_path}")
         start = time.time()
         self._fh = open(self.lock_path, "a+b")
+        try:
+            st = os.fstat(self._fh.fileno())
+            if not stat.S_ISREG(st.st_mode):
+                raise PermissionError(f"Security violation: lock file is not a regular file: {self.lock_path}")
+            if sys.platform.startswith("win"):
+                reparse = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400)
+                if getattr(st, "st_file_attributes", 0) & reparse:
+                    raise PermissionError(f"Security violation: lock file is a reparse point or symlink: {self.lock_path}")
+            if getattr(st, "st_nlink", 1) > 1:
+                raise PermissionError(f"Security violation: lock file has hard links: {self.lock_path}")
+        except Exception:
+            self._fh.close()
+            self._fh = None
+            raise
+
         if os.name == "nt":
             self._fh.seek(0, os.SEEK_END)
             if self._fh.tell() == 0:

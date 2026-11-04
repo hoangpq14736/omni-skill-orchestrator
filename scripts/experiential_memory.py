@@ -85,14 +85,32 @@ def load_traces(traces_path: str = None, bypass_cache: bool = False) -> dict:
 import tempfile
 
 _lock_local = threading.local()
-_PROCESS_LOCKS: Dict[str, threading.RLock] = {}
+_PROCESS_LOCKS: Dict[str, List[Any]] = {}  # path -> [RLock, refcount] (VULN-005)
 _PROCESS_LOCKS_MUTEX = threading.Lock()
+
+def _enter_process_rlock(path: str) -> threading.RLock:
+    """Acquires a reference to an intra-process RLock for path with refcount tracking (VULN-005)."""
+    with _PROCESS_LOCKS_MUTEX:
+        if path not in _PROCESS_LOCKS:
+            _PROCESS_LOCKS[path] = [threading.RLock(), 0]
+        entry = _PROCESS_LOCKS[path]
+        entry[1] += 1
+        return entry[0]
+
+def _exit_process_rlock(path: str):
+    """Releases a reference to an intra-process RLock, pruning entry when refcount hits zero (VULN-005)."""
+    with _PROCESS_LOCKS_MUTEX:
+        if path in _PROCESS_LOCKS:
+            entry = _PROCESS_LOCKS[path]
+            entry[1] -= 1
+            if entry[1] <= 0:
+                del _PROCESS_LOCKS[path]
 
 def _get_process_rlock(path: str) -> threading.RLock:
     with _PROCESS_LOCKS_MUTEX:
         if path not in _PROCESS_LOCKS:
-            _PROCESS_LOCKS[path] = threading.RLock()
-        return _PROCESS_LOCKS[path]
+            _PROCESS_LOCKS[path] = [threading.RLock(), 0]
+        return _PROCESS_LOCKS[path][0]
 
 try:
     import msvcrt
@@ -128,12 +146,15 @@ class FileLock:
         self.lock_file = os.path.abspath(lock_file)
         self.timeout = timeout
         self.fd = None
-        self._rlock = _get_process_rlock(self.lock_file)
+        self._rlock = None
 
     def __enter__(self):
-        # VULN-003: Acquire process-wide RLock first to serialize intra-process threads cleanly
+        # VULN-003 & VULN-005: Acquire process-wide RLock with refcount tracking to prevent unbounded registry leak
+        self._rlock = _enter_process_rlock(self.lock_file)
         acquired = self._rlock.acquire(timeout=self.timeout)
         if not acquired:
+            _exit_process_rlock(self.lock_file)
+            self._rlock = None
             raise TimeoutError(f"Could not acquire intra-process thread lock on {self.lock_file} within {self.timeout}s")
 
         try:
@@ -237,7 +258,10 @@ class FileLock:
                         self.fd = None
                         raise
         except Exception:
-            self._rlock.release()
+            if self._rlock is not None:
+                self._rlock.release()
+                _exit_process_rlock(self.lock_file)
+                self._rlock = None
             raise
 
     def __exit__(self, exc_type, exc_val, exc_tb):
@@ -261,7 +285,10 @@ class FileLock:
                     pass
                 self.fd = None
         finally:
-            self._rlock.release()
+            if self._rlock is not None:
+                self._rlock.release()
+                _exit_process_rlock(self.lock_file)
+                self._rlock = None
 
 
 def _redact_trace_dict(tr: Any, depth: int = 0) -> Any:
