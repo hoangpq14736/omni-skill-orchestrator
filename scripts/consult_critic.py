@@ -465,18 +465,9 @@ def validate_audit_verdict(data: Dict[str, Any]) -> Tuple[bool, str]:
 
 
 def find_workspace_root(start_path: str) -> str:
-    """Finds repository or workspace root walking upwards looking for .git or GEMINI.md (VULN-007)."""
-    curr = os.path.realpath(os.path.normpath(start_path))
-    if os.path.isfile(curr):
-        curr = os.path.dirname(curr)
-    while True:
-        if os.path.exists(os.path.join(curr, ".git")) or os.path.exists(os.path.join(curr, "GEMINI.md")):
-            return curr
-        parent = os.path.dirname(curr)
-        if parent == curr:
-            break
-        curr = parent
-    return os.path.realpath(os.getcwd())
+    """Finds repository or workspace root walking upwards looking for .git or GEMINI.md (VULN-004, VULN-007)."""
+    from memory_utils import find_workspace_root as _fwr
+    return _fwr(start_path)
 
 
 def format_markdown_report(

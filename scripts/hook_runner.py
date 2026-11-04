@@ -31,7 +31,14 @@ _SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 if _SCRIPT_DIR not in sys.path:
     sys.path.insert(0, _SCRIPT_DIR)
 
-from memory_utils import canonical_workspace_hash, redact_secrets, persist_diag, verify_audit_meta
+from memory_utils import (
+    canonical_workspace_hash,
+    legacy_workspace_hash,
+    find_workspace_root,
+    redact_secrets,
+    persist_diag,
+    verify_audit_meta,
+)
 from workspace_sanitizer import AssimilatorGuard, TrustFileLock
 
 LAST_ACTIVATION_PATH = os.path.join(_SCRIPT_DIR, "last_activation.json")
@@ -208,14 +215,16 @@ def verify_critic_artifact(workspace_dir: str, target_file: str = None, user_pro
             if not verify_audit_meta(meta):
                 continue
 
-            # VULN-001 & VULN-007: Mandatory workspace binding with legacy MD5 dual-read migration support
+            # VULN-001, VULN-004 & VULN-007: Mandatory workspace binding with unified find_workspace_root & dual-hash support
             meta_ws_hash = str(meta.get("workspace_hash", "")).strip().lower()
             if not meta_ws_hash:
                 continue
-            current_ws_hash = canonical_workspace_hash(workspace_dir).lower()
-            normalized_ws = unicodedata.normalize("NFC", str(workspace_dir))
-            legacy_ws_hash = hashlib.md5(os.path.normcase(os.path.realpath(os.path.abspath(normalized_ws))).encode("utf-8")).hexdigest().lower()
-            if meta_ws_hash not in (current_ws_hash, legacy_ws_hash):
+            ws_root = find_workspace_root(workspace_dir)
+            current_ws_hash = canonical_workspace_hash(ws_root).lower()
+            legacy_ws_hash = legacy_workspace_hash(ws_root).lower()
+            direct_ws_hash = canonical_workspace_hash(workspace_dir).lower()
+            direct_leg_hash = legacy_workspace_hash(workspace_dir).lower()
+            if meta_ws_hash not in (current_ws_hash, legacy_ws_hash, direct_ws_hash, direct_leg_hash):
                 continue
 
             meta_target = meta.get("target_file")
@@ -242,9 +251,11 @@ def verify_critic_artifact(workspace_dir: str, target_file: str = None, user_pro
                     if best_verdict == "UNREVIEWED":
                         best_meta = meta
                     continue
-                calc_prompt_hash = hashlib.sha256(user_prompt.encode("utf-8")).hexdigest().lower()
+                redacted_prompt = redact_secrets(user_prompt) or user_prompt
+                calc_prompt_hash_redacted = hashlib.sha256(redacted_prompt.encode("utf-8")).hexdigest().lower()
+                calc_prompt_hash_raw = hashlib.sha256(user_prompt.encode("utf-8")).hexdigest().lower()
                 expected_hash = meta_hash.replace("sha256:", "").strip().lower()
-                if calc_prompt_hash != expected_hash:
+                if expected_hash not in (calc_prompt_hash_redacted, calc_prompt_hash_raw):
                     meta["stale_reason"] = "user prompt hash mismatch with inline review"
                     if best_verdict == "UNREVIEWED":
                         best_verdict = "STALE_REVIEW"

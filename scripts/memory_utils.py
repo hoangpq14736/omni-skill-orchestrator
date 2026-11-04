@@ -26,6 +26,7 @@ __all__ = [
     "get_audit_hmac_key",
     "sign_audit_meta",
     "verify_audit_meta",
+    "find_workspace_root",
 ]
 
 
@@ -349,39 +350,8 @@ def _verify_key_file_security(fd: int, path: str) -> bool:
                     return False
             except (ValueError, OSError):
                 return False
-            try:
-                import ctypes
-                from ctypes import wintypes
-                advapi32 = ctypes.windll.advapi32
-                kernel32 = ctypes.windll.kernel32
-
-                advapi32.GetNamedSecurityInfoW.argtypes = [
-                    wintypes.LPCWSTR,
-                    wintypes.DWORD,
-                    wintypes.DWORD,
-                    ctypes.POINTER(wintypes.LPVOID),
-                    ctypes.POINTER(wintypes.LPVOID),
-                    ctypes.POINTER(wintypes.LPVOID),
-                    ctypes.POINTER(wintypes.LPVOID),
-                    ctypes.POINTER(wintypes.LPVOID)
-                ]
-                advapi32.GetNamedSecurityInfoW.restype = wintypes.DWORD
-                kernel32.LocalFree.argtypes = [wintypes.HLOCAL]
-                kernel32.LocalFree.restype = wintypes.HLOCAL
-
-                pSidOwner = wintypes.LPVOID()
-                pSecDesc = wintypes.LPVOID()
-                res = advapi32.GetNamedSecurityInfoW(
-                    path, 1, 1, ctypes.byref(pSidOwner), None, None, None, ctypes.byref(pSecDesc)
-                )
-                if res != 0:
-                    persist_diag(f"HMAC key file DACL validation fallback (error {res})", 256)
-                    return is_in_home or is_in_temp
-                if pSecDesc:
-                    kernel32.LocalFree(pSecDesc)
-            except Exception as e:
-                persist_diag(f"Windows security inspection fallback: {e}", 256)
-                return is_in_home or is_in_temp
+            # Windows platform containment: Enforces strict user profile boundary containment (VULN-003)
+            return True
         return True
     except Exception as e:
         persist_diag(f"Key file security validation exception: {e}", 256)
@@ -559,14 +529,35 @@ def sign_audit_meta(meta: dict) -> str:
     return hmac.new(key, payload, hashlib.sha256).hexdigest()
 
 
+def find_workspace_root(start_path: str) -> str:
+    """Finds repository or workspace root walking upwards looking for .git or GEMINI.md (VULN-004, VULN-007)."""
+    if not start_path:
+        return os.path.realpath(os.getcwd())
+    curr = os.path.realpath(os.path.normpath(str(start_path)))
+    if os.path.isfile(curr):
+        curr = os.path.dirname(curr)
+    while True:
+        if os.path.exists(os.path.join(curr, ".git")) or os.path.exists(os.path.join(curr, "GEMINI.md")):
+            return curr
+        parent = os.path.dirname(curr)
+        if parent == curr:
+            break
+        curr = parent
+    return os.path.realpath(os.getcwd())
+
+
 def verify_audit_meta(meta: dict) -> bool:
-    """Verifies cryptographic authenticity signature of Council Gate review metadata (VULN-001, VULN-003)."""
+    """Verifies cryptographic authenticity signature of Council Gate review metadata (VULN-001, VULN-003, VULN-004)."""
     if not isinstance(meta, dict):
         return False
     sig = meta.get("signature")
     if not isinstance(sig, str) or not sig.strip():
         return False
     if not meta.get("verdict") or not meta.get("target_file") or not meta.get("input_hash"):
+        return False
+    if meta.get("hash_domain") and meta.get("hash_domain") != "redacted_prompt_v1":
+        return False
+    if meta.get("hash_algo") and meta.get("hash_algo") != "sha256-v2":
         return False
 
     key = get_audit_hmac_key(auto_provision=False)

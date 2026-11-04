@@ -5,6 +5,7 @@ triggers, and staging tables.
 """
 
 import sqlite3
+import uuid
 from typing import Optional
 
 DDL_PRAGMAS = """
@@ -321,26 +322,51 @@ def init_database(db_path: str = "omni_memory.db", isolation_level: Optional[str
             if "duplicate column name" not in str(oe).lower():
                 raise RuntimeError(f"Failed to migrate activation_events.last_error: {oe}") from oe
 
-    # VULN-002: Dual-key migration for legacy MD5 (32-hex) to canonical SHA-256 (64-hex)
+    # VULN-002 & VULN-001: Dual-key migration for legacy MD5 (32-hex) to canonical SHA-256 (64-hex)
+    tables_exist = [r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table';").fetchall()]
+    sp_mig = f"sp_mig_{uuid.uuid4().hex[:8]}"
+    conn.execute(f"SAVEPOINT {sp_mig};")
     try:
-        tables_exist = [r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table';").fetchall()]
+        from memory_utils import canonical_workspace_hash
+        hash_to_path = {}
         if "workspace_registry" in tables_exist:
-            reg_rows = conn.execute("SELECT workspace_hash, workspace_path FROM workspace_registry WHERE length(workspace_hash) = 32;").fetchall()
-            for r_hash, r_path in reg_rows:
-                from memory_utils import canonical_workspace_hash
-                new_hash = canonical_workspace_hash(r_path)
-                if new_hash and len(new_hash) == 64:
-                    conn.execute("INSERT OR IGNORE INTO workspace_registry (workspace_hash, workspace_path, registered_at) VALUES (?, ?, datetime('now'));", (new_hash, r_path))
-                    if "workspace_episodic_memory" in tables_exist:
-                        conn.execute("UPDATE workspace_episodic_memory SET workspace_hash = ? WHERE workspace_hash = ?;", (new_hash, r_hash))
-                    if "dense_embeddings" in tables_exist:
-                        conn.execute("UPDATE dense_embeddings SET workspace_hash = ? WHERE workspace_hash = ?;", (new_hash, r_hash))
-                    if "activation_events" in tables_exist:
-                        conn.execute("UPDATE activation_events SET workspace_dir = ? WHERE workspace_dir = ?;", (new_hash, r_hash))
-                    if "consolidation_outbox" in tables_exist:
-                        conn.execute("UPDATE consolidation_outbox SET workspace_hash = ? WHERE workspace_hash = ?;", (new_hash, r_hash))
-    except Exception:
-        pass
+            for r_h, r_p in conn.execute("SELECT workspace_hash, workspace_path FROM workspace_registry;").fetchall():
+                hash_to_path[r_h] = r_p
+
+        legacy_hashes = set()
+        if "workspace_episodic_memory" in tables_exist:
+            for row in conn.execute("SELECT DISTINCT workspace_hash FROM workspace_episodic_memory WHERE length(workspace_hash) = 32;").fetchall():
+                legacy_hashes.add(row[0])
+        if "consolidation_outbox" in tables_exist:
+            for row in conn.execute("SELECT DISTINCT workspace_hash FROM consolidation_outbox WHERE length(workspace_hash) = 32;").fetchall():
+                legacy_hashes.add(row[0])
+
+        for old_hash in legacy_hashes:
+            known_path = hash_to_path.get(old_hash)
+            if known_path:
+                new_hash = canonical_workspace_hash(known_path)
+            else:
+                new_hash = canonical_workspace_hash(f"legacy_partition:{old_hash}")
+            
+            if new_hash and len(new_hash) == 64 and new_hash != old_hash:
+                if "workspace_episodic_memory" in tables_exist:
+                    conn.execute("UPDATE workspace_episodic_memory SET workspace_hash = ? WHERE workspace_hash = ?;", (new_hash, old_hash))
+                if "dense_embeddings" in tables_exist:
+                    conn.execute("UPDATE dense_embeddings SET workspace_hash = ? WHERE workspace_hash = ?;", (new_hash, old_hash))
+                if "activation_events" in tables_exist:
+                    conn.execute("UPDATE activation_events SET workspace_dir = ? WHERE workspace_dir = ?;", (new_hash, old_hash))
+                if "consolidation_outbox" in tables_exist:
+                    conn.execute("UPDATE consolidation_outbox SET workspace_hash = ? WHERE workspace_hash = ?;", (new_hash, old_hash))
+                if "workspace_registry" in tables_exist and known_path:
+                    conn.execute("INSERT OR IGNORE INTO workspace_registry (workspace_hash, workspace_path, registered_at) VALUES (?, ?, datetime('now'));", (new_hash, known_path))
+        conn.execute(f"RELEASE SAVEPOINT {sp_mig};")
+    except Exception as mig_err:
+        try:
+            conn.execute(f"ROLLBACK TO SAVEPOINT {sp_mig};")
+            conn.execute(f"RELEASE SAVEPOINT {sp_mig};")
+        except Exception:
+            pass
+        raise RuntimeError(f"Database migration from MD5 to SHA-256 failed: {mig_err}") from mig_err
 
     # Atomic Migration: Refresh triggers and apply DDL in a single atomic transaction with explicit rollback (VULN-008)
     atomic_ddl = f"""
