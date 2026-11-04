@@ -6,21 +6,142 @@ daemons, MCP servers, and worker processes.
 
 Guarantees:
 1. Zombie / Orphan Process Prevention: Dual-mode termination (Parent Process Watcher & Stdin EOF Watcher).
-2. Atomic Single-Instance PID Lockfile with Auto-Healing (os.O_CREAT | os.O_EXCL).
-3. Sub-millisecond process liveness check via Win32 OpenProcess/GetExitCodeProcess and POSIX os.kill(pid, 0).
-4. Immediate file handle reclamation via os._exit(0) preventing SQLITE_BUSY deadlocks.
+2. True Atomic Mutual Exclusion & CAS: Companion .mutex advisory lock prevents double-acquire split-brain (VULN-LG-001).
+3. Heartbeat CAS Token Protection: Strict token validation under mutex prevents zombie heartbeat clobbering (VULN-LG-002).
+4. Lockfile Resurrection Immunity: Stop event + thread join before unlink under mutex prevents phantom locks (VULN-LG-003).
+5. 64-bit Windows HANDLE safety via explicitly typed Win32 ctypes and POSIX os.kill(pid, 0).
 """
 
 import os
 import sys
 import time
 import json
-import signal
+import uuid
+import ctypes
+import errno
 import threading
 from pathlib import Path
 from typing import Callable, Optional, Dict, Any
 
+if os.name == "nt":
+    from ctypes import wintypes
+else:
+    wintypes = None
+
 DEFAULT_RUN_DIR = os.path.expanduser("~/.gemini/run")
+
+
+# ----------------------------------------------------------------------
+# Cross-Process Mutex (Advisory File Locking on Companion .mutex)
+# ----------------------------------------------------------------------
+class ProcessMutex:
+    """Context manager for cross-process mutual exclusion via companion .mutex file."""
+    def __init__(self, path: Path, timeout: float = 5.0):
+        self.path = str(path)
+        self.timeout = timeout
+        self._fh = None
+
+    def __enter__(self):
+        os.makedirs(os.path.dirname(os.path.abspath(self.path)), exist_ok=True)
+        start = time.time()
+        self._fh = open(self.path, "a+b")
+        while True:
+            try:
+                if os.name == "nt":
+                    import msvcrt
+                    self._fh.seek(0)
+                    msvcrt.locking(self._fh.fileno(), msvcrt.LK_NBLCK, 1)
+                else:
+                    import fcntl
+                    fcntl.flock(self._fh.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                return self
+            except (OSError, IOError) as exc:
+                if ((os.name == "nt" and getattr(exc, "winerror", None) == 33) or
+                    (getattr(exc, "errno", None) in (errno.EACCES, errno.EAGAIN))):
+                    if time.time() - start >= self.timeout:
+                        self._fh.close()
+                        self._fh = None
+                        raise TimeoutError(f"Mutex timeout acquiring {self.path}")
+                    time.sleep(0.02)
+                else:
+                    self._fh.close()
+                    self._fh = None
+                    raise
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        if self._fh:
+            try:
+                if os.name == "nt":
+                    import msvcrt
+                    self._fh.seek(0)
+                    msvcrt.locking(self._fh.fileno(), msvcrt.LK_UNLCK, 1)
+                else:
+                    import fcntl
+                    fcntl.flock(self._fh.fileno(), fcntl.LOCK_UN)
+            except Exception:
+                pass
+            finally:
+                self._fh.close()
+                self._fh = None
+
+
+# ----------------------------------------------------------------------
+# Process Liveness Detection (Native C API on Win32, POSIX Fallback)
+# ----------------------------------------------------------------------
+def is_process_alive(pid: int) -> bool:
+    """
+    Checks whether a given PID is currently active on the host OS.
+    Execution overhead < 0.05ms (Sub-millisecond invariant).
+    Safe against 64-bit Windows HANDLE truncation and POSIX PermissionError.
+    """
+    try:
+        pid = int(pid)
+    except (ValueError, TypeError):
+        return False
+
+    if pid <= 0:
+        return False
+
+    if os.name == "nt":
+        # Windows 64-bit ctypes bindings with explicit argtypes and restype
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+
+        kernel32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+        kernel32.OpenProcess.restype = wintypes.HANDLE
+
+        kernel32.GetExitCodeProcess.argtypes = [wintypes.HANDLE, ctypes.POINTER(wintypes.DWORD)]
+        kernel32.GetExitCodeProcess.restype = wintypes.BOOL
+
+        kernel32.WaitForSingleObject.argtypes = [wintypes.HANDLE, wintypes.DWORD]
+        kernel32.WaitForSingleObject.restype = wintypes.DWORD
+
+        kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+        kernel32.CloseHandle.restype = wintypes.BOOL
+
+        PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+        STILL_ACTIVE = 259
+        ERROR_ACCESS_DENIED = 5
+
+        handle = kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
+        if not handle:
+            err = ctypes.get_last_error()
+            return err == ERROR_ACCESS_DENIED
+
+        try:
+            exit_code = wintypes.DWORD()
+            if kernel32.GetExitCodeProcess(handle, ctypes.byref(exit_code)):
+                return exit_code.value == STILL_ACTIVE
+            return False
+        finally:
+            kernel32.CloseHandle(handle)
+    else:
+        try:
+            os.kill(pid, 0)
+            return True
+        except PermissionError:
+            return True
+        except (ProcessLookupError, OSError):
+            return False
 
 
 class LifecycleGuard:
@@ -33,7 +154,9 @@ class LifecycleGuard:
         self.name = name
         self.lock_dir = Path(os.path.expanduser(lock_dir))
         self.lock_file = self.lock_dir / f"{self.name}.pid"
+        self.mutex_file = self.lock_dir / f"{self.name}.mutex"
         self.heartbeat_interval = heartbeat_interval
+        self.token = uuid.uuid4().hex
 
         self._stop_event = threading.Event()
         self._heartbeat_thread: Optional[threading.Thread] = None
@@ -42,129 +165,145 @@ class LifecycleGuard:
 
         self.lock_dir.mkdir(parents=True, exist_ok=True)
 
+    # Expose as staticmethod on class for backward compatibility
+    is_process_alive = staticmethod(is_process_alive)
+
     # ----------------------------------------------------------------------
-    # Process Liveness Detection (Native C API on Win32, POSIX Fallback)
+    # Atomic Lockfile Writer Helper
     # ----------------------------------------------------------------------
-    @staticmethod
-    def is_process_alive(pid: int) -> bool:
-        """
-        Checks whether a given PID is currently active on the host OS.
-        Execution overhead < 0.05ms (Sub-millisecond invariant).
-        """
-        if pid <= 0:
+    def _atomic_write_payload(self, payload: Dict[str, Any]) -> bool:
+        """Writes payload to a unique temporary file and atomically replaces lockfile with cleanup guard."""
+        tmp_path = self.lock_dir / f"{self.name}.pid.{uuid.uuid4().hex}.tmp"
+        data = json.dumps(payload, indent=2, ensure_ascii=False).encode("utf-8")
+        try:
+            flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
+            mode = 0o600
+            fd = os.open(str(tmp_path), flags, mode)
+            try:
+                with os.fdopen(fd, "wb") as f:
+                    f.write(data)
+                    f.flush()
+                    os.fsync(f.fileno())
+                os.replace(str(tmp_path), str(self.lock_file))
+                return True
+            finally:
+                if tmp_path.exists():
+                    try:
+                        tmp_path.unlink(missing_ok=True)
+                    except OSError:
+                        pass
+        except OSError:
             return False
 
-        if os.name == "nt":
-            import ctypes
-            from ctypes import wintypes
-
-            # PROCESS_QUERY_LIMITED_INFORMATION = 0x1000, SYNCHRONIZE = 0x00100000
-            kernel32 = ctypes.windll.kernel32
-            handle = kernel32.OpenProcess(0x1000, False, pid)
-            if not handle:
-                return False
-
-            exit_code = wintypes.DWORD()
-            STILL_ACTIVE = 259
-            try:
-                if kernel32.GetExitCodeProcess(handle, ctypes.byref(exit_code)):
-                    return exit_code.value == STILL_ACTIVE
-                return False
-            finally:
-                kernel32.CloseHandle(handle)
-        else:
-            try:
-                os.kill(pid, 0)
-                return True
-            except OSError:
-                return False
-
     # ----------------------------------------------------------------------
-    # Atomic Lockfile Acquisition & Auto-Healing
+    # Atomic Lockfile Acquisition & Mutex-Guarded CAS (VULN-LG-001)
     # ----------------------------------------------------------------------
     def acquire_lock(self, stale_timeout_sec: float = 60.0) -> bool:
         """
-        Acquires exclusive single-instance lock using kernel-level atomic creation.
-        Auto-heals stale locks from crashed instances.
+        Acquires exclusive single-instance lock protected by companion .mutex.
+        Auto-heals stale locks without split-brain double acquisition races.
         """
         my_pid = os.getpid()
+        now = time.time()
         payload = {
             "pid": my_pid,
+            "token": self.token,
             "name": self.name,
-            "started_at": time.time(),
-            "heartbeat": time.time()
+            "started_at": now,
+            "heartbeat": now
         }
 
-        # Try atomic creation first
+        # VULN-LG-001 Fix: Serialize acquisition & reclaim under companion ProcessMutex
         try:
-            flags = os.O_CREAT | os.O_EXCL | os.O_WRONLY
-            fd = os.open(str(self.lock_file), flags)
-            with open(fd, "w", encoding="utf-8") as f:
-                json.dump(payload, f)
-            self._start_heartbeat()
-            return True
-        except FileExistsError:
-            pass
-        except OSError:
-            pass
+            with ProcessMutex(self.mutex_file, timeout=5.0):
+                if self.lock_file.exists():
+                    try:
+                        with open(self.lock_file, "r", encoding="utf-8") as f:
+                            data = json.load(f)
+                        existing_pid = int(data.get("pid", 0))
+                        last_heartbeat = float(data.get("heartbeat", data.get("started_at", 0)))
 
-        # File exists: inspect candidate lock for liveness & auto-healing
-        try:
-            with open(self.lock_file, "r", encoding="utf-8") as f:
-                data = json.load(f)
-            existing_pid = data.get("pid", 0)
-            last_heartbeat = data.get("heartbeat", data.get("started_at", 0))
+                        if existing_pid > 0 and self.is_process_alive(existing_pid):
+                            if now - last_heartbeat < stale_timeout_sec:
+                                return False  # Existing process is legitimately running
+                    except Exception:
+                        # Malformed lockfile -> candidate for reclaim under mutex
+                        pass
 
-            if self.is_process_alive(existing_pid):
-                # Double-check stale heartbeat timeout in case of hung thread
-                if time.time() - last_heartbeat < stale_timeout_sec:
-                    return False  # Existing process is legitimately running
-                # Existing process is hung beyond stale_timeout -> force reclaim
-
-            # Process is dead or timed out: unlink stale lock
-            try:
-                self.lock_file.unlink(missing_ok=True)
-            except OSError:
-                pass
-
-            # Retry atomic acquisition once
-            flags = os.O_CREAT | os.O_EXCL | os.O_WRONLY
-            fd = os.open(str(self.lock_file), flags)
-            with open(fd, "w", encoding="utf-8") as f:
-                json.dump(payload, f)
-            self._start_heartbeat()
-            return True
-        except (FileExistsError, OSError, json.JSONDecodeError):
+                # Under mutex, write payload atomically
+                if self._atomic_write_payload(payload):
+                    self._stop_event.clear()
+                    self._start_heartbeat()
+                    return True
+                return False
+        except (TimeoutError, OSError):
             return False
 
     def release_lock(self):
-        """Safely removes the PID lockfile if owned by the current process."""
+        """
+        Safely removes the PID lockfile ONLY if owned by the current process.
+        VULN-LG-003: Stops and joins heartbeat thread before unlinking under mutex.
+        """
         self._stop_event.set()
+        
+        # Join heartbeat thread before unlinking to eliminate lock resurrection race
+        if self._heartbeat_thread and self._heartbeat_thread.is_alive():
+            if threading.current_thread() != self._heartbeat_thread:
+                self._heartbeat_thread.join(timeout=2.0)
+
+        if not self.lock_file.exists():
+            return
+
         try:
-            if self.lock_file.exists():
-                try:
-                    with open(self.lock_file, "r", encoding="utf-8") as f:
-                        data = json.load(f)
-                    if data.get("pid") == os.getpid():
-                        self.lock_file.unlink(missing_ok=True)
-                except Exception:
+            with ProcessMutex(self.mutex_file, timeout=3.0):
+                if not self.lock_file.exists():
+                    return
+                with open(self.lock_file, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                
+                # Strict verification: BOTH PID and token MUST match
+                file_pid = data.get("pid")
+                file_token = data.get("token")
+                if file_pid == os.getpid() and file_token == self.token:
                     self.lock_file.unlink(missing_ok=True)
-        except OSError:
+        except Exception:
+            # If lockfile cannot be read or parsed, DO NOT unlink it!
             pass
 
     def _start_heartbeat(self):
-        """Background thread updating lockfile heartbeat periodically."""
+        """
+        Background thread updating lockfile heartbeat periodically.
+        VULN-LG-002: Strict CAS under ProcessMutex: aborts if token does not match on disk.
+        """
         def _beat():
             while not self._stop_event.wait(self.heartbeat_interval):
+                if self._stop_event.is_set():
+                    break
                 try:
-                    if self.lock_file.exists():
-                        with open(self.lock_file, "r+", encoding="utf-8") as f:
-                            data = json.load(f)
-                            if data.get("pid") == os.getpid():
-                                data["heartbeat"] = time.time()
-                                f.seek(0)
-                                json.dump(data, f)
-                                f.truncate()
+                    with ProcessMutex(self.mutex_file, timeout=2.0):
+                        if self._stop_event.is_set():
+                            break
+                        if not self.lock_file.exists():
+                            # Lockfile deleted by release or reclaimed -> terminate heartbeat
+                            self._stop_event.set()
+                            break
+
+                        try:
+                            with open(self.lock_file, "r", encoding="utf-8") as f:
+                                data = json.load(f)
+                        except Exception:
+                            continue
+
+                        # Strict CAS: Token must exist and match exactly
+                        disk_token = data.get("token")
+                        disk_pid = data.get("pid")
+                        if disk_pid != os.getpid() or disk_token != self.token:
+                            # Ownership was lost or reclaimed -> abort heartbeat
+                            self._stop_event.set()
+                            break
+
+                        data["heartbeat"] = time.time()
+                        self._atomic_write_payload(data)
                 except Exception:
                     pass
 
@@ -191,38 +330,43 @@ class LifecycleGuard:
     def start_parent_watcher(self, parent_pid: Optional[int] = None, poll_interval: float = 1.0):
         """
         Mode A: Parent Process Watcher (Ideal for MCP Servers & stdio tools).
-        Monitors the parent process handle/PID WITHOUT touching sys.stdin.
-        On Windows: Uses kernel32.WaitForSingleObject(SYNCHRONIZE) for 0ms event notification.
-        On POSIX: Polls getppid() or process existence.
+        Monitors parent process WITHOUT touching sys.stdin.
+        On Windows: Uses typed kernel32.WaitForSingleObject(SYNCHRONIZE) for 0ms event notification.
+        On POSIX: Polls getppid() or is_process_alive.
         When parent terminates, runs cleanups and triggers os._exit(0).
         """
         target_ppid = parent_pid if parent_pid is not None else os.getppid()
 
         def _watch_parent():
             if os.name == "nt":
-                import ctypes
                 SYNCHRONIZE = 0x00100000
-                kernel32 = ctypes.windll.kernel32
-                handle = kernel32.OpenProcess(SYNCHRONIZE, False, target_ppid)
+                kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+                kernel32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+                kernel32.OpenProcess.restype = wintypes.HANDLE
+                kernel32.WaitForSingleObject.argtypes = [wintypes.HANDLE, wintypes.DWORD]
+                kernel32.WaitForSingleObject.restype = wintypes.DWORD
+                kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+                kernel32.CloseHandle.restype = wintypes.BOOL
 
+                handle = kernel32.OpenProcess(SYNCHRONIZE, False, target_ppid)
                 if handle:
                     try:
                         WAIT_OBJECT_0 = 0
-                        # Poll in small increments so _stop_event can exit gracefully
-                        poll_ms = int(poll_interval * 1000)
+                        poll_ms = max(50, int(poll_interval * 1000))
                         while not self._stop_event.is_set():
                             res = kernel32.WaitForSingleObject(handle, poll_ms)
                             if res == WAIT_OBJECT_0:
-                                # Parent process is signaled (terminated/killed)
                                 break
                     finally:
                         kernel32.CloseHandle(handle)
                 else:
-                    # Could not open handle (parent already dead)
-                    pass
+                    while not self._stop_event.is_set():
+                        if not self.is_process_alive(target_ppid):
+                            break
+                        self._stop_event.wait(poll_interval)
             else:
                 while not self._stop_event.is_set():
-                    if not self.is_process_alive(target_ppid) or os.getppid() != target_ppid:
+                    if not self.is_process_alive(target_ppid) or (parent_pid is None and os.getppid() != target_ppid):
                         break
                     self._stop_event.wait(poll_interval)
 
@@ -272,7 +416,7 @@ def main():
     parser.add_argument("--cleanup-locks", action="store_true", help="Clean up stale PID locks in run dir")
     args = parser.parse_args()
 
-    if args.check_pid:
+    if args.check_pid is not None:
         alive = LifecycleGuard.is_process_alive(args.check_pid)
         print(f"PID {args.check_pid} is {'ALIVE' if alive else 'DEAD'}")
     elif args.cleanup_locks:
@@ -280,14 +424,19 @@ def main():
         cleaned = 0
         if run_path.exists():
             for pfile in run_path.glob("*.pid"):
+                name = pfile.stem
+                mutex_file = run_path / f"{name}.mutex"
                 try:
-                    with open(pfile, "r") as f:
-                        data = json.load(f)
-                    pid = data.get("pid", 0)
-                    if not LifecycleGuard.is_process_alive(pid):
-                        pfile.unlink(missing_ok=True)
-                        cleaned += 1
-                        print(f"✔ Removed stale lock: {pfile.name} (dead PID: {pid})")
+                    with ProcessMutex(mutex_file, timeout=2.0):
+                        if not pfile.exists():
+                            continue
+                        with open(pfile, "r", encoding="utf-8") as f:
+                            data = json.load(f)
+                        pid = int(data.get("pid", 0))
+                        if pid > 0 and not LifecycleGuard.is_process_alive(pid):
+                            pfile.unlink(missing_ok=True)
+                            cleaned += 1
+                            print(f"✔ Removed stale lock: {pfile.name} (dead PID: {pid})")
                 except Exception:
                     pass
         print(f"Done. Cleaned {cleaned} stale locks.")

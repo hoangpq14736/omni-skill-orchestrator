@@ -1,0 +1,96 @@
+<!-- OMNI_AUDIT_META: {"verdict":"REJECTED","target_file":"Cluster 5: Core Contracts, Testing & System Invariants","input_hash":"sha256:bd90523f6db32d27dab272e41b4c7170c05ca31291c404ae950339d529f2a341","model":"deepseek-flash","timestamp_utc":"2026-11-03T20:35:57.631883+00:00"} -->
+
+# 🛡️ Architectural Red-Teaming Audit: Cluster 5: Core Contracts, Testing & System Invariants
+**Audit Status**: `REJECTED` | **Model**: `deepseek-flash` | **Confidence**: `0.92` | **Timestamp**: `2026-11-03T20:35:57.631883+00:00`
+
+## Executive Summary
+Audit thất bại. Zero-Trust bị vô hiệu theo kiểu fail-open (redaction fallback trả nguyên văn secret), `--out` cho phép ghi file tùy ý ngoài allowed-root, `api_base` không bị ràng buộc scheme https nên Bearer token có thể bị gửi qua HTTP thô. Schema validation chỉ kiểm tra kiểu list nên có thể crash với TypeError/AttributeError và thoát mã 1 — trùng mã EXIT_CRITIQUE_GENERATED, làm hỏng contract máy đọc. Ring 0 invariants không có tính thường trực: rules/AGENTS.md chứa HAI block OMNI-KERNEL-START, block thứ hai bị cắt mất invariant 7 (Mandatory Transparency) — parser last-block-wins sẽ âm thầm hạ cấp Ring 0. Test suite không chạy được (thiếu module `dual_tier`) nên mọi tuyên bố đã kiểm chứng là không thể phản chứng.
+
+## 1. Constitutional & Ring 0 Invariants Verification
+- ⚠️ Gatekeeper Finding: Invariant check issued verdict `REJECTED` with 9 vulnerability findings.
+
+## 2. Top Critical Architectural Vulnerabilities (9 identified)
+### 1. [CRITICAL] VULN-001: Redaction fail-open: sanitizer import lỗi thì gửi nguyên secret lên cloud
+**Description**: `try: from sanitizer import redact_credentials / except ImportError: def redact_credentials(text): return text or ""`. Khi module sanitizer bị đổi tên, hỏng packaging, hoặc sai sys.path, pipeline trả về NGUYÊN VĂN tài liệu — bao gồm `sk-...`, DSN database, private token — và gửi thẳng tới `api.deepseek.com`. Invariant 'regex credential redaction' trở thành no-op không có bất kỳ cảnh báo nào trên stderr. Tệ hơn: API key vừa đọc từ `.env` có thể nằm ngay trong diff/RFC đang được audit.
+**Remediation**: `Xóa fallback permissive. Trên ImportError: ghi stderr `[!] LỖI BẢO MẬT: sanitizer không tải được, hủy audit` và `sys.exit(EXIT_SYSTEM_STRICT)`. Thêm CI test khẳng định `redact_credentials('sk-abc123')` không còn chứa 'sk-'.`
+
+### 2. [CRITICAL] VULN-002: `--out` không bị ràng buộc allowed-root: ghi file tùy ý toàn hệ thống
+**Description**: `validate_path()` chỉ áp dụng cho `--file`. Với `--out`: `out_path = os.path.realpath(os.path.normpath(args.out))` + `os.makedirs(out_dir, exist_ok=True)` + `open(temp_out, 'w')` + `os.replace` — không confinement, không allowlist extension, không chặn ghi đè. Có thể ghi đè `~/.bashrc`, `.git/hooks/pre-commit`, hoặc chính `scripts/consult_critic.py` (self-modification), sau đó tiến trình vẫn exit 0 và in 'Đã lưu kết quả'. Skill bị prompt-inject có thể chain gatekeeper để đạt RCE persistence.
+**Remediation**: `Bắt buộc `--allowed-root` cho CẢ đọc và ghi; so sánh `os.path.commonpath` trên `realpath`. Từ chối nếu target tồn tại và không phải regular file (chặn symlink/device). Dùng `tempfile.mkstemp(dir=out_dir, prefix='.omni_audit_', text=True)` + `os.fsync` + `os.replace`, `os.chmod(fd, 0o600)`.`
+
+### 3. [HIGH] VULN-003: `DEEPSEEK_API_BASE` không kiểm tra scheme: Bearer token đi qua HTTP thô
+**Description**: `api_base = args.api_base or os.environ.get('DEEPSEEK_API_BASE') or DEFAULT_API_BASE` rồi `endpoint_url = f"{api_base.rstrip('/')}/v1/chat/completions"`. Không có `urlsplit`/scheme check. Một env var bị typo (`http://`), một proxy nội bộ, hoặc một `.env` bị đầu độc sẽ khiến `Authorization: Bearer <key>` + toàn bộ tài liệu đã redaction được truyền dạng plaintext, đồng thời cho phép host tấn công thu thập key.
+**Remediation**: ``parts = urllib.parse.urlsplit(api_base)`; yêu cầu `parts.scheme == 'https'`, `parts.query == ''`, `parts.fragment == ''`, và (tuỳ chọn) host ∈ allowlist `{'api.deepseek.com'}`; nếu sai → exit 4. Đặt tường minh `ssl_context.check_hostname = True`, `ssl_context.verify_mode = ssl.CERT_REQUIRED`.`
+
+### 4. [HIGH] VULN-004: `resp.read()` không giới hạn kích thước + timeout không tích lũy (slow-drip)
+**Description**: `socket_timeout` chỉ chặn từng thao tác socket, không chặn tổng thời gian; vòng đọc `resp.read()` không có cap byte và không đọc `Content-Length`. Server độc hại/phản hồi lỗi 8GB sẽ làm phình RAM tiến trình; server slow-drip gửi 1 byte mỗi 170s sẽ vượt deadline monotonic nhưng vẫn trong socket_timeout, phá vỡ cam kết `--timeout`.
+**Remediation**: ``MAX_RESPONSE_BYTES = 2 * 1024 * 1024`; đọc theo chunk trong vòng lặp, cộng dồn và `sys.exit(EXIT_TIMEOUT_NETWORK)` khi `time.monotonic() > deadline` hoặc tổng byte vượt cap; kiểm tra `int(resp.headers.get('Content-Length', 0))` trước khi đọc.`
+
+### 5. [HIGH] VULN-005: Schema validation nông: crash unhandled với exit code 1 trùng nghĩa 'có critique'
+**Description**: `validate_audit_verdict()` chỉ kiểm tra `verdict` ∈ enum và `critical_vulnerabilities`/`edge_cases` là `list`. Không kiểm tra `confidence_score` (được dùng ở `f"{confidence:.2f}"`), không kiểm tra phần tử list là dict (được dùng `v.get`, `c.get`, `ec.get`). Model trả `"confidence_score": "high"` hoặc `"critical_vulnerabilities": ["race in x"]` → validation PASS rồi `format_markdown_report` ném TypeError/AttributeError → traceback thô, Python exit 1 = `EXIT_CRITIQUE_GENERATED`. Gate mất khả năng phân biệt 'bị từ chối có chủ đích' với 'tiến trình tự sập'.
+**Remediation**: `Validator đầy đủ: `confidence_score` là float trong [0.0, 1.0]; mỗi vuln là dict với `id` khớp `^VULN-\d{3}$`, `severity` ∈ enum, `title`/`description`/`remediation` non-empty string; tương tự cho `concurrency_hazards`, `edge_cases`, `prescriptive_directives`. Bọc `format_markdown_report` trong try/except → exit 5 kèm context.`
+
+### 6. [MEDIUM] VULN-006: Nuốt exception im lặng tại 3 điểm, vi phạm Ring 0 invariant 2
+**Description**: `except Exception: pass` tại (a) `sys.stdout.reconfigure`/`sys.stderr.reconfigure`, (b) vòng parse `.env`, (c) `http_err.read().decode(..., errors='replace')`. Hệ quả: `.env` hỏng quyền/encoding bị chẩn đoán nhầm thành 'thiếu API key' → exit 2 (auth) thay vì exit 4 (config), đúng loại lỗi vận hành mà exit code contract sinh ra để phân biệt. Mã nguồn tự tuyên bố 'Never silently swallow exceptions' trong khi vi phạm 3 lần.
+**Remediation**: `Mỗi site: `sys.stderr.write(f'[!] <cảnh báo>: {type(e).__name__}: {e} (path=...)\n')`. Với `.env`, cộng dồn lỗi parse và đưa vào thông điệp exit 2. Giữ pass CHỈ cho `UnicodeEncodeError` khi reconfigure.`
+
+### 7. [MEDIUM] VULN-007: Ring 0 invariants không thường trực: hai block OMNI-KERNEL mâu thuẫn, invariant 7 bị mất
+**Description**: `rules/AGENTS.md` chứa HAI cặp marker `<!-- OMNI-KERNEL-START v4.1.0 -->...END`: block đầu 7 điều (có '7. Mandatory Transparency'), block nối thêm chỉ 6 điều, bỏ invariant 7 và rút gọn điều 5/6. `GEMINI.md` và `.cursorrules` lại là bản sao thứ ba/thứ tư với wording khác. Bất kỳ injector scoped-theo-marker nào lấy block cuối (hoặc diff các block) sẽ âm thầm xóa bắt buộc render badge — hạ cấp một Ring 0 invariant thành không tồn tại, không có test nào phát hiện. Đây chính là lỗi 'invariants permanence' mà audit nhắm tới.
+**Remediation**: `Tạo single source `rules/__kernel_invariants.md` chứa ĐÚNG MỘT block. Sinh `GEMINI.md`, `.cursorrules`, `rules/AGENTS.md` bằng `updater.py --sync-kernel` trong CI và fail build khi hash lệch. Thêm test khẳng định đúng 1 cặp marker/file và tập 7 điều là byte-identical giữa các consumer.`
+
+### 8. [MEDIUM] VULN-008: TOCTOU giữa `validate_path` và `open`: symlink swap đọc file ngoài root
+**Description**: `validate_path()` resolve realpath + `getsize`, sau đó `open(validated_file)` xảy ra MUỘN HƠN trong `main()`. Cửa sổ giữa hai bước cho phép hoán symlink để đọc `~/.ssh/id_rsa` hoặc `/etc/shadow`-tương đương và gửi lên cloud. `os.O_NOFOLLOW` không được dùng ở đâu.
+**Remediation**: `Mở trước bằng `fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)`, `os.fstat(fd)` để lấy size, xác minh confinement bằng `os.path.realpath(f'/proc/self/fd/{fd}')` (Linux) rồi mới `os.fdopen(fd)`. Validate đúng cái fd sẽ đọc.`
+
+### 9. [MEDIUM] VULN-009: Biên timeout tự mâu thuẫn: `--timeout 5` luôn thất bại
+**Description**: `effective_timeout = max(MIN_TIMEOUT=5.0, min(args.timeout, MAX_TIMEOUT))` nhưng mọi nhánh retry yêu cầu `remaining >= MIN_INFER_WINDOW = 8.0`. Với `--timeout < 8`, ngay lần 429/5xx đầu tiên sẽ `exit 3` với 0 retry — người dùng hợp lệ bị chặn. Đồng thời `--timeout 0` bị clamp im lặng thay vì báo lỗi tham số.
+**Remediation**: ``MIN_TIMEOUT = MIN_INFER_WINDOW + 1.0` (9.0). Từ chối `--timeout` ngoài [MIN, MAX] bằng exit 4 kèm thông điệp, không clamp. Ghi rõ sàn 9s trong `--help`.`
+
+## 3. Concurrency, Race Condition & Mutex Hazards (5 identified)
+- **Resource**: `Artifact output `{out_path}.tmp.{pid}_{rand(1000,9999)}`` | **Hazard**: Temp-file name collision (không gian tên 9.000 slot, `random` không crypto) → hai tiến trình chọn cùng temp, một bên `os.replace` nuốt nội dung bên kia; thêm nữa không `fsync` trước replace nên sau power-loss artifact có thể rỗng dù báo thành công | **Mitigation**: `tempfile.mkstemp(dir=out_dir, prefix='.omni_audit_', text=True)` (O_EXCL nguyên tử); `os.fsync(fd)` trước `os.replace`; `os.chmod(fd, 0o600)`; try/finally unlink temp khi lỗi
+- **Resource**: `Input file đã qua `validate_path`` | **Hazard**: TOCTOU symlink swap giữa validation và `open` (xem VULN-008) | **Mitigation**: `os.open(..., O_NOFOLLOW)` + `fstat` + `realpath('/proc/self/fd/N')` thay vì validate-then-open
+- **Resource**: ``os.environ['OMNI_GATEKEEPER_ACTIVE']`` | **Hazard**: Ghi biến môi trường process-global, không bao giờ clear, và KHÔNG được đọc ở bất kỳ điểm nào → recursion guard thực chất là dead code; invocation lồng nhau qua worker fleet vẫn chạy, tạo đệ quy council và đốt token không giới hạn | **Mitigation**: Kiểm tra đầu `main()`: `if os.environ.get('OMNI_GATEKEEPER_ACTIVE') == '1': sys.exit(EXIT_CONFIG_USAGE)` kèm thông điệp; dùng `contextlib` để restore env sau khi xong; hoặc chuyển sang file-lock advisory có stale-recovery 30s
+- **Resource**: `Cùng một `--out` target bởi nhiều tiến trình `consult_critic.py`` | **Hazard**: Không có advisory lock; last-writer-wins (dù `os.replace` nguyên tử), và reader có thể đọc bản của run trước trong khi run sau đang ghi | **Mitigation**: Ghi kèm `input_hash` + `timestamp_utc` trong header (đã có) và thêm kiểm tra ở consumer: từ chối artifact nếu hash không khớp input hiện tại; hoặc `fcntl.flock` exclusive trên `<out>.lock`
+- **Resource**: ``.env` đang được process khác rewrite` | **Hazard**: Đọc phải nội dung một nửa → key bị cắt cụt → auth fail 401 giả, hoặc key rỗng bị bỏ qua | **Mitigation**: Đọc toàn bộ trong một `read()` sau `os.stat` size, xác thực format `^[A-Za-z0-9_\-]{20,}$` trước khi dùng; log rõ 'key length N' khi thất bại để phân biệt truncated vs missing
+
+## 4. Defensive Failure Scenarios & Edge Cases (6 verified)
+### 1. Fragment `except ImportError` kích hoạt (sanitizer bị rename trong refactor)
+- **Consequence**: Audit im lặng gửi API key và DSN thật lên DeepSeek; artifact markdown sau đó chứa lại secret đã bị trích xuất, nhân bản rò rỉ sang đĩa
+- **Mitigation**: Fail-closed exit 5 như VULN-001, kèm CI fixture chứa mẫu secret giả để chứng minh redaction chạy thật
+
+### 2. Model trả `verdict: CONDITIONAL_PASS` nhưng kèm 3 vulnerability `CRITICAL`
+- **Consequence**: Validator chấp nhận trạng thái tự mâu thuẫn; CI map CONDITIONAL_PASS → exit 0 (merge được) trong khi findings là CRITICAL — cổng duyệt trở thành rubber stamp. Ngược lại, khi chỉ có 1 lỗi thật, schema buộc model bịa thêm 2 lỗi để thỏa sàn >=3, làm loãng tín hiệu và tăng false positive
+- **Mitigation**: Tách luật: `REJECTED` cần >=1 finding; `CONDITIONAL_PASS` không được chứa `severity == CRITICAL` (nếu có → ép `REJECTED`); bỏ sàn cứng >=3, thay bằng yêu cầu `remediation` non-empty cho từng finding
+
+### 3. `--json` được pipe: `consult_critic.py --json | jq .`
+- **Consequence**: `print(f'[+] Phản biện hoàn tất...')` và đường kẻ `'='*70` ghi vào stdout trước/khung JSON → jq parse fail, mọi CI pipeline dùng machine-readable mode vỡ
+- **Mitigation**: Trong nhánh `--json` chỉ `sys.stdout.write(output_text)`; mọi log người đọc chuyển sang `sys.stderr`
+
+### 4. `input_hash` được tính trên nội dung ĐÃ redaction
+- **Consequence**: Hai tài liệu gốc khác nhau (secret A vs secret B) redaction về cùng một chuỗi → cùng hash; header `OMNI_AUDIT_META` không có HMAC nên bất kỳ ai cũng sửa được `verdict` sang APPROVED. Tuyên bố 'cryptographic target-file binding' không đứng vững
+- **Mitigation**: Hash cả (a) bản gốc pre-redaction và (b) bản đã redaction; ký meta bằng `hmac.new(key, meta, sha256)`; verifier từ chối khi HMAC lệch
+
+### 5. Chạy `scripts/test_dual_tier.py` trong bundle này
+- **Consequence**: `from dual_tier import ComplexityRouter, calculate_task_complexity` — module không có trong bundle và không có skip guard → ImportError. Toàn bộ tuyên bố 'Verified' trong file là không thể phản chứng (mock testing fidelity = 0). Thêm nữa assertion `avg_latency_ms < 0.1` trên runner CI chia sẻ sẽ flaky và chặn merge mà không đo được router
+- **Mitigation**: Ship `dual_tier.py` cùng bundle hoặc `pytest.importorskip('dual_tier', reason='not in bundle')`; chuyển benchmark sang script riêng (`bench/`), chạy `M = 5` lần lấy trung vị, và không đặt trong đường merge gate
+
+### 6. `os.replace(temp_out, out_path)` thất bại (permission, cross-device, out_path là directory)
+- **Consequence**: Temp file mồ côi tồn tại vĩnh viễn trong workspace; exception bị `except Exception as e` bắt rồi exit 4 nhưng KHÔNG unlink temp → rác tích lũy chứa nội dung audit
+- **Mitigation**: `try: ... os.replace(...) finally: if os.path.exists(temp_out): os.unlink(temp_out)`
+
+## 5. Prescriptive Remediation Directives (13 items)
+- Xóa fallback `redact_credentials` permissive; sanitizer thiếu = hard exit 5 + thông điệp 'LỖI BẢO MẬT'. Thêm test CI với fixture `sk-`/`postgres://user:pass@` chứng minh elision thực sự xảy ra.
+- Áp dụng `validate_path`/allowed-root cho CẢ `--file` và `--out`; dùng `os.open(O_NOFOLLOW)` + `fstat` + `realpath('/proc/self/fd/N')`; `mkstemp` + `fsync` + `chmod 0o600` + `finally: unlink`.
+- Reject mọi `api_base` không phải `https` (qua `urlsplit`, có host allowlist tuỳ chọn) với exit 4; đặt `check_hostname=True` và `CERT_REQUIRED` tường minh.
+- Cap `resp.read` ở 2MB, đọc theo chunk, kiểm tra `Content-Length`, và enforce deadline monotonic tích lũy bên trong vòng đọc — không chỉ `socket_timeout` per-op.
+- Validator phải type-check từng field (confidence_score float ∈ [0,1], mỗi list item là dict với schema con, `id` khớp regex). Vi phạm → exit 5. Bọc `format_markdown_report` trong try/except → exit 5 có context, không bao giờ để traceback thô thoát mã 1.
+- Thay toàn bộ `except Exception: pass` bằng ghi stderr kèm `type(e).__name__`, thông điệp, và đường dẫn/ngữ cảnh liên quan. Chỉ giữ pass cho `UnicodeEncodeError` khi reconfigure stream.
+- Hợp nhất Ring 0 invariants về một block duy nhất trong `rules/__kernel_invariants.md`; sinh `GEMINI.md`/`.cursorrules`/`AGENTS.md` bằng `updater.py --sync-kernel`; CI fail khi hash lệch; test khẳng định đúng 1 cặp marker/file và đủ 7 điều.
+- Đặt `MIN_TIMEOUT = MIN_INFER_WINDOW + 1.0`; từ chối `--timeout` ngoài biên bằng exit 4 thay vì clamp im lặng.
+- Tách kênh: `--json` → chỉ JSON trên stdout, mọi thông điệp người đọc → stderr.
+- Đưa `dual_tier.py` vào bundle hoặc `importorskip` có lý do rõ ràng; chuyển assertion độ trễ <0.1ms ra khỏi unit-test gate sang benchmark trung vị nhiều lượt.
+- Sửa conditional contract: `CONDITIONAL_PASS` không được mang finding `CRITICAL`; bỏ sàn cứng >=3 cho mọi verdict không-APPROVED, thay bằng yêu cầu `remediation` non-empty từng mục — tránh bịa finding để thỏa schema.
+- Loại bỏ các đường dẫn tuyệt đối hardcode `C:/Users/vuhuu/...` khỏi `rules/AGENTS.md`; thay bằng biến môi trường/tương đối hoá `$OMNI_HOME` để tránh lộ PII và tăng tính di động.
+- Thêm advisory lock (`fcntl.flock`) trên `<out>.lock` khi ghi artifact; consumer phải verify `input_hash` + HMAC của `OMNI_AUDIT_META` trước khi tin `verdict`.
+
+## 6. Council Gate Final Verdict: `REJECTED`

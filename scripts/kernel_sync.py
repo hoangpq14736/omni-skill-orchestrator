@@ -96,13 +96,51 @@ CANONICAL_KERNEL_RULES_V41 = """# --- OMNI-KERNEL v4.1 AGENT INVARIANTS ---
 # ==============================================================================
 # LOW-LEVEL SAFEGUARDS (<0.5ms Pure-Stdlib Checks)
 # ==============================================================================
+def find_git_dir(start_path: str) -> Optional[str]:
+    """
+    Walks up directories to locate the true .git directory or worktree gitdir.
+    Resolves both standard .git directories and .git worktree/submodule pointer files.
+    """
+    curr = os.path.abspath(start_path)
+    if os.path.isfile(curr):
+        curr = os.path.dirname(curr)
+
+    while True:
+        candidate = os.path.join(curr, ".git")
+        if os.path.isdir(candidate):
+            return candidate
+        if os.path.isfile(candidate):
+            try:
+                with open(candidate, "r", encoding="utf-8", errors="ignore") as f:
+                    content = f.read().strip()
+                if content.startswith("gitdir:"):
+                    gitdir_ref = content.split("gitdir:", 1)[1].strip()
+                    if not os.path.isabs(gitdir_ref):
+                        gitdir_ref = os.path.normpath(os.path.join(curr, gitdir_ref))
+                    if os.path.isdir(gitdir_ref):
+                        return gitdir_ref
+                    else:
+                        # Defensive #5: gitdir pointer exists but target directory is missing -> broken worktree
+                        return "BROKEN_GIT_DIR"
+            except OSError:
+                pass
+
+        parent = os.path.dirname(curr)
+        if parent == curr:
+            break
+        curr = parent
+    return None
+
+
 def is_git_busy_or_unsafe(workspace_dir: str) -> Tuple[bool, str]:
     """
     Zero-subprocess Git state sniffer (<0.15ms).
-    Checks rebase, merge, cherry-pick and lock files directly in .git/
+    Recursively finds true git dir and checks rebase, merge, cherry-pick and lock files.
     """
-    git_dir = os.path.join(workspace_dir, ".git")
-    if not os.path.isdir(git_dir):
+    git_dir = find_git_dir(workspace_dir)
+    if git_dir == "BROKEN_GIT_DIR":
+        return True, "Corrupt or broken Git worktree pointer (unsafe state)"
+    if not git_dir or not os.path.isdir(git_dir):
         return False, "Not a git repository"
 
     markers = {
@@ -143,7 +181,7 @@ def check_and_update_cooldown(force: bool = False) -> bool:
     return True
 
 
-def safe_atomic_replace(temp_path: str, target_path: Path, max_retries: int = 3):
+def safe_atomic_replace(temp_path: str, target_path: Path, max_retries: int = 5):
     """
     NTFS-safe atomic replace with exponential backoff on Windows lock collisions.
     """
@@ -153,7 +191,7 @@ def safe_atomic_replace(temp_path: str, target_path: Path, max_retries: int = 3)
             return
         except (PermissionError, OSError):
             if attempt < max_retries - 1:
-                time.sleep(0.02 * (2 ** attempt))  # 20ms, 40ms backoff
+                time.sleep(min(0.2, 0.02 * (2 ** attempt)))  # 20ms, 40ms, 80ms, 160ms backoff
             else:
                 if os.path.exists(temp_path):
                     try:
@@ -423,8 +461,12 @@ def sync_kernel_skills(target_version: str = KERNEL_VERSION, workspace=WORKSPACE
             content = content.replace("Omni-Kernel Orchestrator v2.0", f"Omni-Kernel Orchestrator v{major_minor}")
             content = content.replace("Engine v3.0", f"Engine v{major_minor}")
 
-            with open(p, "w", encoding="utf-8") as f:
-                f.write(content)
+            p_path = Path(p)
+            p_path.parent.mkdir(parents=True, exist_ok=True)
+            fd, temp_p = tempfile.mkstemp(dir=p_path.parent, prefix=".omni_skill_", text=True)
+            with os.fdopen(fd, "w", encoding="utf-8") as tmp_f:
+                tmp_f.write(content)
+            safe_atomic_replace(temp_p, p_path)
 
             item["fixed"] = True
             fixed_count += 1

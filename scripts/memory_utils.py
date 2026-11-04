@@ -252,3 +252,52 @@ def canonical_workspace_hash(path: Optional[str]) -> str:
     normalized_path = unicodedata.normalize("NFC", str(path))
     canonical = os.path.normcase(os.path.realpath(os.path.abspath(normalized_path)))
     return hashlib.md5(canonical.encode("utf-8")).hexdigest()
+
+
+# ----------------------------------------------------------------------
+# Cryptographic Council Gate HMAC Authenticity Signatures (VULN-201)
+# ----------------------------------------------------------------------
+import hmac
+
+
+def get_audit_hmac_key() -> bytes:
+    """Returns or provisions out-of-band persistent HMAC key for Council Gate metadata (VULN-201)."""
+    key_file = os.path.expanduser("~/.gemini/config/omni_audit.key")
+    if os.path.exists(key_file):
+        try:
+            with open(key_file, "rb") as f:
+                k = f.read().strip()
+                if len(k) >= 32:
+                    return k
+        except Exception:
+            pass
+    # Generate and store persistent 32-byte key with restricted permissions
+    os.makedirs(os.path.dirname(key_file), exist_ok=True)
+    new_key = os.urandom(32).hex().encode("utf-8")
+    try:
+        flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
+        fd = os.open(key_file, flags, 0o600)
+        with os.fdopen(fd, "wb") as f:
+            f.write(new_key)
+    except OSError:
+        pass
+    return new_key
+
+
+def sign_audit_meta(meta: dict) -> str:
+    """Computes HMAC-SHA256 signature for Council Gate review metadata (VULN-201)."""
+    key = get_audit_hmac_key()
+    canonical_str = f"{meta.get('target_file','')}:{meta.get('input_hash','')}:{meta.get('verdict','')}"
+    return hmac.new(key, canonical_str.encode("utf-8"), hashlib.sha256).hexdigest()
+
+
+def verify_audit_meta(meta: dict) -> bool:
+    """Verifies cryptographic authenticity signature of Council Gate review metadata (VULN-201)."""
+    sig = meta.get("signature")
+    if not isinstance(sig, str) or not sig.strip():
+        return False
+    key = get_audit_hmac_key()
+    canonical_str = f"{meta.get('target_file','')}:{meta.get('input_hash','')}:{meta.get('verdict','')}"
+    expected = hmac.new(key, canonical_str.encode("utf-8"), hashlib.sha256).hexdigest()
+    return hmac.compare_digest(sig.strip().lower(), expected.lower())
+

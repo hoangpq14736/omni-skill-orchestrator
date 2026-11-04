@@ -1,0 +1,161 @@
+{
+  "verdict": "REJECTED",
+  "confidence_score": 0.97,
+  "summary": "REJECTED: The bundle contains multiple CRITICAL isolation, transaction, and single-writer defects. Most severe are cross-workspace leakage in hybrid_search, workspace-hash double-hashing and cross-workspace clustering in consolidation, unsafe explicit transactions in revert_invariant, and a MemorySingleWriter that neither enforces foreign keys nor propagates fatal worker failures. The WAL stress test does not cover these paths, so its PASS result is not evidence of production safety.",
+  "critical_vulnerabilities": [
+    {
+      "id": "VULN-001",
+      "severity": "CRITICAL",
+      "title": "Cross-workspace data leak in hybrid_search hydration",
+      "description": "Dense candidates are selected with dense_embeddings.workspace_hash = ?, but final hydration selects workspace_episodic_memory only by memory_id IN (...) with no workspace_hash filter. A stale or malicious dense_embeddings row can associate a foreign memory_id with the current workspace, causing hybrid_search to return another workspace's episodic record. Consolidator also updates workspace_episodic_memory.workspace_hash without updating dense_embeddings.workspace_hash, making stale mappings likely.",
+      "remediation": "Add AND workspace_hash = :ws_hash to the hydration query. Enforce a composite constraint/FK tying dense_embeddings.workspace_hash to the parent memory workspace, and update dense_embeddings.workspace_hash whenever workspace_episodic_memory.workspace_hash changes."
+    },
+    {
+      "id": "VULN-002",
+      "severity": "CRITICAL",
+      "title": "Workspace hash double-hashing and cross-workspace promotion in consolidator",
+      "description": "drain_l1_staging inserts l1_staging_log.workspace_hash into activation_events.workspace_dir. consolidate_batch later treats that value as a filesystem path and calls canonical_workspace_hash(ws_dir) again. Promoted records therefore receive a hash-of-a-hash as workspace_hash and a hash string as workspace_path. Clustering also uses only fold_vietnamese(user_input) without workspace, so events from different workspaces can be merged and promoted as one global proven trace.",
+      "remediation": "Preserve the original workspace_hash without rehashing, or actually store workspace_path in l1_staging_log/activation_events. Cluster by (workspace_hash, normalized_signature). Reject any promotion whose workspace cannot be validated."
+    },
+    {
+      "id": "VULN-003",
+      "severity": "CRITICAL",
+      "title": "Unsafe explicit transaction in revert_invariant bypasses Single-Writer",
+      "description": "init_database defaults isolation_level to IMMEDIATE. revert_invariant executes BEGIN IMMEDIATE without checking conn.in_transaction, so it can fail with 'cannot start a transaction within a transaction'. It catches all exceptions, rolls back, and returns False with no diagnostic. It also writes directly on the caller connection, bypassing MemorySingleWriter and allowing concurrent writers to race.",
+      "remediation": "Use a single transaction context manager, check conn.in_transaction and roll back before BEGIN, or route this write through MemorySingleWriter. Raise or log structured failure reasons instead of returning silent False."
+    },
+    {
+      "id": "VULN-004",
+      "severity": "CRITICAL",
+      "title": "MemorySingleWriter lacks FK enforcement and fatal-error propagation",
+      "description": "The worker connection never sets PRAGMA foreign_keys=ON, so ON DELETE CASCADE for dense_embeddings is not guaranteed and orphan embeddings can accumulate. sqlite3.connect or initial PRAGMA failure before the worker loop kills the thread silently. enqueue_write/flush has no error channel, so flush() can hang forever. A callback that raises inside success or failure handling can also kill the worker or trigger a double callback.",
+      "remediation": "Set PRAGMA foreign_keys=ON and all required pragmas on every connection. Capture worker startup and loop failures and fail all queued callbacks. Add worker liveness monitoring and bounded flush. Wrap callbacks so they cannot terminate the worker or double-fire."
+    },
+    {
+      "id": "VULN-005",
+      "severity": "HIGH",
+      "title": "FTS5 orphan or duplicate rows with INSERT OR REPLACE",
+      "description": "workspace_episodic_memory has trigger-maintained FTS5 rows. INSERT OR REPLACE deletes conflicting rows, but SQLite fires DELETE triggers for REPLACE only when recursive_triggers is enabled. The test seed uses INSERT OR REPLACE, so stale FTS rows can remain or expected content can be missing.",
+      "remediation": "Avoid INSERT OR REPLACE on FTS-backed tables. Use ON CONFLICT DO UPDATE or explicit UPDATE/INSERT. Enable PRAGMA recursive_triggers=ON if REPLACE must be supported, and add FTS reconciliation tests comparing source row count to episodic_fts row count."
+    },
+    {
+      "id": "VULN-006",
+      "severity": "HIGH",
+      "title": "Swallowed exceptions leave partial vector-backfill transaction open",
+      "description": "consolidator wraps embedding backfill and WAL maintenance in broad try/except with pass. If get_embedding or dense_embeddings INSERT fails after a transaction has started, self.conn.commit() is skipped and no rollback occurs. Subsequent operations can run inside the same open transaction and commit partial backfill state. hybrid_search similarly skips corrupt blobs without diagnostics.",
+      "remediation": "Use explicit try/except/rollback/finally for backfill. Log workspace, memory_id, model, and exception context. Fail the batch or mark the backfill as retryable. Do not swallow errors around vacuum/checkpoint without recording them."
+    },
+    {
+      "id": "VULN-007",
+      "severity": "HIGH",
+      "title": "Cosine similarity silently accepts dimension mismatch",
+      "description": "cosine_similarity iterates over min(len(v1), len(v2)) and only checks norm == 0.0. Incompatible embedding dimensions produce a partial dot product and invalid ranking instead of an error. Stored norms are also not checked for finiteness or negativity.",
+      "remediation": "Require len(v1) == len(v2), reject non-finite norms, and validate model/dimensions metadata before similarity. Treat corrupt or mismatched vectors as failed candidates with diagnostic logging."
+    },
+    {
+      "id": "VULN-008",
+      "severity": "HIGH",
+      "title": "False proven-trace promotion from neutral feedback",
+      "description": "consolidate_batch skips only feedback_score < 0.0. Two neutral 0.0 events, or one success plus one neutral, are promoted as proven_trace. Combined with missing workspace in the cluster key, this creates false global proven memories.",
+      "remediation": "Promote only when the cluster contains at least two events with feedback_score > 0.0. Include workspace_hash in the cluster key. Preserve evidence counts and require a success ratio threshold."
+    },
+    {
+      "id": "VULN-009",
+      "severity": "HIGH",
+      "title": "Ebbinghaus SQL can set confidence_score to NULL",
+      "description": "Bulk decay uses MIN/MAX around julianday(last_accessed_at). If last_accessed_at is malformed, julianday returns NULL and scalar MAX/MIN propagate NULL, violating confidence_score NOT NULL and aborting the consolidation transaction. The formula also ignores existing confidence_score and can increase confidence for low-initial-confidence records.",
+      "remediation": "Validate ISO-8601 timestamps at write time. Use COALESCE(julianday(last_accessed_at), julianday(created_at), julianday('now')) and explicit NULL guards. Model decay from existing confidence_score, not only activation_count, and ensure decay is monotonic non-increasing."
+    },
+    {
+      "id": "VULN-010",
+      "severity": "HIGH",
+      "title": "Stale lock recovery can allow duplicate consolidators",
+      "description": "main acquires LifecycleGuard with stale_timeout_sec=60.0, but the daemon can run indefinitely and no heartbeat refresh is shown. After 60 seconds without lock refresh, a second process may consider the lock stale and run concurrent consolidation writes.",
+      "remediation": "Implement an explicit heartbeat with lock mtime or content refresh, set stale timeout greater than the maximum expected batch duration, include PID and process start time, and prefer a database-level advisory lock or transaction-owned lock row."
+    }
+  ],
+  "concurrency_hazards": [
+    {
+      "resource": "SQLite write path (workspace_episodic_memory, l1_staging_log, activation_events)",
+      "hazard_type": "Direct writes bypass MemorySingleWriter and revert_invariant uses an unsafe explicit BEGIN IMMEDIATE",
+      "mitigation": "Route all writes through one writer or enforce a strict write connection contract with in_transaction checks, busy_timeout, retry, and rollback-before-begin."
+    },
+    {
+      "resource": "dense_embeddings and workspace_episodic_memory",
+      "hazard_type": "workspace_hash mutation without dense row update; foreign_keys disabled on writer connection",
+      "mitigation": "Enable PRAGMA foreign_keys=ON on every connection, add composite workspace integrity constraints, and update dense rows atomically with parent workspace changes."
+    },
+    {
+      "resource": "episodic_fts trigger synchronization",
+      "hazard_type": "INSERT OR REPLACE may skip DELETE triggers and leave orphan or stale FTS rows",
+      "mitigation": "Use UPSERT or explicit delete/insert, enable recursive_triggers where needed, and run FTS row-count reconciliation after migrations and tests."
+    },
+    {
+      "resource": "Consolidator daemon lifecycle lock",
+      "hazard_type": "60-second stale timeout without heartbeat allows duplicate consolidators",
+      "mitigation": "Heartbeat lock ownership, use a TTL longer than max batch time, include PID/start time, and add a database advisory lock for critical consolidation."
+    },
+    {
+      "resource": "Vector backfill transaction",
+      "hazard_type": "Broad exception handling skips rollback and leaves an open transaction",
+      "mitigation": "Use explicit rollback/finally, log failure context, and make backfill idempotent per memory_id."
+    },
+    {
+      "resource": "WAL checkpoint and incremental vacuum",
+      "hazard_type": "PASSIVE checkpoint can be starved by long readers and WAL can grow unbounded",
+      "mitigation": "Monitor WAL size, add checkpoint lag metrics, schedule TRUNCATE checkpoint during maintenance, and cap reader transaction duration."
+    }
+  ],
+  "edge_cases": [
+    {
+      "scenario": "sanitize_fts5_query returns an empty string for blank or punctuation-only input",
+      "consequence": "search_fts5 builds a MATCH expression like content_exact : () and SQLite raises an OperationalError",
+      "mitigation": "Return [] early when both sanitized queries are empty; validate FTS expressions before execute."
+    },
+    {
+      "scenario": "dense_embeddings contains a vector with a different dimension or a corrupt blob length",
+      "consequence": "cosine_similarity computes a partial dot product or hybrid_search silently drops the candidate, producing wrong or incomplete ranking",
+      "mitigation": "Strictly validate blob length, dimensions metadata, and norm finiteness; fail closed with diagnostic context."
+    },
+    {
+      "scenario": "last_accessed_at contains a malformed timestamp",
+      "consequence": "julianday returns NULL, confidence_score becomes NULL, and the NOT NULL constraint aborts the consolidation batch",
+      "mitigation": "Validate timestamps at write time and wrap julianday calls with COALESCE fallbacks and explicit NULL guards."
+    },
+    {
+      "scenario": "dense_embeddings.workspace_hash is stale relative to workspace_episodic_memory.workspace_hash",
+      "consequence": "hybrid_search hydration returns a record from another workspace",
+      "mitigation": "Filter hydration by workspace_hash and update dense_embeddings.workspace_hash in the same transaction as parent workspace changes."
+    },
+    {
+      "scenario": "two consolidator processes race after the lock file exceeds stale_timeout_sec",
+      "consequence": "Duplicate promotion, double decay, and concurrent writes to activation_events and episodic memory",
+      "mitigation": "Add heartbeat refresh, PID/start-time identity, and a database-level lock row or advisory mutex."
+    },
+    {
+      "scenario": "revert_invariant is called while the connection already has an implicit transaction open",
+      "consequence": "BEGIN IMMEDIATE fails, rollback is attempted, and the function returns False without exposing the real cause",
+      "mitigation": "Check conn.in_transaction, roll back safely before starting, or use a savepoint/context manager with structured error reporting."
+    },
+    {
+      "scenario": "feedback_score is 0.0 for multiple events in the same cluster",
+      "consequence": "Neutral events are promoted as proven_trace and pollute retrieval",
+      "mitigation": "Require feedback_score > 0.0 and a minimum success count before promotion."
+    },
+    {
+      "scenario": "caller passes limit=-1 or an extremely large limit to search_fts5",
+      "consequence": "SQLite LIMIT -1 disables the limit and can cause unbounded result sets and memory pressure",
+      "mitigation": "Clamp limit to a safe positive range and reject invalid values before query execution."
+    }
+  ],
+  "prescriptive_directives": [
+    "Fix workspace isolation first: add workspace_hash filtering to final hydration, preserve workspace_hash without rehashing, and cluster promotions by (workspace_hash, normalized_signature).",
+    "Replace direct SQLite writes in revert_invariant and consolidator with the single-writer contract, or enforce a strict transaction API that checks conn.in_transaction and rolls back before BEGIN.",
+    "Enable PRAGMA foreign_keys=ON and PRAGMA recursive_triggers=ON on every connection that writes workspace_episodic_memory or dense_embeddings, and add integrity checks for orphan embeddings and FTS row counts.",
+    "Remove broad except/pass blocks around backfill, vacuum, checkpoint, callbacks, and vector corruption. Emit structured diagnostics with memory_id, workspace_hash, model_name, and exception text, then rollback or fail the batch.",
+    "Validate all numeric and temporal inputs: embedding dimensions, finite norms, ISO-8601 timestamps, non-negative activation counts, and bounded limit values.",
+    "Do not concatenate raw sanitized strings into FTS5 MATCH expressions. Tokenize and validate the query, reject empty or unsafe expressions, and wrap execution errors with query context.",
+    "Promote traces only on positive feedback evidence, not neutral 0.0 feedback, and record the exact event IDs used for promotion.",
+    "Add targeted tests for MemorySingleWriter worker death, revert_invariant transaction nesting, cross-workspace dense leakage, FTS REPLACE behavior, malformed timestamps, and duplicate consolidator acquisition. The existing WAL stress test does not exercise these failure paths."
+  ]
+}

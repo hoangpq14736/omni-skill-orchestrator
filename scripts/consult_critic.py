@@ -464,6 +464,11 @@ def format_markdown_report(
         "model": model,
         "timestamp_utc": timestamp_utc
     }
+    try:
+        from memory_utils import sign_audit_meta
+        meta["signature"] = sign_audit_meta(meta)
+    except Exception:
+        pass
     meta_comment = f"<!-- OMNI_AUDIT_META: {json.dumps(meta, separators=(',', ':'))} -->\n"
 
     lines = [
@@ -743,10 +748,11 @@ def execute_critic_request(
             sys.stderr.write(f"[!] LỖI HTTP {err_code}: {err_body}\n")
             sys.exit(EXIT_CONFIG_USAGE)
 
-        except urllib.error.URLError as url_err:
+        except (urllib.error.URLError, TimeoutError) as url_err:
             # Network drop, socket timeout, connection refused
+            err_msg = getattr(url_err, "reason", str(url_err))
             if attempt >= 3:
-                sys.stderr.write(f"[!] LỖI KẾT NỐI: Mạng không khả dụng sau 3 lần thử: {url_err.reason}\n")
+                sys.stderr.write(f"[!] LỖI KẾT NỐI: Mạng hoặc Timeout sau 3 lần thử: {err_msg}\n")
                 sys.exit(EXIT_TIMEOUT_NETWORK)
 
             sleep_time = calculate_sleep_duration(attempt, deadline=deadline)
