@@ -139,9 +139,9 @@ def verify_critic_artifact(workspace_dir: str, target_file: str = None, user_pro
 
         audits_dir = os.path.join(workspace_dir, "docs", "audits")
         if os.path.isdir(audits_dir):
-            for entry in os.listdir(audits_dir)[:15]:
-                if entry.endswith(".md"):
-                    candidate_paths.append(os.path.join(audits_dir, entry))
+            md_entries = [e for e in os.listdir(audits_dir) if e.endswith(".md")]
+            for entry in md_entries[:30]:
+                candidate_paths.append(os.path.join(audits_dir, entry))
     except Exception:
         pass
 
