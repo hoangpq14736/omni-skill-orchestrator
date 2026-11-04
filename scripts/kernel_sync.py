@@ -112,13 +112,16 @@ def find_git_dir(start_path: str) -> Optional[str]:
         if os.path.isfile(candidate):
             try:
                 with open(candidate, "r", encoding="utf-8", errors="ignore") as f:
-                    content = f.read().strip()
+                    content = f.read(4096).strip()
                 if content.startswith("gitdir:"):
                     gitdir_ref = content.split("gitdir:", 1)[1].strip()
                     if not os.path.isabs(gitdir_ref):
                         gitdir_ref = os.path.normpath(os.path.join(curr, gitdir_ref))
                     if os.path.isdir(gitdir_ref):
-                        return gitdir_ref
+                        # VULN-007: Validate the target contains HEAD to prove valid git structure
+                        if os.path.isfile(os.path.join(gitdir_ref, "HEAD")):
+                            return gitdir_ref
+                        return "BROKEN_GIT_DIR"
                     else:
                         # Defensive #5: gitdir pointer exists but target directory is missing -> broken worktree
                         return "BROKEN_GIT_DIR"
@@ -181,14 +184,14 @@ def check_and_update_cooldown(force: bool = False) -> bool:
     return True
 
 
-def safe_atomic_replace(temp_path: str, target_path: Path, max_retries: int = 5):
+def safe_atomic_replace(temp_path: str, target_path: Path, max_retries: int = 5) -> bool:
     """
-    NTFS-safe atomic replace with exponential backoff on Windows lock collisions.
+    NTFS-safe atomic replace with exponential backoff on Windows lock collisions (VULN-006).
     """
     for attempt in range(max_retries):
         try:
             os.replace(temp_path, target_path)
-            return
+            return True
         except (PermissionError, OSError):
             if attempt < max_retries - 1:
                 time.sleep(min(0.2, 0.02 * (2 ** attempt)))  # 20ms, 40ms, 80ms, 160ms backoff
@@ -199,6 +202,7 @@ def safe_atomic_replace(temp_path: str, target_path: Path, max_retries: int = 5)
                     except OSError:
                         pass
                 raise IOError(f"Windows Lock Conflict: Unable to overwrite {target_path} after {max_retries} attempts.")
+    return False
 
 
 # ==============================================================================
@@ -275,15 +279,23 @@ class KernelSynchronizer:
             return {"status": "ALIGNED", "file": path.name}
 
         # 2. Atomic Write on Windows & POSIX
+        temp_path = None
         try:
             fd, temp_path = tempfile.mkstemp(dir=path.parent, prefix=".omni_sync_", text=True)
             with os.fdopen(fd, "w", encoding="utf-8") as tmp:
                 tmp.write(updated_content)
 
             safe_atomic_replace(temp_path, path)
+            temp_path = None
             return {"status": "SUCCESS", "action": action, "file": path.name}
         except Exception as e:
             return {"status": "ERROR", "error": str(e), "file": path.name}
+        finally:
+            if temp_path and os.path.exists(temp_path):
+                try:
+                    os.remove(temp_path)
+                except OSError:
+                    pass
 
     @classmethod
     def sync_tier1_cache_invalidation(cls) -> bool:
@@ -463,13 +475,22 @@ def sync_kernel_skills(target_version: str = KERNEL_VERSION, workspace=WORKSPACE
 
             p_path = Path(p)
             p_path.parent.mkdir(parents=True, exist_ok=True)
-            fd, temp_p = tempfile.mkstemp(dir=p_path.parent, prefix=".omni_skill_", text=True)
-            with os.fdopen(fd, "w", encoding="utf-8") as tmp_f:
-                tmp_f.write(content)
-            safe_atomic_replace(temp_p, p_path)
+            temp_p = None
+            try:
+                fd, temp_p = tempfile.mkstemp(dir=p_path.parent, prefix=".omni_skill_", text=True)
+                with os.fdopen(fd, "w", encoding="utf-8") as tmp_f:
+                    tmp_f.write(content)
+                safe_atomic_replace(temp_p, p_path)
+                temp_p = None
 
-            item["fixed"] = True
-            fixed_count += 1
+                item["fixed"] = True
+                fixed_count += 1
+            finally:
+                if temp_p and os.path.exists(temp_p):
+                    try:
+                        os.remove(temp_p)
+                    except OSError:
+                        pass
         except Exception as e:
             item["fix_error"] = str(e)
 

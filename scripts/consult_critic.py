@@ -437,11 +437,27 @@ def validate_audit_verdict(data: Dict[str, Any]) -> Tuple[bool, str]:
     return True, "Valid"
 
 
+def find_workspace_root(start_path: str) -> str:
+    """Finds repository or workspace root walking upwards looking for .git or GEMINI.md (VULN-007)."""
+    curr = os.path.realpath(os.path.normpath(start_path))
+    if os.path.isfile(curr):
+        curr = os.path.dirname(curr)
+    while True:
+        if os.path.exists(os.path.join(curr, ".git")) or os.path.exists(os.path.join(curr, "GEMINI.md")):
+            return curr
+        parent = os.path.dirname(curr)
+        if parent == curr:
+            break
+        curr = parent
+    return os.path.realpath(os.getcwd())
+
+
 def format_markdown_report(
     data: Dict[str, Any],
     target_file: str,
     input_hash: str,
-    model: str
+    model: str,
+    workspace_dir: Optional[str] = None
 ) -> str:
     """
     Formats the JSON critique into a structured Markdown document with the cryptographic
@@ -457,18 +473,26 @@ def format_markdown_report(
     timestamp_utc = datetime.datetime.now(datetime.timezone.utc).isoformat()
 
     # Cryptographic line 1 metadata header for verify_critic_artifact (<0.1ms parse)
+    if target_file:
+        if any(c in str(target_file) for c in ("\r", "\n", "\0")) or "-->" in str(target_file):
+            raise ValueError(f"Malicious or invalid characters in target_file: {target_file!r}")
+    from memory_utils import sign_audit_meta, canonical_workspace_hash
+    ws_target = workspace_dir or os.getcwd()
     meta = {
         "verdict": verdict,
         "target_file": target_file,
         "input_hash": input_hash,
         "model": model,
-        "timestamp_utc": timestamp_utc
+        "hash_domain": "redacted_prompt_v1",
+        "hash_algo": "sha256-v2",
+        "timestamp_utc": timestamp_utc,
+        "workspace_hash": canonical_workspace_hash(ws_target)
     }
     try:
-        from memory_utils import sign_audit_meta
         meta["signature"] = sign_audit_meta(meta)
-    except Exception:
-        pass
+    except Exception as e:
+        sys.stderr.write(f"[!] LỖI CHỮ KÝ: Không thể tạo chữ ký HMAC cho audit metadata: {e}\n")
+        raise RuntimeError(f"Audit metadata signing failed: {e}")
     meta_comment = f"<!-- OMNI_AUDIT_META: {json.dumps(meta, separators=(',', ':'))} -->\n"
 
     lines = [
@@ -785,6 +809,7 @@ def main() -> None:
     parser.add_argument("--json", action="store_true", default=False, help="Xuất trực tiếp định dạng JSON thay vì Markdown")
     parser.add_argument("--api-base", type=str, default=None, help="DeepSeek API Base URL (mặc định: https://api.deepseek.com hoặc DEEPSEEK_API_BASE)")
     parser.add_argument("--allowed-root", type=str, default=None, help="Thư mục gốc cho phép (chống path traversal)")
+    parser.add_argument("--workspace", "-w", type=str, default=None, help="Thư mục workspace cho ràng buộc cryptographic workspace_hash")
 
     args = parser.parse_args()
 
@@ -856,11 +881,19 @@ def main() -> None:
     if args.json:
         output_text = json.dumps(verdict_data, indent=2, ensure_ascii=False)
     else:
+        # Resolve explicit workspace directory for cryptographic binding (VULN-004, VULN-007)
+        target_ws = args.workspace
+        if not target_ws and args.file:
+            target_ws = find_workspace_root(args.file)
+        if not target_ws:
+            target_ws = find_workspace_root(os.getcwd())
+
         output_text = format_markdown_report(
             data=verdict_data,
             target_file=target_file,
             input_hash=input_hash,
-            model=final_model
+            model=final_model,
+            workspace_dir=target_ws
         )
 
     # Write output artifact or print

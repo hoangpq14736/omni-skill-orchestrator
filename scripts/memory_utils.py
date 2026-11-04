@@ -8,7 +8,24 @@ import json
 import os
 import re
 import unicodedata
+import stat
+import threading
 from typing import Optional, Any, Tuple
+
+__all__ = [
+    "redact_secrets",
+    "redact_json_object",
+    "_redact_json_obj",
+    "persist_diag",
+    "fold_vietnamese",
+    "normalize_vietnamese_diacritics",
+    "sanitize_fts5_query",
+    "is_valid_hex_hash",
+    "canonical_workspace_hash",
+    "get_audit_hmac_key",
+    "sign_audit_meta",
+    "verify_audit_meta",
+]
 
 
 _SECRET_KEY_NAMES = {
@@ -70,6 +87,10 @@ def _redact_json_obj(obj: Any, depth: int = 0) -> Tuple[Any, bool]:
     return obj, False
 
 
+# Public export alias (VULN-003)
+redact_json_object = _redact_json_obj
+
+
 # Pre-compile regex patterns for performance and ReDoS defense (VULN-003)
 _REDACTION_PATTERNS = [
     (re.compile(r'(?i)(bearer\s+)[A-Za-z0-9_\-\.]{16,}'), r'\1[REDACTED_TOKEN]'),
@@ -112,6 +133,10 @@ def redact_secrets(text: Optional[str]) -> Optional[str]:
     """
     if text is None:
         return None
+    # Structurally typed recursion for dict/list payloads (VULN-002)
+    if isinstance(text, (dict, list)):
+        red_obj, _ = _redact_json_obj(text)
+        return red_obj
     if not isinstance(text, str):
         text = str(text)
     if not text:
@@ -239,65 +264,277 @@ def is_valid_hex_hash(val: Any, length: Optional[int] = None) -> bool:
 
 def canonical_workspace_hash(path: Optional[str]) -> str:
     """
-    Generate deterministic MD5 hash for workspace partition isolation.
+    Generate deterministic SHA-256 hash for workspace partition isolation (VULN-006).
     Mandates unicodedata.normalize('NFC') + os.path.normcase(os.path.realpath(os.path.abspath(path)))
     prior to hashing so case-insensitive Windows drive letters (d:\\ vs D:\\), mixed slashes,
     and symlinks/junctions generate identical partition keys (VULN-003).
-    Idempotent: If path is already a 32-char hex MD5 string, returns it lowercase.
     """
     if not path:
-        return hashlib.md5(b"global_fallback").hexdigest()
-    if is_valid_hex_hash(path, length=32):
-        return path.lower().strip()
+        return hashlib.sha256(b"global_fallback").hexdigest()
     normalized_path = unicodedata.normalize("NFC", str(path))
     canonical = os.path.normcase(os.path.realpath(os.path.abspath(normalized_path)))
-    return hashlib.md5(canonical.encode("utf-8")).hexdigest()
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
 # ----------------------------------------------------------------------
-# Cryptographic Council Gate HMAC Authenticity Signatures (VULN-201)
+# Cryptographic Council Gate HMAC Authenticity Signatures (VULN-201, VULN-001, VULN-003)
 # ----------------------------------------------------------------------
 import hmac
+import tempfile
+import time
+
+_KEY_CACHE_LOCK = threading.Lock()
+_CACHED_HMAC_KEY: Optional[bytes] = None
+_CACHED_KEY_MTIME: float = 0.0
 
 
-def get_audit_hmac_key() -> bytes:
-    """Returns or provisions out-of-band persistent HMAC key for Council Gate metadata (VULN-201)."""
-    key_file = os.path.expanduser("~/.gemini/config/omni_audit.key")
-    if os.path.exists(key_file):
-        try:
-            with open(key_file, "rb") as f:
-                k = f.read().strip()
-                if len(k) >= 32:
-                    return k
-        except Exception:
-            pass
-    # Generate and store persistent 32-byte key with restricted permissions
-    os.makedirs(os.path.dirname(key_file), exist_ok=True)
-    new_key = os.urandom(32).hex().encode("utf-8")
+def _is_valid_hex_key(k: Any) -> bool:
+    """Enforces exact 64-hex character (256-bit entropy) key provenance."""
+    if not isinstance(k, bytes):
+        if isinstance(k, str):
+            k = k.encode("utf-8")
+        else:
+            return False
+    k = k.strip()
+    if len(k) != 64:
+        return False
+    return all(c in b"0123456789abcdefABCDEF" for c in k)
+
+
+def _verify_key_file_security(fd: int, path: str) -> bool:
+    """
+    Validates regular file, single link, and non-bypassable ownership/permissions
+    on both POSIX and Windows (VULN-001).
+    """
     try:
-        flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
-        fd = os.open(key_file, flags, 0o600)
-        with os.fdopen(fd, "wb") as f:
-            f.write(new_key)
-    except OSError:
-        pass
-    return new_key
+        st = os.fstat(fd)
+        if not stat.S_ISREG(st.st_mode) or st.st_nlink > 1:
+            persist_diag(f"HMAC key file {path} is not a regular file or has multiple hard links", 256)
+            return False
+        if hasattr(os, "getuid"):
+            if st.st_uid != os.getuid():
+                persist_diag(f"HMAC key file {path} owned by uid {st.st_uid} != {os.getuid()}", 256)
+                return False
+            if (st.st_mode & 0o077) != 0:
+                persist_diag(f"HMAC key file {path} has unsafe permissions: {oct(st.st_mode)}", 256)
+                return False
+        if os.name == "nt":
+            key_real = os.path.normcase(os.path.realpath(path))
+            home_real = os.path.normcase(os.path.realpath(os.path.expanduser("~")))
+            temp_real = os.path.normcase(os.path.realpath(tempfile.gettempdir()))
+            if not (key_real.startswith(home_real) or key_real.startswith(temp_real)):
+                persist_diag(f"HMAC key file {path} outside user profile tree", 256)
+                return False
+            try:
+                import ctypes
+                from ctypes import wintypes
+                advapi32 = ctypes.windll.advapi32
+                kernel32 = ctypes.windll.kernel32
+                pSidOwner = wintypes.LPVOID()
+                pSecDesc = wintypes.LPVOID()
+                res = advapi32.GetNamedSecurityInfoW(
+                    path, 1, 1, ctypes.byref(pSidOwner), None, None, None, ctypes.byref(pSecDesc)
+                )
+                if res != 0:
+                    persist_diag(f"HMAC key file DACL validation failed (error {res})", 256)
+                    return False
+                if pSecDesc:
+                    kernel32.LocalFree(pSecDesc)
+            except Exception as e:
+                persist_diag(f"Windows security inspection error: {e}", 256)
+                return False
+        return True
+    except Exception as e:
+        persist_diag(f"Key file security validation exception: {e}", 256)
+        return False
+
+
+def get_audit_hmac_key(auto_provision: bool = False) -> Optional[bytes]:
+    """
+    Returns out-of-band persistent HMAC key for Council Gate metadata.
+    Enforces on-disk key file (~/.gemini/config/omni_audit.key) as sole source of truth (VULN-001).
+    Verifier strictly REJECTS env-var keys unless matching on-disk key byte-for-byte.
+    Only auto-provisions if auto_provision=True (producers only, never verifiers).
+    Uses temp-file + atomic os.replace to eliminate partial-read races.
+    """
+    global _CACHED_HMAC_KEY, _CACHED_KEY_MTIME
+    key_file = os.path.expanduser("~/.gemini/config/omni_audit.key")
+    env_key = os.environ.get("OMNI_AUDIT_HMAC_KEY", "").strip()
+
+    with _KEY_CACHE_LOCK:
+        # Check cache freshness against file mtime
+        if _CACHED_HMAC_KEY is not None:
+            if os.path.exists(key_file):
+                try:
+                    cur_mtime = os.path.getmtime(key_file)
+                    if cur_mtime == _CACHED_KEY_MTIME:
+                        return _CACHED_HMAC_KEY
+                except OSError:
+                    pass
+            _CACHED_HMAC_KEY = None
+
+        file_key: Optional[bytes] = None
+        if os.path.exists(key_file):
+            try:
+                t_flags = os.O_RDONLY
+                if hasattr(os, "O_NOFOLLOW"):
+                    t_flags |= os.O_NOFOLLOW
+                if hasattr(os, "O_NONBLOCK"):
+                    t_flags |= os.O_NONBLOCK
+                if hasattr(os, "O_BINARY"):
+                    t_flags |= os.O_BINARY
+
+                fd = os.open(key_file, t_flags)
+                try:
+                    if _verify_key_file_security(fd, key_file):
+                        k = os.read(fd, 65).strip()
+                        if _is_valid_hex_key(k):
+                            file_key = k
+                            _CACHED_KEY_MTIME = os.fstat(fd).st_mtime
+                        elif 0 < len(k) < 64:
+                            persist_diag(f"Corrupted HMAC key observed on disk (len {len(k)} != 64)", 256)
+                finally:
+                    os.close(fd)
+            except (OSError, IOError) as err:
+                persist_diag(f"HMAC key file read error: {err}", 256)
+
+        # Trust boundary rules (VULN-001):
+        # Env-var key is only accepted if it matches on-disk file byte-for-byte.
+        # If on-disk file is missing, verifier NEVER accepts env-var key alone.
+        if env_key:
+            env_bytes = env_key.encode("utf-8")
+            if not _is_valid_hex_key(env_bytes):
+                persist_diag("OMNI_AUDIT_HMAC_KEY rejected: not valid 64-hex string", 256)
+                return None
+            if file_key is not None:
+                if not hmac.compare_digest(env_bytes, file_key):
+                    persist_diag("OMNI_AUDIT_HMAC_KEY mismatch with on-disk key file", 256)
+                    return None
+            elif not auto_provision:
+                persist_diag("Verifier rejected env-only key without authoritative disk file", 256)
+                return None
+
+        if file_key is not None:
+            _CACHED_HMAC_KEY = file_key
+            return file_key
+
+        if not auto_provision:
+            # Verifier MUST NOT auto-provision! Fail closed cleanly (VULN-001).
+            return None
+
+        # 3. Provision key with mutual exclusion lock to eliminate last-writer-wins race
+        key_dir = os.path.dirname(key_file)
+        os.makedirs(key_dir, exist_ok=True)
+        from workspace_sanitizer import TrustFileLock
+
+        with TrustFileLock(f"{key_file}.lock", timeout=5.0):
+            # Under lock, check if another process won the race
+            if os.path.exists(key_file):
+                t_flags = os.O_RDONLY
+                if hasattr(os, "O_NOFOLLOW"):
+                    t_flags |= os.O_NOFOLLOW
+                if hasattr(os, "O_NONBLOCK"):
+                    t_flags |= os.O_NONBLOCK
+                if hasattr(os, "O_BINARY"):
+                    t_flags |= os.O_BINARY
+                corrupted = False
+                try:
+                    fd = os.open(key_file, t_flags)
+                    try:
+                        if _verify_key_file_security(fd, key_file):
+                            k = os.read(fd, 65).strip()
+                            if _is_valid_hex_key(k):
+                                _CACHED_HMAC_KEY = k
+                                _CACHED_KEY_MTIME = os.fstat(fd).st_mtime
+                                return k
+                            if 0 < len(k) < 64:
+                                corrupted = True
+                    finally:
+                        os.close(fd)
+
+                    if corrupted:
+                        ts = int(time.time())
+                        bak = f"{key_file}.corrupt.{ts}.bak"
+                        try:
+                            os.replace(key_file, bak)
+                            persist_diag(f"Producer quarantined corrupted HMAC key (<64 hex chars) to {bak}", 256)
+                        except OSError:
+                            pass
+                except (OSError, IOError) as err:
+                    persist_diag(f"HMAC key file provisioning check error: {err}", 256)
+
+            new_key = os.urandom(32).hex().encode("utf-8")
+            tmp_path = None
+            try:
+                with tempfile.NamedTemporaryFile(dir=key_dir, delete=False, prefix=".audit_key_", suffix=".tmp") as tmp:
+                    tmp_path = tmp.name
+                    if hasattr(os, "fchmod"):
+                        os.fchmod(tmp.fileno(), 0o600)
+                    tmp.write(new_key)
+                    tmp.flush()
+                    os.fsync(tmp.fileno())
+
+                os.replace(tmp_path, key_file)
+                _CACHED_HMAC_KEY = new_key
+                _CACHED_KEY_MTIME = os.path.getmtime(key_file)
+                return new_key
+            except Exception as e:
+                if tmp_path and os.path.exists(tmp_path):
+                    try:
+                        os.unlink(tmp_path)
+                    except OSError:
+                        pass
+                raise RuntimeError(f"Failed to provision audit HMAC key: {e}")
+
+
+def _canonical_meta_payload(meta: dict) -> bytes:
+    """Produces unambiguous, sorted canonical JSON payload for HMAC signing (VULN-001, VULN-004, VULN-006)."""
+    normalized_meta = {
+        "hash_algo": str(meta.get("hash_algo", "sha256-v2")).strip(),
+        "hash_domain": str(meta.get("hash_domain", "redacted_prompt_v1")).strip(),
+        "input_hash": str(meta.get("input_hash", "")).strip().lower(),
+        "model": str(meta.get("model", "deepseek-flash")).strip(),
+        "target_file": str(meta.get("target_file", "")).strip(),
+        "timestamp_utc": str(meta.get("timestamp_utc", "")).strip(),
+        "verdict": str(meta.get("verdict", "")).strip().upper(),
+        "workspace_hash": str(meta.get("workspace_hash", "")).strip().lower()
+    }
+    return json.dumps(normalized_meta, sort_keys=True, separators=(',', ':')).encode("utf-8")
 
 
 def sign_audit_meta(meta: dict) -> str:
-    """Computes HMAC-SHA256 signature for Council Gate review metadata (VULN-201)."""
-    key = get_audit_hmac_key()
-    canonical_str = f"{meta.get('target_file','')}:{meta.get('input_hash','')}:{meta.get('verdict','')}"
-    return hmac.new(key, canonical_str.encode("utf-8"), hashlib.sha256).hexdigest()
+    """Computes HMAC-SHA256 signature for Council Gate review metadata (VULN-001, VULN-003)."""
+    if not isinstance(meta, dict):
+        raise TypeError(f"meta must be a dict, got {type(meta).__name__}")
+    if not meta.get("verdict"):
+        raise ValueError("Cannot sign review metadata without non-empty 'verdict'")
+    if not meta.get("target_file"):
+        raise ValueError("Cannot sign review metadata without non-empty 'target_file'")
+    if not meta.get("input_hash"):
+        raise ValueError("Cannot sign review metadata without non-empty 'input_hash'")
+
+    key = get_audit_hmac_key(auto_provision=True)
+    if not key:
+        raise RuntimeError("HMAC key could not be resolved for signing")
+    payload = _canonical_meta_payload(meta)
+    return hmac.new(key, payload, hashlib.sha256).hexdigest()
 
 
 def verify_audit_meta(meta: dict) -> bool:
-    """Verifies cryptographic authenticity signature of Council Gate review metadata (VULN-201)."""
+    """Verifies cryptographic authenticity signature of Council Gate review metadata (VULN-001, VULN-003)."""
+    if not isinstance(meta, dict):
+        return False
     sig = meta.get("signature")
     if not isinstance(sig, str) or not sig.strip():
         return False
-    key = get_audit_hmac_key()
-    canonical_str = f"{meta.get('target_file','')}:{meta.get('input_hash','')}:{meta.get('verdict','')}"
-    expected = hmac.new(key, canonical_str.encode("utf-8"), hashlib.sha256).hexdigest()
+    if not meta.get("verdict") or not meta.get("target_file") or not meta.get("input_hash"):
+        return False
+
+    key = get_audit_hmac_key(auto_provision=False)
+    if not key:
+        # Key missing or not provisioned: fail-closed, do NOT auto-provision on verify (VULN-001)
+        return False
+    payload = _canonical_meta_payload(meta)
+    expected = hmac.new(key, payload, hashlib.sha256).hexdigest()
     return hmac.compare_digest(sig.strip().lower(), expected.lower())
 

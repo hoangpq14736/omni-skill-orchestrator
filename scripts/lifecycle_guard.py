@@ -17,6 +17,7 @@ import sys
 import time
 import json
 import uuid
+import signal
 import ctypes
 import errno
 import threading
@@ -159,6 +160,7 @@ class LifecycleGuard:
         self.token = uuid.uuid4().hex
 
         self._stop_event = threading.Event()
+        self._stop_ack = threading.Event()
         self._heartbeat_thread: Optional[threading.Thread] = None
         self._watcher_thread: Optional[threading.Thread] = None
         self._cleanup_callbacks: list = []
@@ -180,7 +182,12 @@ class LifecycleGuard:
             mode = 0o600
             fd = os.open(str(tmp_path), flags, mode)
             try:
-                with os.fdopen(fd, "wb") as f:
+                try:
+                    f = os.fdopen(fd, "wb")
+                except BaseException:
+                    os.close(fd)
+                    raise
+                with f:
                     f.write(data)
                     f.flush()
                     os.fsync(f.fileno())
@@ -223,16 +230,33 @@ class LifecycleGuard:
                         existing_pid = int(data.get("pid", 0))
                         last_heartbeat = float(data.get("heartbeat", data.get("started_at", 0)))
 
-                        if existing_pid > 0 and self.is_process_alive(existing_pid):
-                            if now - last_heartbeat < stale_timeout_sec:
-                                return False  # Existing process is legitimately running
+                        if existing_pid > 0:
+                            is_alive = self.is_process_alive(existing_pid)
+                            max_stale_window = max(stale_timeout_sec, self.heartbeat_interval * 3.0)
+                            is_heartbeat_stale = (now - last_heartbeat) > max_stale_window
+
+                            if is_alive and not is_heartbeat_stale:
+                                # Process is alive and heartbeat is fresh -> healthy instance holds lock
+                                return False
+                            elif is_alive and is_heartbeat_stale:
+                                # Process is alive but heartbeat has stopped/hung -> reclaim with diagnostic
+                                sys.stderr.write(
+                                    f"[!] Warning: Process PID {existing_pid} is alive but heartbeat is stale "
+                                    f"({now - last_heartbeat:.1f}s > {max_stale_window:.1f}s). Reclaiming lock.\n"
+                                )
+                            # Dead or stale PID -> proceed to reclaim under companion ProcessMutex
                     except Exception:
                         # Malformed lockfile -> candidate for reclaim under mutex
                         pass
 
                 # Under mutex, write payload atomically
                 if self._atomic_write_payload(payload):
+                    # Ensure any previous heartbeat thread is stopped before starting a new one (Concurrency #2)
+                    if self._heartbeat_thread and self._heartbeat_thread.is_alive():
+                        self._stop_event.set()
+                        self._heartbeat_thread.join(timeout=1.0)
                     self._stop_event.clear()
+                    self._stop_ack.clear()
                     self._start_heartbeat()
                     return True
                 return False
@@ -242,14 +266,15 @@ class LifecycleGuard:
     def release_lock(self):
         """
         Safely removes the PID lockfile ONLY if owned by the current process.
-        VULN-LG-003: Stops and joins heartbeat thread before unlinking under mutex.
+        VULN-LG-003 & VULN-005: Waits for stop-ack from heartbeat thread before unlinking under mutex.
         """
         self._stop_event.set()
         
-        # Join heartbeat thread before unlinking to eliminate lock resurrection race
+        # Wait for heartbeat thread to acknowledge shutdown
         if self._heartbeat_thread and self._heartbeat_thread.is_alive():
             if threading.current_thread() != self._heartbeat_thread:
-                self._heartbeat_thread.join(timeout=2.0)
+                self._stop_ack.wait(timeout=2.0)
+                self._heartbeat_thread.join(timeout=1.0)
 
         if not self.lock_file.exists():
             return
@@ -261,7 +286,7 @@ class LifecycleGuard:
                 with open(self.lock_file, "r", encoding="utf-8") as f:
                     data = json.load(f)
                 
-                # Strict verification: BOTH PID and token MUST match
+                # Strict verification: BOTH PID and token MUST match (VULN-LG-003, VULN-005)
                 file_pid = data.get("pid")
                 file_token = data.get("token")
                 if file_pid == os.getpid() and file_token == self.token:
@@ -273,39 +298,42 @@ class LifecycleGuard:
     def _start_heartbeat(self):
         """
         Background thread updating lockfile heartbeat periodically.
-        VULN-LG-002: Strict CAS under ProcessMutex: aborts if token does not match on disk.
+        VULN-LG-002 & VULN-005: Strict CAS under ProcessMutex and stop-ack event.
         """
         def _beat():
-            while not self._stop_event.wait(self.heartbeat_interval):
-                if self._stop_event.is_set():
-                    break
-                try:
-                    with ProcessMutex(self.mutex_file, timeout=2.0):
-                        if self._stop_event.is_set():
-                            break
-                        if not self.lock_file.exists():
-                            # Lockfile deleted by release or reclaimed -> terminate heartbeat
-                            self._stop_event.set()
-                            break
+            try:
+                while not self._stop_event.wait(self.heartbeat_interval):
+                    if self._stop_event.is_set():
+                        break
+                    try:
+                        with ProcessMutex(self.mutex_file, timeout=2.0):
+                            if self._stop_event.is_set():
+                                break
+                            if not self.lock_file.exists():
+                                # Lockfile deleted by release or reclaimed -> terminate heartbeat
+                                self._stop_event.set()
+                                break
 
-                        try:
-                            with open(self.lock_file, "r", encoding="utf-8") as f:
-                                data = json.load(f)
-                        except Exception:
-                            continue
+                            try:
+                                with open(self.lock_file, "r", encoding="utf-8") as f:
+                                    data = json.load(f)
+                            except Exception:
+                                continue
 
-                        # Strict CAS: Token must exist and match exactly
-                        disk_token = data.get("token")
-                        disk_pid = data.get("pid")
-                        if disk_pid != os.getpid() or disk_token != self.token:
-                            # Ownership was lost or reclaimed -> abort heartbeat
-                            self._stop_event.set()
-                            break
+                            # Strict CAS: Token must exist and match exactly
+                            disk_token = data.get("token")
+                            disk_pid = data.get("pid")
+                            if disk_pid != os.getpid() or disk_token != self.token:
+                                # Ownership was lost or reclaimed -> abort heartbeat
+                                self._stop_event.set()
+                                break
 
-                        data["heartbeat"] = time.time()
-                        self._atomic_write_payload(data)
-                except Exception:
-                    pass
+                            data["heartbeat"] = time.time()
+                            self._atomic_write_payload(data)
+                    except Exception:
+                        pass
+            finally:
+                self._stop_ack.set()
 
         self._heartbeat_thread = threading.Thread(target=_beat, daemon=True, name=f"{self.name}_heartbeat")
         self._heartbeat_thread.start()
