@@ -112,8 +112,10 @@ def find_workspace_skills(workspace_dir: str, is_trusted: bool = False, blocked_
                     "mtime": int(os.path.getmtime(norm_path)),
                     "tokens": tokens,
                 })
-            except Exception:
-                pass
+            except Exception as e:
+                sys.stderr.write(f"[!] Warning [Assimilator] Failed to read/parse skill '{norm_path}': {e}\n")
+                if blocked_list is not None:
+                    blocked_list.append({"file": norm_path, "type": "skill_error", "name": os.path.basename(os.path.dirname(norm_path)), "error": str(e)})
 
     return discovered
 
@@ -168,8 +170,10 @@ def find_workspace_rules(workspace_dir: str, is_trusted: bool = False, blocked_l
                 "summary": summary[:160],
                 "content_preview": content[:500]
             })
-        except Exception:
-            pass
+        except Exception as e:
+            sys.stderr.write(f"[!] Warning [Assimilator] Failed to read rule file '{norm}': {e}\n")
+            if blocked_list is not None:
+                blocked_list.append({"file": norm, "type": "rule_error", "source": label, "error": str(e)})
 
     # Directory-based rules: .cursor/rules/*.mdc, .agents/rules/*.md, rules/*.md
     dir_patterns = [
@@ -212,8 +216,10 @@ def find_workspace_rules(workspace_dir: str, is_trusted: bool = False, blocked_l
                     "summary": summary[:160],
                     "content_preview": content[:400]
                 })
-            except Exception:
-                pass
+            except Exception as e:
+                sys.stderr.write(f"[!] Warning [Assimilator] Failed to read/parse skill '{norm_path}': {e}\n")
+                if blocked_list is not None:
+                    blocked_list.append({"file": norm_path, "type": "skill_error", "name": os.path.basename(os.path.dirname(norm_path)), "error": str(e)})
 
     return rules
 

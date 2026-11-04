@@ -299,14 +299,16 @@ class MemorySingleWriter:
 
         rem_timeout = max(0.1, deadline - time.monotonic())
         self._worker_thread.join(timeout=rem_timeout)
-        if self._worker_thread.is_alive():
+        timed_out = self._worker_thread.is_alive()
+        if timed_out:
             with self._seq_lock:
                 self._fatal_error = TimeoutError(f"MemorySingleWriter worker thread failed to terminate within {timeout:.1f}s.")
             sys.stderr.write(f"[!] Warning: MemorySingleWriter worker thread failed to terminate within {timeout:.1f}s.\n")
 
-        dropped = self._queue.unfinished_tasks
-        if dropped > 0:
-            sys.stderr.write(f"[!] Warning: MemorySingleWriter closed with {dropped} uncompleted task(s).\n")
+        raw_unfinished = self._queue.unfinished_tasks
+        dropped = max(0, raw_unfinished - (1 if self._stop_event.is_set() else 0))
+        if dropped > 0 or timed_out:
+            sys.stderr.write(f"[!] Warning: MemorySingleWriter closed with {dropped} uncompleted task(s) (timed_out={timed_out}).\n")
         return dropped
 
 

@@ -697,26 +697,26 @@ def execute_critic_request(
                         parsed_verdict = json.loads(repaired_str, strict=False)
                     except json.JSONDecodeError as jde:
                         # Handle failure without dumping unredacted raw content (VULN-007)
-                                if os.environ.get('CRITIC_DEBUG') == '1':
-                                    import tempfile
-                                    from memory_utils import redact_secrets
-                                    with tempfile.NamedTemporaryFile(
-                                        mode='w',
-                                        delete=False,
-                                        encoding='utf-8',
-                                        prefix='critic_debug_',
-                                        suffix='.txt',
-                                    ) as dbg:
-                                        dbg.write(redact_secrets(content_str) or "")
-                                    sys.stderr.write(
-                                        f"[!] LỖI PARSE SCHEMA: Model không trả về JSON hợp lệ: {jde}. "
-                                        f"Redacted dump saved to {dbg.name}\n",
-                                    )
-                                else:
-                                    sys.stderr.write(
-                                        f"[!] LỖI PARSE SCHEMA: Model không trả về JSON hợp lệ: {jde}.\n",
-                                    )
-                                sys.exit(EXIT_SYSTEM_STRICT)
+                        if os.environ.get('CRITIC_DEBUG') == '1':
+                            import tempfile
+                            from memory_utils import redact_secrets
+                            with tempfile.NamedTemporaryFile(
+                                mode='w',
+                                delete=False,
+                                encoding='utf-8',
+                                prefix='critic_debug_',
+                                suffix='.txt',
+                            ) as dbg:
+                                dbg.write(redact_secrets(content_str) or "")
+                            sys.stderr.write(
+                                f"[!] LỖI PARSE SCHEMA: Model không trả về JSON hợp lệ: {jde}. "
+                                f"Redacted dump saved to {dbg.name}\n",
+                            )
+                        else:
+                            sys.stderr.write(
+                                f"[!] LỖI PARSE SCHEMA: Model không trả về JSON hợp lệ: {jde}.\n",
+                            )
+                        sys.exit(EXIT_SYSTEM_STRICT)
 
                 if not isinstance(parsed_verdict, dict):
                     sys.stderr.write(f"[!] LỖI SCHEMA AUDIT: Parsed verdict is not a JSON object (got {type(parsed_verdict).__name__})\n")

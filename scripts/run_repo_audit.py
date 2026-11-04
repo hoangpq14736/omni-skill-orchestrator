@@ -19,7 +19,7 @@ if _SCRIPT_DIR not in sys.path:
     sys.path.insert(0, _SCRIPT_DIR)
 
 import consult_critic
-from sanitizer import redact_credentials
+from consult_critic import redact_credentials
 
 CLUSTERS = [
     {
@@ -95,13 +95,17 @@ def bundle_cluster_files(cluster: Dict[str, Any]) -> str:
         f"**Audit Focus**: {cluster['focus']}\n\n",
         "## TARGET SOURCE FILES BUNDLE\n"
     ]
+    MAX_BUNDLE_FILE_SIZE = 512 * 1024  # 512 KiB cap per file (VULN-002)
     for rel_path in cluster["files"]:
         full_path = os.path.join(_REPO_ROOT, rel_path)
         if not os.path.exists(full_path):
             continue
         try:
+            if os.path.getsize(full_path) > MAX_BUNDLE_FILE_SIZE:
+                parts.append(f"### File: `{rel_path}` (Skipped: exceeds 512 KiB size limit)\n")
+                continue
             with open(full_path, "r", encoding="utf-8", errors="ignore") as fp:
-                content = fp.read()
+                content = fp.read(MAX_BUNDLE_FILE_SIZE)
             parts.append(f"### File: `{rel_path}`\n```python\n{content}\n```\n")
         except Exception as e:
             parts.append(f"### File: `{rel_path}` (Error reading: {e})\n")

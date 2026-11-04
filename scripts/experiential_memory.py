@@ -32,7 +32,7 @@ class TracePersistenceError(IOError):
 TRACES_FILE = os.path.join(_SCRIPT_DIR, "proven_traces.json")
 MAX_TRACES = 250
 
-_CACHE = {}  # abs_path -> {"data": dict, "mtime": float}
+_CACHE = {}  # abs_path -> {"data": dict, "sig": tuple}
 _MEM_LOCK = threading.RLock()
 
 
@@ -45,8 +45,8 @@ def tokenize(text: str) -> list:
     return list(set(tokens))
 
 
-def load_traces(traces_path: str = None) -> dict:
-    """Loads stored execution traces using mtime and path cache guarded by _MEM_LOCK (VULN-003, VULN-004)."""
+def load_traces(traces_path: str = None, bypass_cache: bool = False) -> dict:
+    """Loads stored execution traces using (mtime_ns, size, inode) cache guarded by _MEM_LOCK (VULN-003, VULN-004)."""
     global _CACHE, _MEM_LOCK
     path = traces_path or TRACES_FILE
     abs_path = os.path.abspath(path)
@@ -55,9 +55,10 @@ def load_traces(traces_path: str = None) -> dict:
 
     with _MEM_LOCK:
         try:
-            current_mtime = os.path.getmtime(abs_path)
+            stat_res = os.stat(abs_path)
+            cache_sig = (stat_res.st_mtime_ns, stat_res.st_size, getattr(stat_res, "st_ino", 0))
             cache_entry = _CACHE.get(abs_path)
-            if cache_entry is not None and current_mtime == cache_entry["mtime"] and (traces_path is None or traces_path == TRACES_FILE):
+            if not bypass_cache and cache_entry is not None and cache_sig == cache_entry.get("sig") and (traces_path is None or traces_path == TRACES_FILE):
                 return copy.deepcopy(cache_entry["data"])
             with open(abs_path, "r", encoding="utf-8") as f:
                 data = json.load(f)
@@ -69,7 +70,7 @@ def load_traces(traces_path: str = None) -> dict:
                         # VULN-003: Fail-closed: Never append raw unredacted trace on redaction error
                         sys.stderr.write(f"[!] Warning: Dropping unredactable trace {tr.get('id', 'unknown')}: {red_err}\n")
                 data["traces"] = scrubbed
-                _CACHE[abs_path] = {"data": data, "mtime": current_mtime}
+                _CACHE[abs_path] = {"data": data, "sig": cache_sig}
                 return copy.deepcopy(data)
         except json.JSONDecodeError as jde:
             # VULN-004: Corrupt JSON must raise, NOT return empty dict, to prevent overwriting prior traces
@@ -397,7 +398,7 @@ def record_trace(problem_signature: str,
     try:
         with FileLock(lock_path, timeout=5.0):
             try:
-                data = copy.deepcopy(load_traces(path))
+                data = copy.deepcopy(load_traces(path, bypass_cache=True))
             except Exception as load_err:
                 sys.stderr.write(f"[!] LỖI record_trace: Aborting write to prevent data loss (load_traces failed): {load_err}\n")
                 return {}
@@ -494,9 +495,10 @@ def record_trace(problem_signature: str,
             if not ok:
                 return {}
             try:
-                curr_mtime = os.path.getmtime(path)
+                stat_res = os.stat(path)
+                curr_sig = (stat_res.st_mtime_ns, stat_res.st_size, getattr(stat_res, "st_ino", 0))
                 with _MEM_LOCK:
-                    _CACHE[os.path.abspath(path)] = {"data": copy.deepcopy(data), "mtime": curr_mtime}
+                    _CACHE[os.path.abspath(path)] = {"data": copy.deepcopy(data), "sig": curr_sig}
             except Exception:
                 pass
             return copy.deepcopy(_redact_trace_dict(result_trace))
