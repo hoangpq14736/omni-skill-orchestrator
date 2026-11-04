@@ -1,10 +1,10 @@
-<!-- OMNI_AUDIT_META: {"verdict":"APPROVED","target_file":"omni_kernel_v41_production_remediation.patch","input_hash":"sha256:63d4c704857e1cb3e345cacea4792ca84ff875c366381f673f767bdb71a4c689","model":"deepseek-flash","hash_domain":"raw_file_v1","hash_algo":"sha256-v2","timestamp_utc":"2026-11-04T19:43:35.102145+00:00","workspace_hash":"0f03e216b4ff8ec39315d4d9db720f619c14f85e5358e2aec11b48be314ab9eb","signature":"c0cbd9ca08b520a92501118e1cee0af4ed36dcfadb1870d5560b0934101e20f0"} -->
+<!-- OMNI_AUDIT_META: {"verdict":"APPROVED","target_file":"omni_kernel_v41_production_remediation.patch","input_hash":"sha256:11f1c74056b6332da9393296a893f4f73fc87f73bae88ed289c43547487ba486","model":"deepseek-flash","hash_domain":"raw_file_v1","hash_algo":"sha256-v2","timestamp_utc":"2026-11-04T20:02:49.160102+00:00","workspace_hash":"0f03e216b4ff8ec39315d4d9db720f619c14f85e5358e2aec11b48be314ab9eb","signature":"e7457c0dd890e378a7a5f95c81b67c09fdb4be599c8e4ca9c18a3c27e7b0a121"} -->
 
 # 🛡️ Architectural Red-Teaming Audit: omni_kernel_v41_production_remediation.patch
-**Audit Status**: `APPROVED` | **Model**: `deepseek-flash` | **Confidence**: `0.88` | **Timestamp**: `2026-11-04T19:43:35.102145+00:00`
+**Audit Status**: `APPROVED` | **Model**: `deepseek-flash` | **Confidence**: `0.85` | **Timestamp**: `2026-11-04T20:02:49.160102+00:00`
 
 ## Executive Summary
-Patch cleanly addresses the recall_traces NameError, resolver stemming/ranking, hook spool SLA, and CRLF hash normalization. No breaking functional bugs were found for normal single-user daily operation. Minor operational notes are documented below.
+Patch đã được kiểm tra theo tiêu chí personal single-user. Các thay đổi chính (cache 2s cho assimilator, bỏ save_traces gây NameError trong recall_traces, chuyển L1 staging sang spool append-only, disk cache cho MCP index, cache registry/stack và mở rộng token/penalty trong resolver) đều nhất quán và không có lỗi syntax/logic gây crash trong luồng sử dụng hàng ngày. Các rủi ro còn lại chỉ là vấn đề hiệu năng/telemetry phụ, không phá vỡ chức năng cốt lõi của một CLI cá nhân.
 
 ## 1. Constitutional & Ring 0 Invariants Verification
 - ✅ Ring 0 Security (Zero-Trust SQL & Credential Redaction): PASS
@@ -14,36 +14,42 @@ Patch cleanly addresses the recall_traces NameError, resolver stemming/ranking, 
 ## 2. Top Critical Architectural Vulnerabilities (0 identified)
 _No critical vulnerabilities identified. (Zero-defect floor verified)_
 
-## 3. Concurrency, Race Condition & Mutex Hazards (3 identified)
-- **Resource**: `scripts/l1_staging_spool.jsonl` | **Hazard**: Short TrustFileLock timeout (0.05s) may skip a hook staging append when consolidator holds the spool lock. | **Mitigation**: Normal single-user lock hold times are very short; the failure is caught and persisted as diagnostic only. If event loss is ever observed, raise the timeout slightly or add a bounded retry.
-- **Resource**: `MCP index cache` | **Hazard**: When _CACHED_MCP_INDEX is None and two threads request reindex simultaneously, both may scan the filesystem because the stale-while-revalidate short-circuit only applies when curr_idx is not None. | **Mitigation**: Index construction is idempotent and the final cache pointer swap is done under _MCP_LOCK. Duplicate work is harmless and only occurs on cold start.
-- **Resource**: `Consolidator spool recovery` | **Hazard**: If the process crashes after moving an orphaned .proc_* file to .rec_* but before appending it to the live spool, the .rec_* file is not swept on next startup. | **Mitigation**: This is a narrow crash-window edge, not a normal-path failure. Recommended follow-up: sweep .rec_* orphans on startup or append before moving the file.
+## 3. Concurrency, Race Condition & Mutex Hazards (4 identified)
+- **Resource**: `scripts/l1_staging_spool.jsonl + .lock (TrustFileLock, timeout 0.05s)` | **Hazard**: Tranh chấp lock giữa nhiều hook process ghi đồng thời | **Mitigation**: Append ngắn trong lock 0.05s; nếu timeout sẽ persist_diag và bỏ qua event, không crash hook. Chấp nhận được với tần suất event cá nhân.
+- **Resource**: `consolidator.py subprocess` | **Hazard**: Spool > 25KiB liên tục có thể spawn consolidator lặp lại mỗi event nếu drain chậm | **Mitigation**: Chỉ spawn khi >25KiB; nên thêm debounce/marker timestamp để tránh process storm (xem directives).
+- **Resource**: `scripts/mcp_index_cache.json` | **Hazard**: Ghi cache đồng thời giữa nhiều tiến trình | **Mitigation**: Ghi ra file tmp theo PID rồi os.replace nguyên tử; đọc lỗi được bọc try/except.
+- **Resource**: `_ASSIMILATE_CACHE (dict module-level)` | **Hazard**: Trả về chính object cache, caller mutate làm hỏng cache trong 2s | **Mitigation**: Hiện chỉ đọc/print; nên trả bản copy nếu sau này có mutate.
 
-## 4. Defensive Failure Scenarios & Edge Cases (5 verified)
-### 1. Hook fires while consolidator holds the l1_staging_spool.jsonl lock longer than 50ms.
-- **Consequence**: TrustFileLock timeout is caught, a diagnostic is persisted, and that activation event is not appended. The hook itself does not crash.
-- **Mitigation**: Normal typing rarely overlaps with a long consolidator drain. If this becomes visible, increase the lock timeout slightly or add a bounded fallback.
+## 4. Defensive Failure Scenarios & Edge Cases (6 verified)
+### 1. Lần ghi spool đầu tiên khi file chưa tồn tại
+- **Consequence**: Nhánh kiểm tra kích thước bị bỏ qua, should_spawn_consolidator=False, file được tạo bằng append
+- **Mitigation**: Không cần xử lý thêm; hành vi đúng, không spawn thừa và không mất event.
 
-### 2. Legacy 32-hex activation_events row points to a workspace outside the current workspace_root or on another drive.
-- **Consequence**: os.path.commonpath may raise or return a non-match, so the row is skipped during reconciliation.
-- **Mitigation**: The per-row exception is swallowed intentionally; the legacy key remains and can be reconciled later via workspace_registry.
+### 2. Spool vượt 10MB (consolidator drain chậm)
+- **Consequence**: File được rotate sang .1.bak và file mới được tạo, tránh phình vô hạn
+- **Mitigation**: Có thể mất tối đa phần chưa drain trong file cũ; chỉ ảnh hưởng telemetry L1, không ảnh hưởng resolve skill.
 
-### 3. Audit artifact was produced with CRLF line endings but the verifier reads LF, or vice versa.
-- **Consequence**: Raw SHA-256 would differ and previously mark the review STALE.
-- **Mitigation**: The verifier now computes and accepts both the raw byte hash and the normalized-LF hash.
+### 3. Audit/checkout khác hệ điều hành (CRLF vs LF)
+- **Consequence**: Hash thô khác nhau nhưng normalized_lf_hash khớp, tránh STALE_REVIEW giả
+- **Mitigation**: expected_hash được so với cả current_hash và normalized_lf_hash.
 
-### 4. MCP index cache is empty and two hook threads request the index simultaneously.
-- **Consequence**: Both threads may perform a filesystem scan because the stale-while-revalidate guard only short-circuits when a cached index already exists.
-- **Mitigation**: Final cache pointer swap is locked and idempotent; only minor duplicate work occurs on cold start.
+### 4. Repo audit đã commit dưới docs/audits/ tên omni_kernel_* sau khi clone
+- **Consequence**: mtime thay đổi do checkout nhưng bị bỏ qua nhờ is_committed_repo_audit; hash vẫn được kiểm
+- **Mitigation**: Chỉ nới lỏng mtime/hash workspace cho tiền tố omni_kernel_ trong audits/, các file khác vẫn kiểm chặt.
 
-### 5. Spool recovery moves a .proc_* file to .rec_* and the process crashes before appending it to l1_staging_spool.jsonl.
-- **Consequence**: The .rec_* file is not discovered by the current .proc_* sweep on next startup, leaving that batch unrecovered.
-- **Mitigation**: Narrow crash-window edge; recommended follow-up is to also sweep .rec_* files or append to the spool before moving/removing the recovered file.
+### 5. workspace_dir rỗng/None hoặc query không có token
+- **Consequence**: norm_ws='' và detect_workspace_stack trả [] sớm; penalty dùng any() trên tập rỗng nên không kích hoạt
+- **Mitigation**: Các guard sẵn có (if not workspace_dir, if tokens) đảm bảo không lỗi.
 
-## 5. Prescriptive Remediation Directives (4 items)
-- Add a .rec_* orphan sweep in consolidator startup to close the crash-window data-loss edge in spool recovery.
-- If staging append loss is ever observed under consolidator drain, add a bounded retry or slightly larger TrustFileLock timeout for the spool append path.
-- Keep hash_prompt redaction-before-truncation consistent across all producers and verifiers; re-audit any pre-existing inline prompts after this change.
-- For very large workspace_registry sets, prioritize self.workspace_hash in the 900-parameter IN clause so it cannot be sliced out by set ordering.
+### 6. registry.json không đổi mtime trong process
+- **Consequence**: load_registry trả cache in-memory, is_registry_stale vẫn chạy để phát hiện file nguồn mới
+- **Mitigation**: Nếu mtime thay đổi do build_index hoặc touch bên ngoài, cache tự nạp lại.
+
+## 5. Prescriptive Remediation Directives (5 items)
+- Xác nhận consolidator.py --batch-run thực sự drain l1_staging_spool.jsonl vào omni_memory.db/l1_staging_log (vì staging giờ chỉ ghi spool, không còn INSERT SQLite trực tiếp).
+- Xác nhận recall_traces() và ConsolidatorEngine.__init__ đã có tham số allow_unscoped trong base code (patch chỉ thêm ở call-site/test, không thấy định nghĩa hàm).
+- Thêm debounce cho spawn consolidator (ví dụ file marker .consolidator_spawned với timestamp) để tránh spawn lặp khi spool duy trì >25KiB.
+- Trả bản copy (dict/list) từ _ASSIMILATE_CACHE để tránh caller vô tình mutate cache 2s.
+- Cân nhắc normalize LF theo kiểu streaming thay vì đọc toàn bộ file audit vào RAM (raw_chunks) để tránh tốn bộ nhớ với file lớn bất thường.
 
 ## 6. Council Gate Final Verdict: `APPROVED`
