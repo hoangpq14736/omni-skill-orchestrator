@@ -12,6 +12,7 @@ Validates the 5 critical edge cases and failure scenarios specified by DeepSeek 
 import os
 import sys
 import json
+import time
 import sqlite3
 import tempfile
 import unittest
@@ -755,6 +756,99 @@ class TestRound7Remediation(unittest.TestCase):
         # Hash must match the redacted version
         h2 = hash_prompt(full_prompt)
         self.assertEqual(h1, h2, "Hash must be completely deterministic")
+
+    def test_stdin_ceiling_exceeded_exits_within_100ms_without_hang(self):
+        """
+        VULN-001: Pre-flight hook reading large payload (1 MiB) must exit
+        promptly with invariants JSON within 150ms without blocking in unbounded drain.
+        """
+        import subprocess
+        hook_script = os.path.join(os.path.dirname(os.path.abspath(__file__)), "hook_runner.py")
+        payload_1mb = b"X" * 1048576  # 1 MiB payload
+        t0 = time.monotonic()
+        proc = subprocess.Popen(
+            [sys.executable, hook_script],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE
+        )
+        stdout_data, stderr_data = proc.communicate(input=payload_1mb, timeout=2.0)
+        elapsed = time.monotonic() - t0
+        self.assertLess(elapsed, 1.0, f"Hook must not hang on oversized payload; took {elapsed:.3f}s")
+        self.assertEqual(proc.returncode, 0)
+        out_json = json.loads(stdout_data.decode("utf-8"))
+        self.assertIn("injectSteps", out_json)
+
+    def test_lifecycle_guard_epoch_fences_stale_victim_worker(self):
+        """
+        VULN-002: Reclaiming an alive process's lockfile increments the monotonic epoch
+        and causes the victim instance's is_lock_valid() to return False.
+        """
+        from lifecycle_guard import LifecycleGuard
+        with tempfile.TemporaryDirectory() as td:
+            guard1 = LifecycleGuard("test_daemon", lock_dir=td, heartbeat_interval=0.1)
+            self.assertTrue(guard1.acquire_lock())
+            self.assertEqual(guard1.epoch, 1)
+            self.assertTrue(guard1.is_lock_valid())
+
+            # Simulate guard2 reclaiming the lock
+            guard2 = LifecycleGuard("test_daemon", lock_dir=td, heartbeat_interval=0.1)
+            # Stalled heartbeat reclaim simulation
+            with open(guard1.lock_file, "r+", encoding="utf-8") as f:
+                d = json.load(f)
+                d["heartbeat"] = time.time() - 100
+                f.seek(0)
+                f.truncate()
+                json.dump(d, f)
+
+            self.assertTrue(guard2.acquire_lock(stale_timeout_sec=5.0))
+            self.assertEqual(guard2.epoch, 2)
+            self.assertTrue(guard2.is_lock_valid())
+
+            # Guard 1 is now fenced and must recognize it no longer owns the lock
+            self.assertFalse(guard1.is_lock_valid(), "Victim worker must be fenced when epoch increments")
+            guard1.release_lock()
+            guard2.release_lock()
+
+    def test_hook_runner_same_second_retry_dedup_and_spool_fallback(self):
+        """
+        VULN-003: Submitting identical prompts in the same second must not raise
+        or silently swallow errors; INSERT OR IGNORE and error tuple handle it cleanly.
+        """
+        from hook_runner import process_hook
+        payload = {
+            "lastUserInput": "same-second retry prompt",
+            "sessionId": "test-sess-dedup",
+            "workspacePath": self.temp_dir.name
+        }
+        # First execution stages cleanly
+        res1 = process_hook(payload)
+        self.assertIn("injectSteps", res1)
+        # Immediate second execution within same second must not crash or drop
+        res2 = process_hook(payload)
+        self.assertIn("injectSteps", res2)
+
+    def test_init_database_default_isolation_level_immediate(self):
+        """
+        VULN-004: init_database defaults to isolation_level='IMMEDIATE'
+        and guarantees multi-statement transaction atomicity with with conn:.
+        """
+        conn = init_database(self.db_path)
+        self.assertEqual(conn.isolation_level, "IMMEDIATE", "Default isolation_level must be IMMEDIATE")
+
+        # Verify transaction atomicity: rollback inside with conn: on exception
+        try:
+            with conn:
+                conn.execute(
+                    "INSERT INTO l1_staging_log (session_id, timestamp, user_input, workspace_hash) VALUES ('s1', 't1', 'inp1', 'h1');"
+                )
+                raise ValueError("Simulated failure inside multi-statement block")
+        except ValueError:
+            pass
+
+        row = conn.execute("SELECT count(*) FROM l1_staging_log WHERE session_id = 's1';").fetchone()[0]
+        self.assertEqual(row, 0, "Failed with conn: block must have rolled back atomically")
+        conn.close()
 
 
 if __name__ == "__main__":

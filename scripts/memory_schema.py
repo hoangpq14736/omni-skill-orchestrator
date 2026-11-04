@@ -245,14 +245,17 @@ CREATE TABLE IF NOT EXISTS workspace_registry (
 """
 
 
-def init_database(db_path: str = "omni_memory.db", isolation_level: Optional[str] = None) -> sqlite3.Connection:
+def init_database(db_path: str = "omni_memory.db", isolation_level: Optional[str] = "IMMEDIATE") -> sqlite3.Connection:
     """
     Initialize SQLite database with production pragmas, tables, triggers, and indexes.
-    Defaults to isolation_level=None (autocommit) to safely support manual BEGIN IMMEDIATE (VULN-006).
+    Defaults to isolation_level='IMMEDIATE' to guarantee transaction atomicity with `with conn:` (VULN-004).
+    Internal migration executes in autocommit mode and safely restores requested isolation_level prior to return.
     Returns the active database connection.
     """
     conn = sqlite3.connect(db_path, timeout=5.0, isolation_level=isolation_level)
     conn.row_factory = sqlite3.Row
+    target_isolation = conn.isolation_level
+    conn.isolation_level = None
 
     # Verify auto_vacuum mode (2 == INCREMENTAL).
     # CRITICAL: VACUUM cannot be run inside a transaction; isolation_level must be None
@@ -471,4 +474,5 @@ def init_database(db_path: str = "omni_memory.db", isolation_level: Optional[str
     if "last_error" not in verified_ae:
         raise RuntimeError(f"activation_events missing last_error column (expected last_error; found {verified_ae})")
 
+    conn.isolation_level = target_isolation
     return conn

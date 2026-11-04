@@ -432,69 +432,75 @@ def get_audit_hmac_key(auto_provision: bool = False) -> Optional[bytes]:
             # Verifier MUST NOT auto-provision! Fail closed cleanly (VULN-001).
             return None
 
-        # 3. Provision key with mutual exclusion lock to eliminate last-writer-wins race
-        key_dir = os.path.dirname(key_file)
-        os.makedirs(key_dir, exist_ok=True)
-        from workspace_sanitizer import TrustFileLock
+    # Step 3: Provision key with double-checked locking: release _KEY_CACHE_LOCK before acquiring TrustFileLock (Hazard 40)
+    key_dir = os.path.dirname(key_file)
+    os.makedirs(key_dir, exist_ok=True)
+    from workspace_sanitizer import TrustFileLock
 
-        with TrustFileLock(f"{key_file}.lock", timeout=5.0):
-            # Under lock, check if another process won the race
-            if os.path.exists(key_file):
-                t_flags = os.O_RDONLY
-                if hasattr(os, "O_NOFOLLOW"):
-                    t_flags |= os.O_NOFOLLOW
-                if hasattr(os, "O_NONBLOCK"):
-                    t_flags |= os.O_NONBLOCK
-                if hasattr(os, "O_BINARY"):
-                    t_flags |= os.O_BINARY
-                corrupted = False
+    with TrustFileLock(f"{key_file}.lock", timeout=5.0):
+        # Under lock, re-check under short mutex if another process/thread provisioned
+        with _KEY_CACHE_LOCK:
+            if _CACHED_HMAC_KEY is not None:
+                return _CACHED_HMAC_KEY
+
+        if os.path.exists(key_file):
+            t_flags = os.O_RDONLY
+            if hasattr(os, "O_NOFOLLOW"):
+                t_flags |= os.O_NOFOLLOW
+            if hasattr(os, "O_NONBLOCK"):
+                t_flags |= os.O_NONBLOCK
+            if hasattr(os, "O_BINARY"):
+                t_flags |= os.O_BINARY
+            corrupted = False
+            try:
+                fd = os.open(key_file, t_flags)
                 try:
-                    fd = os.open(key_file, t_flags)
-                    try:
-                        if _verify_key_file_security(fd, key_file):
-                            k = os.read(fd, 65).strip()
-                            if _is_valid_hex_key(k):
+                    if _verify_key_file_security(fd, key_file):
+                        k = os.read(fd, 65).strip()
+                        if _is_valid_hex_key(k):
+                            with _KEY_CACHE_LOCK:
                                 _CACHED_HMAC_KEY = k
                                 _CACHED_KEY_MTIME = os.fstat(fd).st_mtime
-                                return k
-                            if 0 < len(k) < 64:
-                                corrupted = True
-                    finally:
-                        os.close(fd)
+                            return k
+                        if 0 < len(k) < 64:
+                            corrupted = True
+                finally:
+                    os.close(fd)
 
-                    if corrupted:
-                        ts = int(time.time())
-                        bak = f"{key_file}.corrupt.{ts}.bak"
-                        try:
-                            os.replace(key_file, bak)
-                            persist_diag(f"Producer quarantined corrupted HMAC key (<64 hex chars) to {bak}", 256)
-                        except OSError:
-                            pass
-                except (OSError, IOError) as err:
-                    persist_diag(f"HMAC key file provisioning check error: {err}", 256)
-
-            new_key = os.urandom(32).hex().encode("utf-8")
-            tmp_path = None
-            try:
-                with tempfile.NamedTemporaryFile(dir=key_dir, delete=False, prefix=".audit_key_", suffix=".tmp") as tmp:
-                    tmp_path = tmp.name
-                    if hasattr(os, "fchmod"):
-                        os.fchmod(tmp.fileno(), 0o600)
-                    tmp.write(new_key)
-                    tmp.flush()
-                    os.fsync(tmp.fileno())
-
-                os.replace(tmp_path, key_file)
-                _CACHED_HMAC_KEY = new_key
-                _CACHED_KEY_MTIME = os.path.getmtime(key_file)
-                return new_key
-            except Exception as e:
-                if tmp_path and os.path.exists(tmp_path):
+                if corrupted:
+                    ts = int(time.time())
+                    bak = f"{key_file}.corrupt.{ts}.bak"
                     try:
-                        os.unlink(tmp_path)
+                        os.replace(key_file, bak)
+                        persist_diag(f"Producer quarantined corrupted HMAC key (<64 hex chars) to {bak}", 256)
                     except OSError:
                         pass
-                raise RuntimeError(f"Failed to provision audit HMAC key: {e}")
+            except (OSError, IOError) as err:
+                persist_diag(f"HMAC key file provisioning check error: {err}", 256)
+
+        new_key = os.urandom(32).hex().encode("utf-8")
+        tmp_path = None
+        try:
+            with tempfile.NamedTemporaryFile(dir=key_dir, delete=False, prefix=".audit_key_", suffix=".tmp") as tmp:
+                tmp_path = tmp.name
+                if hasattr(os, "fchmod"):
+                    os.fchmod(tmp.fileno(), 0o600)
+                tmp.write(new_key)
+                tmp.flush()
+                os.fsync(tmp.fileno())
+
+            os.replace(tmp_path, key_file)
+            with _KEY_CACHE_LOCK:
+                _CACHED_HMAC_KEY = new_key
+                _CACHED_KEY_MTIME = os.path.getmtime(key_file)
+            return new_key
+        except Exception as e:
+            if tmp_path and os.path.exists(tmp_path):
+                try:
+                    os.unlink(tmp_path)
+                except OSError:
+                    pass
+            raise RuntimeError(f"Failed to provision audit HMAC key: {e}")
 
 
 def _canonical_meta_payload(meta: dict) -> bytes:

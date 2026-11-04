@@ -70,7 +70,10 @@ def _get_traces_read_view(traces_path: str = None) -> list:
                 data["traces"] = scrubbed
                 _CACHE[abs_path] = {"data": data, "sig": cache_sig}
                 return list(data.get("traces", []))
-        except Exception:
+        except Exception as read_err:
+            from memory_utils import persist_diag
+            persist_diag(read_err, 256)
+            sys.stderr.write(f"[!] Warning: _get_traces_read_view encountered error reading {abs_path}: {read_err}\n")
             return []
 
 

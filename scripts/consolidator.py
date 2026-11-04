@@ -516,8 +516,7 @@ class ConsolidatorEngine:
                 "INSERT OR REPLACE INTO workspace_registry (workspace_hash, workspace_path, registered_at) VALUES (?, ?, ?)",
                 (h, str(workspace_path), now_iso)
             )
-            if not getattr(self.conn, "in_transaction", False):
-                self.conn.commit()
+            self.conn.commit()
         except Exception as reg_err:
             sys.stderr.write(f"[!] Warning: Failed to persist workspace_registry for {h}: {reg_err}\n")
         return h
@@ -782,7 +781,7 @@ class ConsolidatorEngine:
                     match_hashes.add(target_path)
                 if leg_h:
                     match_hashes.add(leg_h)
-                query_hashes = list(match_hashes)
+                query_hashes = [h for h in match_hashes if h and len(str(h)) <= 4096][:900]
                 placeholders = ",".join("?" for _ in query_hashes)
                 cur.execute(
                     f"""
@@ -880,7 +879,7 @@ class ConsolidatorEngine:
                     match_hashes.add(target_path)
                 if leg_h:
                     match_hashes.add(leg_h)
-                query_hashes = list(match_hashes)
+                query_hashes = [h for h in match_hashes if h and len(str(h)) <= 4096][:900]
                 placeholders = ",".join("?" for _ in query_hashes)
                 cur.execute(
                     f"""
@@ -1189,8 +1188,9 @@ class ConsolidatorEngine:
             sys.stderr.write(f"[!] Warning: Step 5 consolidation transaction failed: {type(dbe).__name__}: {dbe}\n")
             raise
 
-        # Step 6b: Durable outbox flush decoupled from consolidation commit scoped by workspace_hash (VULN-004, VULN-005)
+        # Step 6b: Durable outbox flush decoupled from consolidation commit scoped by workspace_hash (VULN-004, VULN-005, VULN-006)
         outbox_err = None
+        deferred_flushes = []
         if not getattr(self.conn, "in_transaction", False):
             flush_targets = set(promoted_ws_hashes)
             if self.workspace_hash:
@@ -1204,6 +1204,15 @@ class ConsolidatorEngine:
             except Exception as foe:
                 outbox_err = foe
                 sys.stderr.write(f"[!] Warning: flush_outbox after consolidate_batch failed: {safe_err(foe)}\n")
+        else:
+            flush_targets = set(promoted_ws_hashes)
+            if self.workspace_hash:
+                flush_targets.add(self.workspace_hash)
+            deferred_flushes = list(flush_targets)
+            sys.stderr.write(
+                f"[!] Notice: consolidate_batch called while outer transaction is active; "
+                f"deferring outbox flush for {len(deferred_flushes)} tenant(s) until caller commits.\n"
+            )
 
         # Lazy Vector Backfill (VULN-001): Strict workspace_hash scoping to prevent cross-tenant exfiltration
         try:
@@ -1299,6 +1308,8 @@ class ConsolidatorEngine:
             "promoted_traces": promoted_count,
             "soft_archived": soft_archived_count
         }
+        if deferred_flushes:
+            batch_res["pending_flushes"] = deferred_flushes
         if outbox_err is not None:
             batch_res["outbox_error"] = safe_err(outbox_err)
         return batch_res

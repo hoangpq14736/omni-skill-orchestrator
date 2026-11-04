@@ -501,11 +501,11 @@ def process_hook(payload: dict) -> dict:
     if FILLER_PATTERN.match(raw_user_input) or len(raw_user_input.strip("!.?, \t\n\r")) <= 2:
         return {"injectSteps": []}
 
+    # Redact sensitive credentials first before any truncation to prevent splitting secrets across boundaries (VULN-005)
+    safe_full_input = str(redact_secrets(raw_user_input) or raw_user_input)
     # T010: 2,048-char head clamping invariant
-    user_input = str(raw_user_input[:2048])
-    
-    # Redact sensitive credentials before storing or staging (VULN-006)
-    safe_user_input = str(redact_secrets(user_input) or user_input)
+    safe_user_input = safe_full_input[:2048]
+    user_input = safe_user_input
     
     # Extract workspace paths with strict schema validation (VULN-004)
     workspace_paths = payload.get("workspacePaths")
@@ -554,7 +554,7 @@ def process_hook(payload: dict) -> dict:
         spec_match = re.search(r"\b([a-zA-Z0-9_\-]+\.(?:md|patch|py))\b", user_input, re.IGNORECASE)
         if spec_match:
             target_file = spec_match.group(1)
-        verdict, meta = verify_critic_artifact(workspace_dir, target_file=target_file, user_prompt=safe_user_input)
+        verdict, meta = verify_critic_artifact(workspace_dir, target_file=target_file, user_prompt=raw_user_input)
         if verdict in ("APPROVED", "CONDITIONAL_PASS"):
             raw_target = meta.get("target_file", "specification") if meta else "specification"
             t_name = os.path.basename(str(raw_target))[:64]
@@ -593,12 +593,12 @@ def process_hook(payload: dict) -> dict:
                     cursor = conn.cursor()
                     cursor.execute(
                         """
-                        INSERT INTO l1_staging_log (session_id, timestamp, user_input, workspace_hash, top_skill, tier_used, recalled_traces)
+                        INSERT OR IGNORE INTO l1_staging_log (session_id, timestamp, user_input, workspace_hash, top_skill, tier_used, recalled_traces)
                         VALUES (?, ?, ?, ?, ?, ?, ?)
                         """,
                         (
                             redact_secrets(str(payload.get("sessionId", "session_default")))[:64],
-                            datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                            datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f"),
                             safe_user_input[:250],
                             canonical_workspace_hash(workspace_dir),
                             safe_field(skills[0]["skill"]["name"], 64, single_line=True) if skills else "none",
@@ -627,7 +627,7 @@ def process_hook(payload: dict) -> dict:
                     )
                 except Exception as ex:
                     persist_diag(ex, 256)
-    except sqlite3.OperationalError as e:
+    except (sqlite3.OperationalError, sqlite3.IntegrityError, sqlite3.DatabaseError) as e:
         persist_diag(e, 256)
         # VULN-002: Fallback to local append-only spool to prevent data loss under SQLite contention
         try:
@@ -744,14 +744,6 @@ def main():
             raw_bytes = sys.stdin.read(262145).encode("utf-8")
         if len(raw_bytes) > 262144:
             sys.stderr.write("[!] Warning: stdin payload exceeded 256 KiB ceiling and was truncated\n")
-            try:
-                # Drain remaining bytes from pipe buffer to prevent blocking host writer process (Edge Case 2)
-                while True:
-                    chunk = sys.stdin.buffer.read(65536) if hasattr(sys.stdin, "buffer") else sys.stdin.read(65536)
-                    if not chunk:
-                        break
-            except Exception:
-                pass
             output = {
                 "injectSteps": [
                     {

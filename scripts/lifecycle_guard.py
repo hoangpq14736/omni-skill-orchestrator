@@ -185,6 +185,7 @@ class LifecycleGuard:
         self.mutex_file = self.lock_dir / f"{self.name}.mutex"
         self.heartbeat_interval = heartbeat_interval
         self.token = uuid.uuid4().hex
+        self.epoch = 1
 
         self._stop_event = threading.Event()
         self._stop_ack = threading.Event()
@@ -239,13 +240,7 @@ class LifecycleGuard:
         """
         my_pid = os.getpid()
         now = time.time()
-        payload = {
-            "pid": my_pid,
-            "token": self.token,
-            "name": self.name,
-            "started_at": now,
-            "heartbeat": now
-        }
+        existing_epoch = 0
 
         # VULN-LG-001 Fix: Serialize acquisition & reclaim under companion ProcessMutex
         try:
@@ -256,6 +251,7 @@ class LifecycleGuard:
                             data = json.load(f)
                         existing_pid = int(data.get("pid", 0))
                         last_heartbeat = float(data.get("heartbeat", data.get("started_at", 0)))
+                        existing_epoch = int(data.get("epoch", 0))
 
                         if existing_pid > 0:
                             is_alive = self.is_process_alive(existing_pid)
@@ -266,15 +262,25 @@ class LifecycleGuard:
                                 # Process is alive and heartbeat is fresh -> healthy instance holds lock
                                 return False
                             elif is_alive and is_heartbeat_stale:
-                                # Process is alive but heartbeat has stopped/hung -> reclaim with diagnostic
+                                # Process is alive but heartbeat has stopped/hung -> reclaim with diagnostic and monotonic fencing epoch
                                 sys.stderr.write(
                                     f"[!] Warning: Process PID {existing_pid} is alive but heartbeat is stale "
-                                    f"({now - last_heartbeat:.1f}s > {max_stale_window:.1f}s). Reclaiming lock.\n"
+                                    f"({now - last_heartbeat:.1f}s > {max_stale_window:.1f}s). Reclaiming lock with fencing epoch.\n"
                                 )
                             # Dead or stale PID -> proceed to reclaim under companion ProcessMutex
                     except Exception:
                         # Malformed lockfile -> candidate for reclaim under mutex
                         pass
+
+                self.epoch = existing_epoch + 1
+                payload = {
+                    "pid": my_pid,
+                    "token": self.token,
+                    "name": self.name,
+                    "started_at": now,
+                    "heartbeat": now,
+                    "epoch": self.epoch
+                }
 
                 # Under mutex, write payload atomically
                 if self._atomic_write_payload(payload):
@@ -322,6 +328,19 @@ class LifecycleGuard:
             # If lockfile cannot be read or parsed, DO NOT unlink it!
             pass
 
+    def is_lock_valid(self) -> bool:
+        """Returns True if this instance still holds valid, un-fenced ownership of the lockfile (VULN-002)."""
+        if self._stop_event.is_set():
+            return False
+        try:
+            if not self.lock_file.exists():
+                return False
+            with open(self.lock_file, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            return (data.get("pid") == os.getpid() and data.get("token") == self.token and data.get("epoch") == self.epoch)
+        except Exception:
+            return not self._stop_event.is_set()
+
     def _start_heartbeat(self):
         """
         Background thread updating lockfile heartbeat periodically.
@@ -334,7 +353,7 @@ class LifecycleGuard:
                     if self._stop_event.is_set():
                         break
                     try:
-                        with ProcessMutex(self.mutex_file, timeout=2.0):
+                        with ProcessMutex(self.mutex_file, timeout=0.5):
                             if self._stop_event.is_set():
                                 break
                             if not self.lock_file.exists():
@@ -352,11 +371,12 @@ class LifecycleGuard:
                                     self._stop_event.set()
                                 continue
 
-                            # Strict CAS: Token must exist and match exactly
+                            # Strict CAS: Token, PID, and fencing epoch must match exactly (VULN-002)
                             disk_token = data.get("token")
                             disk_pid = data.get("pid")
-                            if disk_pid != os.getpid() or disk_token != self.token:
-                                # Ownership was lost or reclaimed -> abort heartbeat
+                            disk_epoch = data.get("epoch")
+                            if disk_pid != os.getpid() or disk_token != self.token or disk_epoch != self.epoch:
+                                # Ownership was lost, reclaimed, or fenced by newer epoch -> abort heartbeat
                                 self._stop_event.set()
                                 break
 

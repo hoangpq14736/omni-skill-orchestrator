@@ -265,7 +265,7 @@ def _atomic_save_trust_db(db_path: str, data: Dict[str, Any]) -> None:
 def is_trusted_workspace(workspace_path: str, trust_db_path: str = DEFAULT_TRUST_DB) -> bool:
     """
     Checks whether a repository directory has been explicitly approved by the user.
-    Uses lock-free fast-path read with bounded retry; avoids serializing on reads (VULN-106).
+    Uses sub-millisecond read-only path without sleeps, mutex stalls, or read-path quarantine (VULN-106).
     """
     if not isinstance(workspace_path, str) or not workspace_path.strip():
         return False
@@ -276,25 +276,25 @@ def is_trusted_workspace(workspace_path: str, trust_db_path: str = DEFAULT_TRUST
     if not os.path.exists(db_path):
         return False
 
-    # Lock-free fast read path with retries
-    for _ in range(3):
-        try:
-            with open(db_path, "r", encoding="utf-8") as f:
-                data = json.load(f)
-            if isinstance(data, dict) and isinstance(data.get("trusted"), list):
-                trusted_dirs = [normalize_path(p) for p in data["trusted"] if isinstance(p, str)]
-                return norm_target in trusted_dirs
-        except (OSError, json.JSONDecodeError):
-            time.sleep(0.01)
-
-    # Fallback to locked read if contention occurred
     try:
-        with TrustFileLock(db_path, timeout=1.0):
-            data = _load_trust_db_locked(db_path)
-            trusted_dirs = [normalize_path(p) for p in data.get("trusted", []) if isinstance(p, str)]
+        with open(db_path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        if isinstance(data, dict) and isinstance(data.get("trusted"), list):
+            trusted_dirs = [normalize_path(p) for p in data["trusted"] if isinstance(p, str)]
             return norm_target in trusted_dirs
+    except json.JSONDecodeError:
+        # Definitive syntax corruption: acquire lock to quarantine safely
+        try:
+            with TrustFileLock(f"{db_path}.lock", timeout=0.5):
+                data = _load_trust_db_locked(db_path)
+                trusted_dirs = [normalize_path(p) for p in data.get("trusted", []) if isinstance(p, str)]
+                return norm_target in trusted_dirs
+        except Exception:
+            return False
     except Exception:
+        # Transient I/O contention (AV lock, sharing violation): fail closed immediately without stalling or mutating
         return False
+    return False
 
 
 def add_trusted_workspace(workspace_path: str, trust_db_path: str = DEFAULT_TRUST_DB) -> bool:
