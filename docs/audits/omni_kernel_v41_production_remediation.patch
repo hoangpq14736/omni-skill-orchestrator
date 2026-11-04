@@ -275,7 +275,7 @@ index 81a1bb5..92e9b72 100644
  
  if __name__ == "__main__":
 diff --git a/scripts/consolidator.py b/scripts/consolidator.py
-index 07a8939..100d9cb 100644
+index 07a8939..9e1bf38 100644
 --- a/scripts/consolidator.py
 +++ b/scripts/consolidator.py
 @@ -7,13 +7,16 @@ apply bounded Ebbinghaus decay, manage soft-archiving, and perform WAL maintenan
@@ -376,7 +376,7 @@ index 07a8939..100d9cb 100644
  def calculate_ebbinghaus_stability(
      s0: float,
      lambda_0: float,
-@@ -95,280 +160,1165 @@ def calculate_ebbinghaus_stability(
+@@ -95,280 +160,1176 @@ def calculate_ebbinghaus_stability(
      return max(0.0, min(1.0, stability))
  
  
@@ -729,16 +729,7 @@ index 07a8939..100d9cb 100644
 +        except Exception as reg_err:
 +            persist_diag(reg_err, 256)
 +            sys.stderr.write(f"[!] Warning: Failed to sync authorized_hashes from workspace_registry: {reg_err}\n")
- 
--        drained_ids = []
--        for row in rows:
--            s_id, session_id, ts, u_input, ws_hash, top_skill, tier, recalled = row
--            cur.execute(
--                """
--                INSERT INTO activation_events (session_id, timestamp, user_input, workspace_dir, top_skill, tier_used, recalled_traces, feedback_score, is_consolidated)
--                VALUES (?, ?, ?, ?, ?, ?, ?, 0.0, 0)
--                """,
--                (session_id, ts, u_input, ws_hash, top_skill, tier, recalled)
++
 +        if workspace_hash is not None:
 +            if not is_valid_hex_hash(workspace_hash):
 +                raise ValueError(f"Invalid workspace_hash: {workspace_hash!r}")
@@ -751,7 +742,16 @@ index 07a8939..100d9cb 100644
 +            self.workspace_hash = canonical_workspace_hash(self.workspace_root)
 +        else:
 +            self.workspace_hash = None
-+
+ 
+-        drained_ids = []
+-        for row in rows:
+-            s_id, session_id, ts, u_input, ws_hash, top_skill, tier, recalled = row
+-            cur.execute(
+-                """
+-                INSERT INTO activation_events (session_id, timestamp, user_input, workspace_dir, top_skill, tier_used, recalled_traces, feedback_score, is_consolidated)
+-                VALUES (?, ?, ?, ?, ?, ?, ?, 0.0, 0)
+-                """,
+-                (session_id, ts, u_input, ws_hash, top_skill, tier, recalled)
 +    def register_workspace(self, workspace_path: str) -> str:
 +        """Registers and authorizes a sub-workspace within workspace_root and persists to workspace_registry (VULN-003, VULN-007)."""
 +        h = resolve_workspace_hash(workspace_path, approved_root=self.workspace_root, allow_unscoped=self.allow_unscoped)
@@ -763,8 +763,7 @@ index 07a8939..100d9cb 100644
 +                (h, str(workspace_path), now_iso)
              )
 -            drained_ids.append(s_id)
-+            if not getattr(self.conn, "in_transaction", False):
-+                self.conn.commit()
++            self.conn.commit()
 +        except Exception as reg_err:
 +            sys.stderr.write(f"[!] Warning: Failed to persist workspace_registry for {h}: {reg_err}\n")
 +        return h
@@ -1044,7 +1043,7 @@ index 07a8939..100d9cb 100644
 +                    match_hashes.add(target_path)
 +                if leg_h:
 +                    match_hashes.add(leg_h)
-+                query_hashes = list(match_hashes)
++                query_hashes = [h for h in match_hashes if h and len(str(h)) <= 4096][:900]
 +                placeholders = ",".join("?" for _ in query_hashes)
 +                cur.execute(
 +                    f"""
@@ -1142,7 +1141,7 @@ index 07a8939..100d9cb 100644
 +                    match_hashes.add(target_path)
 +                if leg_h:
 +                    match_hashes.add(leg_h)
-+                query_hashes = list(match_hashes)
++                query_hashes = [h for h in match_hashes if h and len(str(h)) <= 4096][:900]
 +                placeholders = ",".join("?" for _ in query_hashes)
 +                cur.execute(
 +                    f"""
@@ -1577,8 +1576,7 @@ index 07a8939..100d9cb 100644
 +            if dead_letter_ids:
 +                for dl_id, dl_err in dead_letter_ids:
 +                    cur.execute("UPDATE activation_events SET is_consolidated = 2, last_error = ? WHERE event_id = ?", (dl_err, dl_id))
- 
--            # Lazy Vector Backfill (Argon Chốt chặn 3)
++
 +            if own_tx:
 +                self.conn.commit()
 +            else:
@@ -1597,9 +1595,11 @@ index 07a8939..100d9cb 100644
 +                    pass
 +            sys.stderr.write(f"[!] Warning: Step 5 consolidation transaction failed: {type(dbe).__name__}: {dbe}\n")
 +            raise
-+
-+        # Step 6b: Durable outbox flush decoupled from consolidation commit scoped by workspace_hash (VULN-004, VULN-005)
+ 
+-            # Lazy Vector Backfill (Argon Chốt chặn 3)
++        # Step 6b: Durable outbox flush decoupled from consolidation commit scoped by workspace_hash (VULN-004, VULN-005, VULN-006)
 +        outbox_err = None
++        deferred_flushes = []
 +        if not getattr(self.conn, "in_transaction", False):
 +            flush_targets = set(promoted_ws_hashes)
 +            if self.workspace_hash:
@@ -1615,6 +1615,15 @@ index 07a8939..100d9cb 100644
 +            except Exception as foe:
 +                outbox_err = foe
 +                sys.stderr.write(f"[!] Warning: flush_outbox after consolidate_batch failed: {safe_err(foe)}\n")
++        else:
++            flush_targets = set(promoted_ws_hashes)
++            if self.workspace_hash:
++                flush_targets.add(self.workspace_hash)
++            deferred_flushes = list(flush_targets)
++            sys.stderr.write(
++                f"[!] Notice: consolidate_batch called while outer transaction is active; "
++                f"deferring outbox flush for {len(deferred_flushes)} tenant(s) until caller commits.\n"
++            )
 +
 +        # Lazy Vector Backfill (VULN-001): Strict workspace_hash scoping to prevent cross-tenant exfiltration
 +        try:
@@ -1729,6 +1738,8 @@ index 07a8939..100d9cb 100644
              "promoted_traces": promoted_count,
              "soft_archived": soft_archived_count
          }
++        if deferred_flushes:
++            batch_res["pending_flushes"] = deferred_flushes
 +        if outbox_err is not None:
 +            batch_res["outbox_error"] = safe_err(outbox_err)
 +        return batch_res
@@ -1753,7 +1764,7 @@ index 07a8939..100d9cb 100644
      # Lifecycle & Mutual Exclusion Guard (Anti-Zombie & Auto-Healing Lock)
      from lifecycle_guard import LifecycleGuard
      guard = LifecycleGuard("omni_consolidator")
-@@ -384,12 +1334,15 @@ def main():
+@@ -384,12 +1345,15 @@ def main():
      guard.register_cleanup(lambda: conn.close())
  
      try:
@@ -1770,7 +1781,7 @@ index 07a8939..100d9cb 100644
                  if res.get("events_processed", 0) > 0 or res.get("promoted_traces", 0) > 0:
                      last_activity = time.time()
                  elif time.time() - last_activity > args.idle_timeout:
-@@ -399,6 +1352,9 @@ def main():
+@@ -399,6 +1363,9 @@ def main():
          else:
              result = engine.consolidate_batch(batch_size=100, dry_run=args.dry_run)
              print(json.dumps(result, indent=2))
@@ -2570,7 +2581,7 @@ index 90b63a4..d9d0957 100644
          "Implement Paxos",
          "Đổi màu nút Submit thành màu đỏ, chỉnh padding 12px, margin 8px, căn giữa text, bo tròn border 4px và thêm shadow",
 diff --git a/scripts/experiential_memory.py b/scripts/experiential_memory.py
-index 81dcfde..205d732 100644
+index 81dcfde..635c5d4 100644
 --- a/scripts/experiential_memory.py
 +++ b/scripts/experiential_memory.py
 @@ -12,17 +12,28 @@ import sys
@@ -2605,7 +2616,7 @@ index 81dcfde..205d732 100644
  
  
  def tokenize(text: str) -> list:
-@@ -34,49 +45,405 @@ def tokenize(text: str) -> list:
+@@ -34,49 +45,408 @@ def tokenize(text: str) -> list:
      return list(set(tokens))
  
  
@@ -2637,7 +2648,10 @@ index 81dcfde..205d732 100644
 +                data["traces"] = scrubbed
 +                _CACHE[abs_path] = {"data": data, "sig": cache_sig}
 +                return list(data.get("traces", []))
-+        except Exception:
++        except Exception as read_err:
++            from memory_utils import persist_diag
++            persist_diag(read_err, 256)
++            sys.stderr.write(f"[!] Warning: _get_traces_read_view encountered error reading {abs_path}: {read_err}\n")
 +            return []
 +
 +
@@ -3042,7 +3056,7 @@ index 81dcfde..205d732 100644
          return False
  
  
-@@ -85,84 +452,167 @@ def record_trace(problem_signature: str,
+@@ -85,84 +455,167 @@ def record_trace(problem_signature: str,
                   action_type: str = "command",
                   tags: list = None,
                   workspace_context: str = "",
@@ -3270,7 +3284,7 @@ index 81dcfde..205d732 100644
      if not traces:
          return []
  
-@@ -170,8 +620,35 @@ def recall_traces(query_text: str,
+@@ -170,8 +623,35 @@ def recall_traces(query_text: str,
      if not query_tokens:
          return []
  
@@ -3306,7 +3320,7 @@ index 81dcfde..205d732 100644
          tr_tokens = set(tr.get("tokens", []))
          if not tr_tokens:
              continue
-@@ -197,7 +674,7 @@ def recall_traces(query_text: str,
+@@ -197,7 +677,7 @@ def recall_traces(query_text: str,
  
          if final_score >= threshold:
              scored.append({
@@ -3316,7 +3330,7 @@ index 81dcfde..205d732 100644
                  "matched_tokens": list(intersection)
              })
 diff --git a/scripts/hook_runner.py b/scripts/hook_runner.py
-index a0ef779..8048220 100644
+index a0ef779..6034ed5 100644
 --- a/scripts/hook_runner.py
 +++ b/scripts/hook_runner.py
 @@ -2,33 +2,51 @@
@@ -3666,8 +3680,7 @@ index a0ef779..8048220 100644
 +                    fd = os.open(target_full_path, t_flags)
 +                except OSError:
 +                    continue
- 
--        except Exception:
++
 +                try:
 +                    st = os.fstat(fd)
 +                    if not stat.S_ISREG(st.st_mode):
@@ -3706,7 +3719,8 @@ index a0ef779..8048220 100644
 +                        best_verdict = "STALE_REVIEW"
 +                        best_meta = meta
 +                    continue
-+
+ 
+-        except Exception:
 +            verdict = meta.get("verdict", "UNREVIEWED")
 +            # VULN-005: Highest precedence: approved review immediately returned
 +            if verdict in ("APPROVED", "CONDITIONAL_PASS"):
@@ -3874,19 +3888,20 @@ index a0ef779..8048220 100644
      
      # Skip empty input or slash commands
      if not raw_user_input:
-@@ -254,20 +502,30 @@ def process_hook(payload: dict) -> dict:
+@@ -253,21 +501,31 @@ def process_hook(payload: dict) -> dict:
+     if FILLER_PATTERN.match(raw_user_input) or len(raw_user_input.strip("!.?, \t\n\r")) <= 2:
          return {"injectSteps": []}
  
++    # Redact sensitive credentials first before any truncation to prevent splitting secrets across boundaries (VULN-005)
++    safe_full_input = str(redact_secrets(raw_user_input) or raw_user_input)
      # T010: 2,048-char head clamping invariant
 -    user_input = raw_user_input[:2048]
-+    user_input = str(raw_user_input[:2048])
++    safe_user_input = safe_full_input[:2048]
++    user_input = safe_user_input
      
 -    # Extract workspace paths
 -    workspace_paths = payload.get("workspacePaths") or []
 -    workspace_dir = workspace_paths[0] if workspace_paths else os.getcwd()
-+    # Redact sensitive credentials before storing or staging (VULN-006)
-+    safe_user_input = str(redact_secrets(user_input) or user_input)
-+    
 +    # Extract workspace paths with strict schema validation (VULN-004)
 +    workspace_paths = payload.get("workspacePaths")
 +    workspace_dir = None
@@ -3917,7 +3932,7 @@ index a0ef779..8048220 100644
          if spec_match:
              target_file = spec_match.group(1)
 -        verdict, meta = verify_critic_artifact(workspace_dir, target_file=target_file)
-+        verdict, meta = verify_critic_artifact(workspace_dir, target_file=target_file, user_prompt=safe_user_input)
++        verdict, meta = verify_critic_artifact(workspace_dir, target_file=target_file, user_prompt=raw_user_input)
          if verdict in ("APPROVED", "CONDITIONAL_PASS"):
 -            t_name = meta.get("target_file", "specification") if meta else "specification"
 -            i_hash = meta.get("input_hash", "")[:16] if meta else ""
@@ -3988,12 +4003,12 @@ index a0ef779..8048220 100644
 +                    cursor = conn.cursor()
 +                    cursor.execute(
 +                        """
-+                        INSERT INTO l1_staging_log (session_id, timestamp, user_input, workspace_hash, top_skill, tier_used, recalled_traces)
++                        INSERT OR IGNORE INTO l1_staging_log (session_id, timestamp, user_input, workspace_hash, top_skill, tier_used, recalled_traces)
 +                        VALUES (?, ?, ?, ?, ?, ?, ?)
 +                        """,
 +                        (
 +                            redact_secrets(str(payload.get("sessionId", "session_default")))[:64],
-+                            datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
++                            datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f"),
 +                            safe_user_input[:250],
 +                            canonical_workspace_hash(workspace_dir),
 +                            safe_field(skills[0]["skill"]["name"], 64, single_line=True) if skills else "none",
@@ -4022,7 +4037,7 @@ index a0ef779..8048220 100644
 +                    )
 +                except Exception as ex:
 +                    persist_diag(ex, 256)
-+    except sqlite3.OperationalError as e:
++    except (sqlite3.OperationalError, sqlite3.IntegrityError, sqlite3.DatabaseError) as e:
 +        persist_diag(e, 256)
 +        # VULN-002: Fallback to local append-only spool to prevent data loss under SQLite contention
 +        try:
@@ -4145,7 +4160,7 @@ index a0ef779..8048220 100644
  
      message_text = build_preflight_message(resolution, gatekeeper_text=gatekeeper_text, drift_text=drift_text)
      
-@@ -419,18 +735,58 @@ def process_hook(payload: dict) -> dict:
+@@ -419,18 +735,50 @@ def process_hook(payload: dict) -> dict:
  
  
  def main():
@@ -4161,14 +4176,6 @@ index a0ef779..8048220 100644
 +            raw_bytes = sys.stdin.read(262145).encode("utf-8")
 +        if len(raw_bytes) > 262144:
 +            sys.stderr.write("[!] Warning: stdin payload exceeded 256 KiB ceiling and was truncated\n")
-+            try:
-+                # Drain remaining bytes from pipe buffer to prevent blocking host writer process (Edge Case 2)
-+                while True:
-+                    chunk = sys.stdin.buffer.read(65536) if hasattr(sys.stdin, "buffer") else sys.stdin.read(65536)
-+                    if not chunk:
-+                        break
-+            except Exception:
-+                pass
 +            output = {
 +                "injectSteps": [
 +                    {
@@ -4678,7 +4685,7 @@ index 359c94a..479fbac 100644
              item["fix_error"] = str(e)
  
 diff --git a/scripts/lifecycle_guard.py b/scripts/lifecycle_guard.py
-index a437c33..1e57370 100644
+index a437c33..bd59da2 100644
 --- a/scripts/lifecycle_guard.py
 +++ b/scripts/lifecycle_guard.py
 @@ -6,23 +6,172 @@ daemons, MCP servers, and worker processes.
@@ -4857,13 +4864,14 @@ index a437c33..1e57370 100644
  class LifecycleGuard:
      """
      Production-grade Process Lifecycle Guard.
-@@ -33,140 +182,197 @@ class LifecycleGuard:
+@@ -33,140 +182,217 @@ class LifecycleGuard:
          self.name = name
          self.lock_dir = Path(os.path.expanduser(lock_dir))
          self.lock_file = self.lock_dir / f"{self.name}.pid"
 +        self.mutex_file = self.lock_dir / f"{self.name}.mutex"
          self.heartbeat_interval = heartbeat_interval
 +        self.token = uuid.uuid4().hex
++        self.epoch = 1
  
          self._stop_event = threading.Event()
 +        self._stop_ack = threading.Event()
@@ -4952,17 +4960,13 @@ index a437c33..1e57370 100644
 +        Auto-heals stale locks without split-brain double acquisition races.
          """
          my_pid = os.getpid()
-+        now = time.time()
-         payload = {
-             "pid": my_pid,
-+            "token": self.token,
-             "name": self.name,
+-        payload = {
+-            "pid": my_pid,
+-            "name": self.name,
 -            "started_at": time.time(),
 -            "heartbeat": time.time()
-+            "started_at": now,
-+            "heartbeat": now
-         }
- 
+-        }
+-
 -        # Try atomic creation first
 -        try:
 -            flags = os.O_CREAT | os.O_EXCL | os.O_WRONLY
@@ -4975,7 +4979,9 @@ index a437c33..1e57370 100644
 -            pass
 -        except OSError:
 -            pass
--
++        now = time.time()
++        existing_epoch = 0
+ 
 -        # File exists: inspect candidate lock for liveness & auto-healing
 +        # VULN-LG-001 Fix: Serialize acquisition & reclaim under companion ProcessMutex
          try:
@@ -5011,6 +5017,7 @@ index a437c33..1e57370 100644
 +                            data = json.load(f)
 +                        existing_pid = int(data.get("pid", 0))
 +                        last_heartbeat = float(data.get("heartbeat", data.get("started_at", 0)))
++                        existing_epoch = int(data.get("epoch", 0))
 +
 +                        if existing_pid > 0:
 +                            is_alive = self.is_process_alive(existing_pid)
@@ -5021,15 +5028,25 @@ index a437c33..1e57370 100644
 +                                # Process is alive and heartbeat is fresh -> healthy instance holds lock
 +                                return False
 +                            elif is_alive and is_heartbeat_stale:
-+                                # Process is alive but heartbeat has stopped/hung -> reclaim with diagnostic
++                                # Process is alive but heartbeat has stopped/hung -> reclaim with diagnostic and monotonic fencing epoch
 +                                sys.stderr.write(
 +                                    f"[!] Warning: Process PID {existing_pid} is alive but heartbeat is stale "
-+                                    f"({now - last_heartbeat:.1f}s > {max_stale_window:.1f}s). Reclaiming lock.\n"
++                                    f"({now - last_heartbeat:.1f}s > {max_stale_window:.1f}s). Reclaiming lock with fencing epoch.\n"
 +                                )
 +                            # Dead or stale PID -> proceed to reclaim under companion ProcessMutex
 +                    except Exception:
 +                        # Malformed lockfile -> candidate for reclaim under mutex
 +                        pass
++
++                self.epoch = existing_epoch + 1
++                payload = {
++                    "pid": my_pid,
++                    "token": self.token,
++                    "name": self.name,
++                    "started_at": now,
++                    "heartbeat": now,
++                    "epoch": self.epoch
++                }
 +
 +                # Under mutex, write payload atomically
 +                if self._atomic_write_payload(payload):
@@ -5086,6 +5103,19 @@ index a437c33..1e57370 100644
 +            # If lockfile cannot be read or parsed, DO NOT unlink it!
              pass
  
++    def is_lock_valid(self) -> bool:
++        """Returns True if this instance still holds valid, un-fenced ownership of the lockfile (VULN-002)."""
++        if self._stop_event.is_set():
++            return False
++        try:
++            if not self.lock_file.exists():
++                return False
++            with open(self.lock_file, "r", encoding="utf-8") as f:
++                data = json.load(f)
++            return (data.get("pid") == os.getpid() and data.get("token") == self.token and data.get("epoch") == self.epoch)
++        except Exception:
++            return not self._stop_event.is_set()
++
      def _start_heartbeat(self):
 -        """Background thread updating lockfile heartbeat periodically."""
 +        """
@@ -5111,7 +5141,7 @@ index a437c33..1e57370 100644
 +                    if self._stop_event.is_set():
 +                        break
 +                    try:
-+                        with ProcessMutex(self.mutex_file, timeout=2.0):
++                        with ProcessMutex(self.mutex_file, timeout=0.5):
 +                            if self._stop_event.is_set():
 +                                break
 +                            if not self.lock_file.exists():
@@ -5129,11 +5159,12 @@ index a437c33..1e57370 100644
 +                                    self._stop_event.set()
 +                                continue
 +
-+                            # Strict CAS: Token must exist and match exactly
++                            # Strict CAS: Token, PID, and fencing epoch must match exactly (VULN-002)
 +                            disk_token = data.get("token")
 +                            disk_pid = data.get("pid")
-+                            if disk_pid != os.getpid() or disk_token != self.token:
-+                                # Ownership was lost or reclaimed -> abort heartbeat
++                            disk_epoch = data.get("epoch")
++                            if disk_pid != os.getpid() or disk_token != self.token or disk_epoch != self.epoch:
++                                # Ownership was lost, reclaimed, or fenced by newer epoch -> abort heartbeat
 +                                self._stop_event.set()
 +                                break
 +
@@ -5153,7 +5184,7 @@ index a437c33..1e57370 100644
  
          self._heartbeat_thread = threading.Thread(target=_beat, daemon=True, name=f"{self.name}_heartbeat")
          self._heartbeat_thread.start()
-@@ -191,38 +397,43 @@ class LifecycleGuard:
+@@ -191,38 +417,43 @@ class LifecycleGuard:
      def start_parent_watcher(self, parent_pid: Optional[int] = None, poll_interval: float = 1.0):
          """
          Mode A: Parent Process Watcher (Ideal for MCP Servers & stdio tools).
@@ -5209,7 +5240,7 @@ index a437c33..1e57370 100644
                          break
                      self._stop_event.wait(poll_interval)
  
-@@ -272,7 +483,7 @@ def main():
+@@ -272,7 +503,7 @@ def main():
      parser.add_argument("--cleanup-locks", action="store_true", help="Clean up stale PID locks in run dir")
      args = parser.parse_args()
  
@@ -5218,7 +5249,7 @@ index a437c33..1e57370 100644
          alive = LifecycleGuard.is_process_alive(args.check_pid)
          print(f"PID {args.check_pid} is {'ALIVE' if alive else 'DEAD'}")
      elif args.cleanup_locks:
-@@ -280,14 +491,19 @@ def main():
+@@ -280,14 +511,19 @@ def main():
          cleaned = 0
          if run_path.exists():
              for pfile in run_path.glob("*.pid"):
@@ -6275,7 +6306,7 @@ index 9cd11f5..313083c 100644
 +        sys.stderr.write(f"[!] LỖI revert_invariant({superseded_id}): {type(e).__name__}: {e}\n")
          return False
 diff --git a/scripts/memory_schema.py b/scripts/memory_schema.py
-index 6e0cf68..bf483c9 100644
+index 6e0cf68..dc99c9d 100644
 --- a/scripts/memory_schema.py
 +++ b/scripts/memory_schema.py
 @@ -5,6 +5,7 @@ triggers, and staging tables.
@@ -6361,7 +6392,7 @@ index 6e0cf68..bf483c9 100644
  -- ----------------------------------------------------------------------------
  -- Table 6: activation_events (Tier 3 Consolidation Staging Buffer)
  -- ----------------------------------------------------------------------------
-@@ -149,16 +200,55 @@ CREATE TABLE IF NOT EXISTS activation_events (
+@@ -149,20 +200,62 @@ CREATE TABLE IF NOT EXISTS activation_events (
      tier_used           INTEGER NOT NULL DEFAULT 1,
      recalled_traces     TEXT,                        -- JSON array of recalled memory IDs
      feedback_score      REAL DEFAULT 0.0,            -- +1.0 (success), 0.0 (neutral), -1.0 (failure)
@@ -6411,15 +6442,21 @@ index 6e0cf68..bf483c9 100644
  """
  
  
--def init_database(db_path: str = "omni_memory.db", isolation_level: Optional[str] = "IMMEDIATE") -> sqlite3.Connection:
-+def init_database(db_path: str = "omni_memory.db", isolation_level: Optional[str] = None) -> sqlite3.Connection:
+ def init_database(db_path: str = "omni_memory.db", isolation_level: Optional[str] = "IMMEDIATE") -> sqlite3.Connection:
      """
      Initialize SQLite database with production pragmas, tables, triggers, and indexes.
-+    Defaults to isolation_level=None (autocommit) to safely support manual BEGIN IMMEDIATE (VULN-006).
++    Defaults to isolation_level='IMMEDIATE' to guarantee transaction atomicity with `with conn:` (VULN-004).
++    Internal migration executes in autocommit mode and safely restores requested isolation_level prior to return.
      Returns the active database connection.
      """
      conn = sqlite3.connect(db_path, timeout=5.0, isolation_level=isolation_level)
-@@ -170,12 +260,15 @@ def init_database(db_path: str = "omni_memory.db", isolation_level: Optional[str
+     conn.row_factory = sqlite3.Row
++    target_isolation = conn.isolation_level
++    conn.isolation_level = None
+ 
+     # Verify auto_vacuum mode (2 == INCREMENTAL).
+     # CRITICAL: VACUUM cannot be run inside a transaction; isolation_level must be None
+@@ -170,12 +263,15 @@ def init_database(db_path: str = "omni_memory.db", isolation_level: Optional[str
          mode = conn.execute("PRAGMA auto_vacuum;").fetchone()[0]
          if mode != 2:
              old_iso = conn.isolation_level
@@ -6441,7 +6478,7 @@ index 6e0cf68..bf483c9 100644
      
      # Apply pragmas
      conn.execute("PRAGMA journal_mode = WAL;")
-@@ -186,7 +279,196 @@ def init_database(db_path: str = "omni_memory.db", isolation_level: Optional[str
+@@ -186,7 +282,197 @@ def init_database(db_path: str = "omni_memory.db", isolation_level: Optional[str
      conn.execute("PRAGMA busy_timeout = 5000;")
      conn.execute("PRAGMA foreign_keys = ON;")
      
@@ -6640,9 +6677,10 @@ index 6e0cf68..bf483c9 100644
 +    if "last_error" not in verified_ae:
 +        raise RuntimeError(f"activation_events missing last_error column (expected last_error; found {verified_ae})")
 +
++    conn.isolation_level = target_isolation
      return conn
 diff --git a/scripts/memory_utils.py b/scripts/memory_utils.py
-index 7107b02..8eb1d81 100644
+index 7107b02..e854393 100644
 --- a/scripts/memory_utils.py
 +++ b/scripts/memory_utils.py
 @@ -4,10 +4,190 @@ Provides diacritic folding, defensive FTS5 query sanitization, and workspace has
@@ -6875,7 +6913,7 @@ index 7107b02..8eb1d81 100644
  
      if not filtered:
          return '""'
-@@ -63,17 +247,352 @@ def sanitize_fts5_query(query: Optional[str], fold: bool = False) -> str:
+@@ -63,17 +247,358 @@ def sanitize_fts5_query(query: Optional[str], fold: bool = False) -> str:
      return " ".join(f'"{token}"' for token in filtered)
  
  
@@ -7071,69 +7109,75 @@ index 7107b02..8eb1d81 100644
 +            # Verifier MUST NOT auto-provision! Fail closed cleanly (VULN-001).
 +            return None
 +
-+        # 3. Provision key with mutual exclusion lock to eliminate last-writer-wins race
-+        key_dir = os.path.dirname(key_file)
-+        os.makedirs(key_dir, exist_ok=True)
-+        from workspace_sanitizer import TrustFileLock
++    # Step 3: Provision key with double-checked locking: release _KEY_CACHE_LOCK before acquiring TrustFileLock (Hazard 40)
++    key_dir = os.path.dirname(key_file)
++    os.makedirs(key_dir, exist_ok=True)
++    from workspace_sanitizer import TrustFileLock
 +
-+        with TrustFileLock(f"{key_file}.lock", timeout=5.0):
-+            # Under lock, check if another process won the race
-+            if os.path.exists(key_file):
-+                t_flags = os.O_RDONLY
-+                if hasattr(os, "O_NOFOLLOW"):
-+                    t_flags |= os.O_NOFOLLOW
-+                if hasattr(os, "O_NONBLOCK"):
-+                    t_flags |= os.O_NONBLOCK
-+                if hasattr(os, "O_BINARY"):
-+                    t_flags |= os.O_BINARY
-+                corrupted = False
++    with TrustFileLock(f"{key_file}.lock", timeout=5.0):
++        # Under lock, re-check under short mutex if another process/thread provisioned
++        with _KEY_CACHE_LOCK:
++            if _CACHED_HMAC_KEY is not None:
++                return _CACHED_HMAC_KEY
++
++        if os.path.exists(key_file):
++            t_flags = os.O_RDONLY
++            if hasattr(os, "O_NOFOLLOW"):
++                t_flags |= os.O_NOFOLLOW
++            if hasattr(os, "O_NONBLOCK"):
++                t_flags |= os.O_NONBLOCK
++            if hasattr(os, "O_BINARY"):
++                t_flags |= os.O_BINARY
++            corrupted = False
++            try:
++                fd = os.open(key_file, t_flags)
 +                try:
-+                    fd = os.open(key_file, t_flags)
-+                    try:
-+                        if _verify_key_file_security(fd, key_file):
-+                            k = os.read(fd, 65).strip()
-+                            if _is_valid_hex_key(k):
++                    if _verify_key_file_security(fd, key_file):
++                        k = os.read(fd, 65).strip()
++                        if _is_valid_hex_key(k):
++                            with _KEY_CACHE_LOCK:
 +                                _CACHED_HMAC_KEY = k
 +                                _CACHED_KEY_MTIME = os.fstat(fd).st_mtime
-+                                return k
-+                            if 0 < len(k) < 64:
-+                                corrupted = True
-+                    finally:
-+                        os.close(fd)
++                            return k
++                        if 0 < len(k) < 64:
++                            corrupted = True
++                finally:
++                    os.close(fd)
 +
-+                    if corrupted:
-+                        ts = int(time.time())
-+                        bak = f"{key_file}.corrupt.{ts}.bak"
-+                        try:
-+                            os.replace(key_file, bak)
-+                            persist_diag(f"Producer quarantined corrupted HMAC key (<64 hex chars) to {bak}", 256)
-+                        except OSError:
-+                            pass
-+                except (OSError, IOError) as err:
-+                    persist_diag(f"HMAC key file provisioning check error: {err}", 256)
-+
-+            new_key = os.urandom(32).hex().encode("utf-8")
-+            tmp_path = None
-+            try:
-+                with tempfile.NamedTemporaryFile(dir=key_dir, delete=False, prefix=".audit_key_", suffix=".tmp") as tmp:
-+                    tmp_path = tmp.name
-+                    if hasattr(os, "fchmod"):
-+                        os.fchmod(tmp.fileno(), 0o600)
-+                    tmp.write(new_key)
-+                    tmp.flush()
-+                    os.fsync(tmp.fileno())
-+
-+                os.replace(tmp_path, key_file)
-+                _CACHED_HMAC_KEY = new_key
-+                _CACHED_KEY_MTIME = os.path.getmtime(key_file)
-+                return new_key
-+            except Exception as e:
-+                if tmp_path and os.path.exists(tmp_path):
++                if corrupted:
++                    ts = int(time.time())
++                    bak = f"{key_file}.corrupt.{ts}.bak"
 +                    try:
-+                        os.unlink(tmp_path)
++                        os.replace(key_file, bak)
++                        persist_diag(f"Producer quarantined corrupted HMAC key (<64 hex chars) to {bak}", 256)
 +                    except OSError:
 +                        pass
-+                raise RuntimeError(f"Failed to provision audit HMAC key: {e}")
++            except (OSError, IOError) as err:
++                persist_diag(f"HMAC key file provisioning check error: {err}", 256)
++
++        new_key = os.urandom(32).hex().encode("utf-8")
++        tmp_path = None
++        try:
++            with tempfile.NamedTemporaryFile(dir=key_dir, delete=False, prefix=".audit_key_", suffix=".tmp") as tmp:
++                tmp_path = tmp.name
++                if hasattr(os, "fchmod"):
++                    os.fchmod(tmp.fileno(), 0o600)
++                tmp.write(new_key)
++                tmp.flush()
++                os.fsync(tmp.fileno())
++
++            os.replace(tmp_path, key_file)
++            with _KEY_CACHE_LOCK:
++                _CACHED_HMAC_KEY = new_key
++                _CACHED_KEY_MTIME = os.path.getmtime(key_file)
++            return new_key
++        except Exception as e:
++            if tmp_path and os.path.exists(tmp_path):
++                try:
++                    os.unlink(tmp_path)
++                except OSError:
++                    pass
++            raise RuntimeError(f"Failed to provision audit HMAC key: {e}")
 +
 +
 +def _canonical_meta_payload(meta: dict) -> bytes:
@@ -8087,7 +8131,7 @@ index 2f7fb07..d736d55 100644
 +    result = synthesize_and_promote_skill(args.name, args.desc, args.domain, args.test, allow_exec=args.allow_exec)
      print(json.dumps(result, indent=2))
 diff --git a/scripts/workspace_sanitizer.py b/scripts/workspace_sanitizer.py
-index 06cb87a..69733a3 100644
+index 06cb87a..184b27f 100644
 --- a/scripts/workspace_sanitizer.py
 +++ b/scripts/workspace_sanitizer.py
 @@ -4,25 +4,360 @@ Omni-Kernel v4.1: Workspace Sanitizer & Guard
@@ -8358,7 +8402,7 @@ index 06cb87a..69733a3 100644
 +def is_trusted_workspace(workspace_path: str, trust_db_path: str = DEFAULT_TRUST_DB) -> bool:
 +    """
 +    Checks whether a repository directory has been explicitly approved by the user.
-+    Uses lock-free fast-path read with bounded retry; avoids serializing on reads (VULN-106).
++    Uses sub-millisecond read-only path without sleeps, mutex stalls, or read-path quarantine (VULN-106).
 +    """
 +    if not isinstance(workspace_path, str) or not workspace_path.strip():
 +        return False
@@ -8369,25 +8413,25 @@ index 06cb87a..69733a3 100644
 +    if not os.path.exists(db_path):
 +        return False
 +
-+    # Lock-free fast read path with retries
-+    for _ in range(3):
-+        try:
-+            with open(db_path, "r", encoding="utf-8") as f:
-+                data = json.load(f)
-+            if isinstance(data, dict) and isinstance(data.get("trusted"), list):
-+                trusted_dirs = [normalize_path(p) for p in data["trusted"] if isinstance(p, str)]
-+                return norm_target in trusted_dirs
-+        except (OSError, json.JSONDecodeError):
-+            time.sleep(0.01)
-+
-+    # Fallback to locked read if contention occurred
 +    try:
-+        with TrustFileLock(db_path, timeout=1.0):
-+            data = _load_trust_db_locked(db_path)
-+            trusted_dirs = [normalize_path(p) for p in data.get("trusted", []) if isinstance(p, str)]
++        with open(db_path, "r", encoding="utf-8") as f:
++            data = json.load(f)
++        if isinstance(data, dict) and isinstance(data.get("trusted"), list):
++            trusted_dirs = [normalize_path(p) for p in data["trusted"] if isinstance(p, str)]
 +            return norm_target in trusted_dirs
++    except json.JSONDecodeError:
++        # Definitive syntax corruption: acquire lock to quarantine safely
++        try:
++            with TrustFileLock(f"{db_path}.lock", timeout=0.5):
++                data = _load_trust_db_locked(db_path)
++                trusted_dirs = [normalize_path(p) for p in data.get("trusted", []) if isinstance(p, str)]
++                return norm_target in trusted_dirs
++        except Exception:
++            return False
 +    except Exception:
++        # Transient I/O contention (AV lock, sharing violation): fail closed immediately without stalling or mutating
 +        return False
++    return False
 +
 +
 +def add_trusted_workspace(workspace_path: str, trust_db_path: str = DEFAULT_TRUST_DB) -> bool:
