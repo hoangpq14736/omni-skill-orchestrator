@@ -275,7 +275,7 @@ index 81a1bb5..92e9b72 100644
  
  if __name__ == "__main__":
 diff --git a/scripts/consolidator.py b/scripts/consolidator.py
-index 07a8939..d9e1130 100644
+index 07a8939..100d9cb 100644
 --- a/scripts/consolidator.py
 +++ b/scripts/consolidator.py
 @@ -7,13 +7,16 @@ apply bounded Ebbinghaus decay, manage soft-archiving, and perform WAL maintenan
@@ -376,7 +376,7 @@ index 07a8939..d9e1130 100644
  def calculate_ebbinghaus_stability(
      s0: float,
      lambda_0: float,
-@@ -95,280 +160,1130 @@ def calculate_ebbinghaus_stability(
+@@ -95,280 +160,1165 @@ def calculate_ebbinghaus_stability(
      return max(0.0, min(1.0, stability))
  
  
@@ -709,10 +709,36 @@ index 07a8939..d9e1130 100644
 +                            pass
 +                    else:
 +                        self.authorized_hashes.add(r_hash.lower())
++
++            # VULN-106: Reconcile unconsolidated legacy 32-hex subfolder partitions belonging to workspace_root tree
++            if self.workspace_root:
++                canon_root_md5 = hashlib.md5(os.path.normcase(os.path.realpath(os.path.abspath(unicodedata.normalize("NFC", str(self.workspace_root))))).encode("utf-8")).hexdigest().lower()
++                self.authorized_hashes.add(canon_root_md5)
++                c.execute("SELECT DISTINCT workspace_dir FROM activation_events WHERE is_consolidated = 0 AND length(workspace_dir) = 32;")
++                norm_root = os.path.normcase(os.path.normpath(os.path.realpath(os.path.abspath(self.workspace_root))))
++                for (uncons_h,) in c.fetchall():
++                    if uncons_h and uncons_h.lower() not in self.authorized_hashes:
++                        reg_match = c.execute("SELECT workspace_path FROM workspace_registry WHERE lower(workspace_hash) = ?;", (uncons_h.lower(),)).fetchone()
++                        if reg_match and reg_match[0]:
++                            try:
++                                norm_cand = os.path.normcase(os.path.normpath(os.path.realpath(os.path.abspath(reg_match[0]))))
++                                if os.path.commonpath([norm_root, norm_cand]) == norm_root:
++                                    self.authorized_hashes.add(uncons_h.lower())
++                            except Exception:
++                                pass
 +        except Exception as reg_err:
 +            persist_diag(reg_err, 256)
 +            sys.stderr.write(f"[!] Warning: Failed to sync authorized_hashes from workspace_registry: {reg_err}\n")
-+
+ 
+-        drained_ids = []
+-        for row in rows:
+-            s_id, session_id, ts, u_input, ws_hash, top_skill, tier, recalled = row
+-            cur.execute(
+-                """
+-                INSERT INTO activation_events (session_id, timestamp, user_input, workspace_dir, top_skill, tier_used, recalled_traces, feedback_score, is_consolidated)
+-                VALUES (?, ?, ?, ?, ?, ?, ?, 0.0, 0)
+-                """,
+-                (session_id, ts, u_input, ws_hash, top_skill, tier, recalled)
 +        if workspace_hash is not None:
 +            if not is_valid_hex_hash(workspace_hash):
 +                raise ValueError(f"Invalid workspace_hash: {workspace_hash!r}")
@@ -725,16 +751,7 @@ index 07a8939..d9e1130 100644
 +            self.workspace_hash = canonical_workspace_hash(self.workspace_root)
 +        else:
 +            self.workspace_hash = None
- 
--        drained_ids = []
--        for row in rows:
--            s_id, session_id, ts, u_input, ws_hash, top_skill, tier, recalled = row
--            cur.execute(
--                """
--                INSERT INTO activation_events (session_id, timestamp, user_input, workspace_dir, top_skill, tier_used, recalled_traces, feedback_score, is_consolidated)
--                VALUES (?, ?, ?, ?, ?, ?, ?, 0.0, 0)
--                """,
--                (session_id, ts, u_input, ws_hash, top_skill, tier, recalled)
++
 +    def register_workspace(self, workspace_path: str) -> str:
 +        """Registers and authorizes a sub-workspace within workspace_root and persists to workspace_registry (VULN-003, VULN-007)."""
 +        h = resolve_workspace_hash(workspace_path, approved_root=self.workspace_root, allow_unscoped=self.allow_unscoped)
@@ -784,7 +801,7 @@ index 07a8939..d9e1130 100644
 +        spool_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "l1_staging_spool.jsonl")
 +        spool_lock = spool_path + ".lock"
 +
-+        # VULN-103: Crash-recovery sweep for orphaned .proc_* files left by previous crashed drains
++        # VULN-103 & VULN-102: Crash-recovery sweep for orphaned .proc_* files left by previous crashed drains
 +        spool_dir = os.path.dirname(spool_path)
 +        base_name = os.path.basename(spool_path)
 +        try:
@@ -793,10 +810,12 @@ index 07a8939..d9e1130 100644
 +                    stale_proc = os.path.join(spool_dir, fname)
 +                    try:
 +                        if os.path.isfile(stale_proc) and os.path.getsize(stale_proc) > 0:
++                            recovered_tmp = f"{stale_proc}.rec_{uuid.uuid4().hex[:6]}"
++                            os.replace(stale_proc, recovered_tmp)
 +                            with TrustFileLock(spool_lock, timeout=2.0):
-+                                with open(stale_proc, "r", encoding="utf-8") as rf, open(spool_path, "a", encoding="utf-8") as wf:
++                                with open(recovered_tmp, "r", encoding="utf-8") as rf, open(spool_path, "a", encoding="utf-8") as wf:
 +                                    wf.write(rf.read())
-+                            os.remove(stale_proc)
++                            os.remove(recovered_tmp)
 +                            persist_diag(f"Recovered orphaned spool file {fname} into live spool", 256)
 +                    except Exception as rec_err:
 +                        persist_diag(rec_err, 256)
@@ -864,7 +883,7 @@ index 07a8939..d9e1130 100644
 +            if parsed_spool_rows:
 +                cur.executemany(
 +                    """
-+                    INSERT INTO l1_staging_log (session_id, timestamp, user_input, workspace_hash, top_skill, tier_used, recalled_traces)
++                    INSERT OR IGNORE INTO l1_staging_log (session_id, timestamp, user_input, workspace_hash, top_skill, tier_used, recalled_traces)
 +                    VALUES (?, ?, ?, ?, ?, ?, ?)
 +                    """,
 +                    parsed_spool_rows
@@ -917,7 +936,7 @@ index 07a8939..d9e1130 100644
 +                    safe_recalled = json.dumps(raw_recalled, ensure_ascii=False) if isinstance(raw_recalled, (dict, list)) else (str(raw_recalled) if raw_recalled is not None else None)
 +                    cur.execute(
 +                        """
-+                        INSERT INTO activation_events (session_id, timestamp, user_input, workspace_dir, top_skill, tier_used, recalled_traces, feedback_score, is_consolidated)
++                        INSERT OR IGNORE INTO activation_events (session_id, timestamp, user_input, workspace_dir, top_skill, tier_used, recalled_traces, feedback_score, is_consolidated)
 +                        VALUES (?, ?, ?, ?, ?, ?, ?, 0.0, 0)
 +                        """,
 +                        (session_id, ts, safe_input, ws_hash, safe_skill, tier, safe_recalled)
@@ -1019,15 +1038,23 @@ index 07a8939..d9e1130 100644
 +                    if row_path and row_path[0]:
 +                        target_path = row_path[0]
 +                leg_h = legacy_workspace_hash(target_path) if target_path else self.workspace_hash
++                match_hashes = set(self.authorized_hashes) if self.authorized_hashes else set()
++                match_hashes.add(self.workspace_hash)
++                if target_path:
++                    match_hashes.add(target_path)
++                if leg_h:
++                    match_hashes.add(leg_h)
++                query_hashes = list(match_hashes)
++                placeholders = ",".join("?" for _ in query_hashes)
 +                cur.execute(
-+                    """
++                    f"""
 +                    SELECT event_id, session_id, timestamp, user_input, workspace_dir, feedback_score
 +                    FROM activation_events
-+                    WHERE is_consolidated = 0 AND (workspace_dir = ? OR workspace_dir = ? OR workspace_dir = ?)
++                    WHERE is_consolidated = 0 AND workspace_dir IN ({placeholders})
 +                    ORDER BY event_id ASC
 +                    LIMIT ?;
 +                    """,
-+                    (self.workspace_hash, target_path or self.workspace_hash, leg_h, batch_size)
++                    (*query_hashes, batch_size)
 +                )
 +            else:
 +                cur.execute(
@@ -1109,15 +1136,23 @@ index 07a8939..d9e1130 100644
 +                    if row_path and row_path[0]:
 +                        target_path = row_path[0]
 +                leg_h = legacy_workspace_hash(target_path) if target_path else self.workspace_hash
++                match_hashes = set(self.authorized_hashes) if self.authorized_hashes else set()
++                match_hashes.add(self.workspace_hash)
++                if target_path:
++                    match_hashes.add(target_path)
++                if leg_h:
++                    match_hashes.add(leg_h)
++                query_hashes = list(match_hashes)
++                placeholders = ",".join("?" for _ in query_hashes)
 +                cur.execute(
-+                    """
++                    f"""
 +                    SELECT event_id, session_id, timestamp, user_input, workspace_dir, feedback_score
 +                    FROM activation_events
-+                    WHERE is_consolidated = 0 AND (workspace_dir = ? OR workspace_dir = ? OR workspace_dir = ?)
++                    WHERE is_consolidated = 0 AND workspace_dir IN ({placeholders})
 +                    ORDER BY event_id ASC
 +                    LIMIT ?;
 +                    """,
-+                    (self.workspace_hash, target_path or self.workspace_hash, leg_h, batch_size)
++                    (*query_hashes, batch_size)
 +                )
 +            else:
 +                cur.execute(
@@ -1718,7 +1753,7 @@ index 07a8939..d9e1130 100644
      # Lifecycle & Mutual Exclusion Guard (Anti-Zombie & Auto-Healing Lock)
      from lifecycle_guard import LifecycleGuard
      guard = LifecycleGuard("omni_consolidator")
-@@ -384,12 +1299,15 @@ def main():
+@@ -384,12 +1334,15 @@ def main():
      guard.register_cleanup(lambda: conn.close())
  
      try:
@@ -1735,7 +1770,7 @@ index 07a8939..d9e1130 100644
                  if res.get("events_processed", 0) > 0 or res.get("promoted_traces", 0) > 0:
                      last_activity = time.time()
                  elif time.time() - last_activity > args.idle_timeout:
-@@ -399,6 +1317,9 @@ def main():
+@@ -399,6 +1352,9 @@ def main():
          else:
              result = engine.consolidate_batch(batch_size=100, dry_run=args.dry_run)
              print(json.dumps(result, indent=2))
@@ -2535,7 +2570,7 @@ index 90b63a4..d9d0957 100644
          "Implement Paxos",
          "Đổi màu nút Submit thành màu đỏ, chỉnh padding 12px, margin 8px, căn giữa text, bo tròn border 4px và thêm shadow",
 diff --git a/scripts/experiential_memory.py b/scripts/experiential_memory.py
-index 81dcfde..7293492 100644
+index 81dcfde..205d732 100644
 --- a/scripts/experiential_memory.py
 +++ b/scripts/experiential_memory.py
 @@ -12,17 +12,28 @@ import sys
@@ -2570,15 +2605,46 @@ index 81dcfde..7293492 100644
  
  
  def tokenize(text: str) -> list:
-@@ -34,49 +45,375 @@ def tokenize(text: str) -> list:
+@@ -34,49 +45,405 @@ def tokenize(text: str) -> list:
      return list(set(tokens))
  
  
 -def load_traces(traces_path: str = None) -> dict:
 -    """Loads stored execution traces in <0.02ms using mtime in-memory caching."""
 -    global _CACHE_DATA, _CACHE_MTIME, _INVERTED_INDEX
++def _get_traces_read_view(traces_path: str = None) -> list:
++    """Internal fast read-only view of traces list under _MEM_LOCK for sub-millisecond recall (VULN-103)."""
++    global _CACHE, _MEM_LOCK
++    path = traces_path or TRACES_FILE
++    abs_path = os.path.abspath(path)
++    if not os.path.exists(abs_path):
++        return []
++    with _MEM_LOCK:
++        try:
++            stat_res = os.stat(abs_path)
++            cache_sig = (stat_res.st_mtime_ns, stat_res.st_size, getattr(stat_res, "st_ino", 0))
++            cache_entry = _CACHE.get(abs_path)
++            if cache_entry is not None and cache_sig == cache_entry.get("sig") and (traces_path is None or traces_path == TRACES_FILE):
++                return list(cache_entry["data"].get("traces", []))
++            with open(abs_path, "r", encoding="utf-8") as f:
++                data = json.load(f)
++                scrubbed = []
++                for tr in data.get("traces", []):
++                    try:
++                        scrubbed.append(_redact_trace_dict(tr))
++                    except Exception as red_err:
++                        sys.stderr.write(f"[!] Warning: Dropping unredactable trace {tr.get('id', 'unknown')}: {red_err}\n")
++                data["traces"] = scrubbed
++                _CACHE[abs_path] = {"data": data, "sig": cache_sig}
++                return list(data.get("traces", []))
++        except Exception:
++            return []
++
++
 +def load_traces(traces_path: str = None, bypass_cache: bool = False) -> dict:
-+    """Loads stored execution traces using (mtime_ns, size, inode) cache guarded by _MEM_LOCK (VULN-003, VULN-004)."""
++    """Loads stored execution traces using (mtime_ns, size, inode) cache guarded by _MEM_LOCK (VULN-003, VULN-004, VULN-103).
++    Guarantees isolation against shared mutable state by returning an independent deep copy to public callers.
++    """
 +    global _CACHE, _MEM_LOCK
      path = traces_path or TRACES_FILE
 -    if not os.path.exists(path):
@@ -2592,8 +2658,7 @@ index 81dcfde..7293492 100644
 +            cache_sig = (stat_res.st_mtime_ns, stat_res.st_size, getattr(stat_res, "st_ino", 0))
 +            cache_entry = _CACHE.get(abs_path)
 +            if not bypass_cache and cache_entry is not None and cache_sig == cache_entry.get("sig") and (traces_path is None or traces_path == TRACES_FILE):
-+                # VULN-105: Return cached dict directly without deepcopy to guarantee sub-millisecond hot-path recall (<0.3ms)
-+                return cache_entry["data"]
++                return copy.deepcopy(cache_entry["data"])
 +            with open(abs_path, "r", encoding="utf-8") as f:
 +                data = json.load(f)
 +                scrubbed = []
@@ -2605,7 +2670,7 @@ index 81dcfde..7293492 100644
 +                        sys.stderr.write(f"[!] Warning: Dropping unredactable trace {tr.get('id', 'unknown')}: {red_err}\n")
 +                data["traces"] = scrubbed
 +                _CACHE[abs_path] = {"data": data, "sig": cache_sig}
-+                return data
++                return copy.deepcopy(data)
 +        except json.JSONDecodeError as jde:
 +            # VULN-004: Corrupt JSON must raise, NOT return empty dict, to prevent overwriting prior traces
 +            sys.stderr.write(f"[!] LỖI load_traces: Traces file {abs_path} is corrupt JSON: {jde}\n")
@@ -2977,7 +3042,7 @@ index 81dcfde..7293492 100644
          return False
  
  
-@@ -85,83 +422,167 @@ def record_trace(problem_signature: str,
+@@ -85,84 +452,167 @@ def record_trace(problem_signature: str,
                   action_type: str = "command",
                   tags: list = None,
                   workspace_context: str = "",
@@ -3196,15 +3261,16 @@ index 81dcfde..7293492 100644
          return []
  
 -    data = load_traces(traces_path)
+-    traces = data.get("traces", [])
 +    try:
-+        data = load_traces(traces_path)
++        traces = _get_traces_read_view(traces_path)
 +    except Exception as load_err:
 +        sys.stderr.write(f"[!] Warning: recall_traces degraded gracefully on unreadable traces file: {load_err}\n")
 +        return []
-     traces = data.get("traces", [])
      if not traces:
          return []
-@@ -170,8 +591,35 @@ def recall_traces(query_text: str,
+ 
+@@ -170,8 +620,35 @@ def recall_traces(query_text: str,
      if not query_tokens:
          return []
  
@@ -3240,8 +3306,17 @@ index 81dcfde..7293492 100644
          tr_tokens = set(tr.get("tokens", []))
          if not tr_tokens:
              continue
+@@ -197,7 +674,7 @@ def recall_traces(query_text: str,
+ 
+         if final_score >= threshold:
+             scored.append({
+-                "trace": tr,
++                "trace": copy.deepcopy(tr),
+                 "score": round(final_score, 3),
+                 "matched_tokens": list(intersection)
+             })
 diff --git a/scripts/hook_runner.py b/scripts/hook_runner.py
-index a0ef779..eaad2a9 100644
+index a0ef779..8048220 100644
 --- a/scripts/hook_runner.py
 +++ b/scripts/hook_runner.py
 @@ -2,33 +2,51 @@
@@ -3577,8 +3652,7 @@ index a0ef779..eaad2a9 100644
 +                        best_verdict = "STALE_REVIEW"
 +                        best_meta = meta
 +                    continue
- 
--        except Exception:
++
 +                # Open target once with O_RDONLY | O_NOFOLLOW | O_NONBLOCK to eliminate TOCTOU and FIFO blocking races (VULN-002)
 +                t_flags = os.O_RDONLY
 +                if hasattr(os, "O_NOFOLLOW"):
@@ -3592,7 +3666,8 @@ index a0ef779..eaad2a9 100644
 +                    fd = os.open(target_full_path, t_flags)
 +                except OSError:
 +                    continue
-+
+ 
+-        except Exception:
 +                try:
 +                    st = os.fstat(fd)
 +                    if not stat.S_ISREG(st.st_mode):
@@ -4070,7 +4145,7 @@ index a0ef779..eaad2a9 100644
  
      message_text = build_preflight_message(resolution, gatekeeper_text=gatekeeper_text, drift_text=drift_text)
      
-@@ -419,18 +735,50 @@ def process_hook(payload: dict) -> dict:
+@@ -419,18 +735,58 @@ def process_hook(payload: dict) -> dict:
  
  
  def main():
@@ -4086,6 +4161,14 @@ index a0ef779..eaad2a9 100644
 +            raw_bytes = sys.stdin.read(262145).encode("utf-8")
 +        if len(raw_bytes) > 262144:
 +            sys.stderr.write("[!] Warning: stdin payload exceeded 256 KiB ceiling and was truncated\n")
++            try:
++                # Drain remaining bytes from pipe buffer to prevent blocking host writer process (Edge Case 2)
++                while True:
++                    chunk = sys.stdin.buffer.read(65536) if hasattr(sys.stdin, "buffer") else sys.stdin.read(65536)
++                    if not chunk:
++                        break
++            except Exception:
++                pass
 +            output = {
 +                "injectSteps": [
 +                    {
@@ -5163,7 +5246,7 @@ index a437c33..1e57370 100644
                      pass
          print(f"Done. Cleaned {cleaned} stale locks.")
 diff --git a/scripts/mcp_gateway.py b/scripts/mcp_gateway.py
-index df81f0d..0a32745 100644
+index df81f0d..e8d3334 100644
 --- a/scripts/mcp_gateway.py
 +++ b/scripts/mcp_gateway.py
 @@ -1,8 +1,10 @@
@@ -5186,7 +5269,7 @@ index df81f0d..0a32745 100644
  
  _SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
  if _SCRIPT_DIR not in sys.path:
-@@ -22,20 +25,33 @@ DEFAULT_MCP_DIRS = [
+@@ -22,20 +25,34 @@ DEFAULT_MCP_DIRS = [
  ]
  GLOBAL_MCP_CONFIG = os.path.expanduser(r"~\.gemini\config\mcp_config.json")
  
@@ -5198,6 +5281,7 @@ index df81f0d..0a32745 100644
 +
 +# Module concurrency lock
 +_MCP_LOCK = threading.Lock()
++_MCP_REINDEXING = False
 +_CACHED_MCP_INDEX = None
 +_CACHED_MCP_TIME = 0.0
 +_LAST_STALE_CHECK = 0.0
@@ -5225,7 +5309,7 @@ index df81f0d..0a32745 100644
      Returns a dict mapping server_name -> { "path": server_path, "tool_files": [paths], "instructions": str }
      Runs in <15ms.
      """
-@@ -46,7 +62,6 @@ def discover_mcp_servers(base_dirs: list = None, extra_workspace_paths: list = N
+@@ -46,7 +63,6 @@ def discover_mcp_servers(base_dirs: list = None, extra_workspace_paths: list = N
          if not os.path.exists(base):
              continue
  
@@ -5233,7 +5317,7 @@ index df81f0d..0a32745 100644
          try:
              with os.scandir(base) as it:
                  for entry in it:
-@@ -62,9 +77,10 @@ def discover_mcp_servers(base_dirs: list = None, extra_workspace_paths: list = N
+@@ -62,9 +78,10 @@ def discover_mcp_servers(base_dirs: list = None, extra_workspace_paths: list = N
                          with os.scandir(server_path) as sit:
                              for f in sit:
                                  if f.is_file():
@@ -5246,7 +5330,7 @@ index df81f0d..0a32745 100644
                                          try:
                                              with open(f.path, "r", encoding="utf-8", errors="replace") as inf:
                                                  instructions = inf.read(500)
-@@ -88,14 +104,15 @@ def discover_mcp_servers(base_dirs: list = None, extra_workspace_paths: list = N
+@@ -88,14 +105,15 @@ def discover_mcp_servers(base_dirs: list = None, extra_workspace_paths: list = N
          try:
              with open(GLOBAL_MCP_CONFIG, "r", encoding="utf-8") as f:
                  gcfg = json.load(f)
@@ -5270,7 +5354,7 @@ index df81f0d..0a32745 100644
          except Exception:
              pass
  
-@@ -108,13 +125,15 @@ def discover_mcp_servers(base_dirs: list = None, extra_workspace_paths: list = N
+@@ -108,13 +126,15 @@ def discover_mcp_servers(base_dirs: list = None, extra_workspace_paths: list = N
                      try:
                          with open(ws_mcp, "r", encoding="utf-8") as f:
                              wcfg = json.load(f)
@@ -5293,7 +5377,7 @@ index df81f0d..0a32745 100644
                      except Exception:
                          pass
  
-@@ -124,12 +143,7 @@ def discover_mcp_servers(base_dirs: list = None, extra_workspace_paths: list = N
+@@ -124,12 +144,7 @@ def discover_mcp_servers(base_dirs: list = None, extra_workspace_paths: list = N
  def index_mcp_tools(servers: dict = None) -> dict:
      """
      Parses and indexes all MCP tools into a high-speed routing dictionary.
@@ -5307,7 +5391,7 @@ index df81f0d..0a32745 100644
      """
      if servers is None:
          servers = discover_mcp_servers()
-@@ -140,16 +154,35 @@ def index_mcp_tools(servers: dict = None) -> dict:
+@@ -140,16 +155,35 @@ def index_mcp_tools(servers: dict = None) -> dict:
      for server_name, sinfo in servers.items():
          for tfile in sinfo.get("tool_files", []):
              try:
@@ -5348,7 +5432,7 @@ index df81f0d..0a32745 100644
  
              # Tokenize for indexing
              name_tokens = tokenize(tool_name)
-@@ -159,7 +192,7 @@ def index_mcp_tools(servers: dict = None) -> dict:
+@@ -159,7 +193,7 @@ def index_mcp_tools(servers: dict = None) -> dict:
              for p in properties.keys():
                  prop_tokens.extend(tokenize(p))
  
@@ -5357,7 +5441,7 @@ index df81f0d..0a32745 100644
  
              tool_obj = {
                  "server": server_name,
-@@ -188,18 +221,9 @@ def index_mcp_tools(servers: dict = None) -> dict:
+@@ -188,18 +222,9 @@ def index_mcp_tools(servers: dict = None) -> dict:
      }
  
  
@@ -5378,7 +5462,7 @@ index df81f0d..0a32745 100644
          return True
      indexed_at = index_data.get("indexed_at", 0)
      if not indexed_at:
-@@ -215,20 +239,18 @@ def is_mcp_stale(index_data: dict, base_dirs: list = None) -> bool:
+@@ -215,20 +240,18 @@ def is_mcp_stale(index_data: dict, base_dirs: list = None) -> bool:
              with os.scandir(base) as it:
                  for entry in it:
                      if entry.is_dir():
@@ -5404,13 +5488,14 @@ index df81f0d..0a32745 100644
      if os.path.exists(GLOBAL_MCP_CONFIG):
          try:
              if os.path.getmtime(GLOBAL_MCP_CONFIG) > indexed_at:
-@@ -240,25 +262,25 @@ def is_mcp_stale(index_data: dict, base_dirs: list = None) -> bool:
+@@ -240,25 +263,43 @@ def is_mcp_stale(index_data: dict, base_dirs: list = None) -> bool:
  
  
  def get_mcp_index(force_refresh: bool = False, base_dirs: list = None) -> dict:
 -    """Returns cached MCP index, automatically re-indexing if files changed or TTL expired."""
-+    """Returns cached MCP index under module lock, reindexing if stale."""
-     global _CACHED_MCP_INDEX, _CACHED_MCP_TIME, _LAST_STALE_CHECK
+-    global _CACHED_MCP_INDEX, _CACHED_MCP_TIME, _LAST_STALE_CHECK
++    """Returns cached MCP index with copy-on-write pointer swap and stale-while-revalidate (VULN-105)."""
++    global _CACHED_MCP_INDEX, _CACHED_MCP_TIME, _LAST_STALE_CHECK, _MCP_REINDEXING
      now = time.time()
 -    
 -    # If custom directories passed (e.g. testing) or force_refresh or not yet indexed
@@ -5421,32 +5506,50 @@ index df81f0d..0a32745 100644
 -        elif now - _LAST_STALE_CHECK > 1.5:
 -            _LAST_STALE_CHECK = now
 -            need_refresh = is_mcp_stale(_CACHED_MCP_INDEX, base_dirs) or (now - _CACHED_MCP_TIME > 120)
- 
+-
 -    if need_refresh:
--        servers = discover_mcp_servers(base_dirs)
++
++    with _MCP_LOCK:
++        curr_idx = _CACHED_MCP_INDEX
++        need_refresh = force_refresh or (curr_idx is None)
++        if not need_refresh:
++            if base_dirs is not None:
++                need_refresh = is_mcp_stale(curr_idx, base_dirs)
++            elif now - _LAST_STALE_CHECK > 1.5:
++                _LAST_STALE_CHECK = now
++                need_refresh = is_mcp_stale(curr_idx, base_dirs) or (now - _CACHED_MCP_TIME > 120)
++
++        if not need_refresh:
++            return curr_idx
++
++        # Stale-while-revalidate: if another thread is already reindexing and we have cached data,
++        # return existing index immediately without blocking (<0.02ms)
++        if _MCP_REINDEXING and curr_idx is not None:
++            return curr_idx
++
++        _MCP_REINDEXING = True
++
++    try:
++        # Scan filesystem and parse schemas OUTSIDE _MCP_LOCK to avoid blocking hook threads
+         servers = discover_mcp_servers(base_dirs)
 -        _CACHED_MCP_INDEX = index_mcp_tools(servers)
 -        _CACHED_MCP_TIME = now
 -        _LAST_STALE_CHECK = now
 -    return _CACHED_MCP_INDEX
-+    with _MCP_LOCK:
-+        need_refresh = force_refresh or (_CACHED_MCP_INDEX is None)
-+        if not need_refresh:
-+            if base_dirs is not None:
-+                need_refresh = is_mcp_stale(_CACHED_MCP_INDEX, base_dirs)
-+            elif now - _LAST_STALE_CHECK > 1.5:
-+                _LAST_STALE_CHECK = now
-+                need_refresh = is_mcp_stale(_CACHED_MCP_INDEX, base_dirs) or (now - _CACHED_MCP_TIME > 120)
-+
-+        if need_refresh:
-+            servers = discover_mcp_servers(base_dirs)
-+            _CACHED_MCP_INDEX = index_mcp_tools(servers)
-+            _CACHED_MCP_TIME = now
-+            _LAST_STALE_CHECK = now
-+        return _CACHED_MCP_INDEX
++        new_index = index_mcp_tools(servers)
++        finish_time = time.time()
++        with _MCP_LOCK:
++            _CACHED_MCP_INDEX = new_index
++            _CACHED_MCP_TIME = finish_time
++            _LAST_STALE_CHECK = finish_time
++            return _CACHED_MCP_INDEX
++    finally:
++        with _MCP_LOCK:
++            _MCP_REINDEXING = False
  
  
  def route_mcp_tool(query_text: str,
-@@ -267,8 +289,7 @@ def route_mcp_tool(query_text: str,
+@@ -267,8 +308,7 @@ def route_mcp_tool(query_text: str,
                     mcp_index: dict = None) -> list:
      """
      Sub-millisecond dynamic routing from intent query to optimal MCP tool(s).
@@ -5456,7 +5559,7 @@ index df81f0d..0a32745 100644
      """
      if not query_text:
          return []
-@@ -284,7 +305,6 @@ def route_mcp_tool(query_text: str,
+@@ -284,7 +324,6 @@ def route_mcp_tool(query_text: str,
          return []
  
      candidate_scores = {}
@@ -5464,7 +5567,7 @@ index df81f0d..0a32745 100644
      for tok in query_tokens:
          matching_indices = inverted_index.get(tok, [])
          for idx in matching_indices:
-@@ -300,24 +320,32 @@ def route_mcp_tool(query_text: str,
+@@ -300,24 +339,32 @@ def route_mcp_tool(query_text: str,
          overlap = len(query_tokens.intersection(tool_tokens)) / len(query_tokens)
          jaccard = len(query_tokens.intersection(tool_tokens)) / len(query_tokens.union(tool_tokens))
  
@@ -5500,7 +5603,7 @@ index df81f0d..0a32745 100644
                  }
              })
  
-@@ -344,42 +372,69 @@ def get_tool_schema(server_name: str, tool_name: str, mcp_index: dict = None) ->
+@@ -344,42 +391,69 @@ def get_tool_schema(server_name: str, tool_name: str, mcp_index: dict = None) ->
  def validate_tool_arguments(server_name: str, tool_name: str, arguments: dict, mcp_index: dict = None) -> dict:
      """
      Validates execution arguments against the MCP tool's parameter schema.
@@ -6172,7 +6275,7 @@ index 9cd11f5..313083c 100644
 +        sys.stderr.write(f"[!] LỖI revert_invariant({superseded_id}): {type(e).__name__}: {e}\n")
          return False
 diff --git a/scripts/memory_schema.py b/scripts/memory_schema.py
-index 6e0cf68..5fc3a48 100644
+index 6e0cf68..bf483c9 100644
 --- a/scripts/memory_schema.py
 +++ b/scripts/memory_schema.py
 @@ -5,6 +5,7 @@ triggers, and staging tables.
@@ -6243,7 +6346,7 @@ index 6e0cf68..5fc3a48 100644
  -- ----------------------------------------------------------------------------
  -- Table 5: l1_staging_log (Lightweight Ephemeral Staging Buffer for L1 Reflex)
  -- ----------------------------------------------------------------------------
-@@ -133,9 +180,12 @@ CREATE TABLE IF NOT EXISTS l1_staging_log (
+@@ -133,9 +180,13 @@ CREATE TABLE IF NOT EXISTS l1_staging_log (
      top_skill           TEXT,
      tier_used           INTEGER NOT NULL DEFAULT 1,
      recalled_traces     TEXT,                        -- JSON array of recalled memory IDs
@@ -6253,11 +6356,12 @@ index 6e0cf68..5fc3a48 100644
  );
  
 +CREATE INDEX IF NOT EXISTS idx_staging_status_ws ON l1_staging_log (is_drained, workspace_hash, staging_id);
++CREATE UNIQUE INDEX IF NOT EXISTS idx_staging_dedup ON l1_staging_log (session_id, timestamp, user_input, workspace_hash);
 +
  -- ----------------------------------------------------------------------------
  -- Table 6: activation_events (Tier 3 Consolidation Staging Buffer)
  -- ----------------------------------------------------------------------------
-@@ -149,16 +199,54 @@ CREATE TABLE IF NOT EXISTS activation_events (
+@@ -149,16 +200,55 @@ CREATE TABLE IF NOT EXISTS activation_events (
      tier_used           INTEGER NOT NULL DEFAULT 1,
      recalled_traces     TEXT,                        -- JSON array of recalled memory IDs
      feedback_score      REAL DEFAULT 0.0,            -- +1.0 (success), 0.0 (neutral), -1.0 (failure)
@@ -6268,6 +6372,7 @@ index 6e0cf68..5fc3a48 100644
  
  CREATE INDEX IF NOT EXISTS idx_event_pending ON activation_events(is_consolidated, timestamp);
 +CREATE INDEX IF NOT EXISTS idx_events_status_ws ON activation_events (is_consolidated, workspace_dir, event_id);
++CREATE UNIQUE INDEX IF NOT EXISTS idx_events_dedup ON activation_events (session_id, timestamp, user_input, workspace_dir);
 +
 +-- ----------------------------------------------------------------------------
 +-- Table 7: consolidation_outbox (Durable Outbox Queue for Proven Traces)
@@ -6314,7 +6419,7 @@ index 6e0cf68..5fc3a48 100644
      Returns the active database connection.
      """
      conn = sqlite3.connect(db_path, timeout=5.0, isolation_level=isolation_level)
-@@ -170,12 +258,15 @@ def init_database(db_path: str = "omni_memory.db", isolation_level: Optional[str
+@@ -170,12 +260,15 @@ def init_database(db_path: str = "omni_memory.db", isolation_level: Optional[str
          mode = conn.execute("PRAGMA auto_vacuum;").fetchone()[0]
          if mode != 2:
              old_iso = conn.isolation_level
@@ -6336,7 +6441,7 @@ index 6e0cf68..5fc3a48 100644
      
      # Apply pragmas
      conn.execute("PRAGMA journal_mode = WAL;")
-@@ -186,7 +277,164 @@ def init_database(db_path: str = "omni_memory.db", isolation_level: Optional[str
+@@ -186,7 +279,196 @@ def init_database(db_path: str = "omni_memory.db", isolation_level: Optional[str
      conn.execute("PRAGMA busy_timeout = 5000;")
      conn.execute("PRAGMA foreign_keys = ON;")
      
@@ -6455,6 +6560,40 @@ index 6e0cf68..5fc3a48 100644
 +                # VULN-001 & VULN-003: Retain 32-hex legacy partition key when workspace_path is unresolvable; never map to arbitrary path
 +                from memory_utils import persist_diag
 +                persist_diag(f"Retaining unmapped legacy 32-hex partition {old_hash[:12]}", 256)
++
++        # Pre-collapse any existing duplicates in staging and activation tables before creating unique indexes (VULN-102)
++        if "l1_staging_log" in tables_exist:
++            conn.execute("""
++                DELETE FROM l1_staging_log
++                WHERE staging_id NOT IN (
++                    SELECT MIN(staging_id)
++                    FROM l1_staging_log
++                    GROUP BY session_id, timestamp, user_input, workspace_hash
++                );
++            """)
++        if "activation_events" in tables_exist:
++            conn.execute("""
++                DELETE FROM activation_events
++                WHERE event_id NOT IN (
++                    SELECT MIN(event_id)
++                    FROM activation_events
++                    GROUP BY session_id, timestamp, user_input, workspace_dir
++                );
++            """)
++
++        # Apply DDL tables and refresh triggers inside the same atomic savepoint (VULN-101)
++        ddl_stmts = []
++        cur_buf = []
++        for line in DDL_TABLES.splitlines(True):
++            cur_buf.append(line)
++            cand = "".join(cur_buf)
++            if sqlite3.complete_statement(cand):
++                s = cand.strip()
++                if s:
++                    ddl_stmts.append(s)
++                cur_buf = []
++        for stmt in ddl_stmts:
++            conn.execute(stmt)
 +        conn.execute(f"RELEASE SAVEPOINT {sp_mig};")
 +    except Exception as mig_err:
 +        try:
@@ -6462,27 +6601,25 @@ index 6e0cf68..5fc3a48 100644
 +            conn.execute(f"RELEASE SAVEPOINT {sp_mig};")
 +        except Exception:
 +            pass
-+        raise RuntimeError(f"Database migration from MD5 to SHA-256 failed: {mig_err}") from mig_err
++        raise RuntimeError(f"Database atomic migration and DDL setup failed: {mig_err}") from mig_err
 +
-+    # Atomic Migration: Refresh triggers and apply DDL in a single atomic transaction with explicit rollback (VULN-008)
-+    atomic_ddl = f"""
-+    BEGIN IMMEDIATE;
-+    DROP TRIGGER IF EXISTS trg_episodic_after_update;
-+    DROP TRIGGER IF EXISTS trg_episodic_prevent_ws_replace;
-+    DROP TRIGGER IF EXISTS trg_episodic_prevent_cross_tenant_supersede;
-+    DROP TRIGGER IF EXISTS trg_episodic_prevent_cross_tenant_supersede_insert;
-+    DROP TRIGGER IF EXISTS trg_episodic_prevent_ws_update;
-+    {DDL_TABLES}
-+    COMMIT;
-+    """
-+    try:
-+        conn.executescript(atomic_ddl)
-+    except Exception as ddl_err:
-+        try:
-+            conn.execute("ROLLBACK;")
-+        except Exception:
-+            pass
-+        raise RuntimeError(f"Atomic DDL migration failed: {type(ddl_err).__name__}: {ddl_err}") from ddl_err
++    # VULN-101: Mandatory post-condition verification: assert all 5 invariant tenant-isolation triggers are active
++    required_triggers = {
++        'trg_episodic_prevent_ws_update', 'trg_episodic_prevent_ws_replace',
++        'trg_episodic_prevent_cross_tenant_supersede', 'trg_episodic_prevent_cross_tenant_supersede_insert',
++        'trg_episodic_after_update'
++    }
++    active_triggers = {
++        r[0] for r in conn.execute(
++            "SELECT name FROM sqlite_master WHERE type='trigger' AND name IN ("
++            "'trg_episodic_prevent_ws_update', 'trg_episodic_prevent_ws_replace', "
++            "'trg_episodic_prevent_cross_tenant_supersede', 'trg_episodic_prevent_cross_tenant_supersede_insert', "
++            "'trg_episodic_after_update');"
++        ).fetchall()
++    }
++    missing_triggers = required_triggers - active_triggers
++    if missing_triggers:
++        raise RuntimeError(f"CRITICAL INVARIANT VIOLATION: Database initialized without required security triggers: {missing_triggers}")
 +
 +    # VULN-002: Verify consolidation_outbox has unique constraint or unique index for ON CONFLICT
 +    has_outbox = bool(conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='consolidation_outbox';").fetchone())
@@ -6505,7 +6642,7 @@ index 6e0cf68..5fc3a48 100644
 +
      return conn
 diff --git a/scripts/memory_utils.py b/scripts/memory_utils.py
-index 7107b02..e536fb7 100644
+index 7107b02..8eb1d81 100644
 --- a/scripts/memory_utils.py
 +++ b/scripts/memory_utils.py
 @@ -4,10 +4,190 @@ Provides diacritic folding, defensive FTS5 query sanitization, and workspace has
@@ -7051,29 +7188,29 @@ index 7107b02..e536fb7 100644
 +
 +def hash_prompt(prompt: Optional[str]) -> str:
 +    """Deterministic, secret-redacted SHA-256 hash for inline prompt Council Gate binding (VULN-005).
-+    Canonicalizes JSON object/array prompts with sorted keys and compact separators to ensure
-+    identical hashes across whitespace and formatting differences between producer and verifier.
++    Canonical pipeline: redact_secrets -> NFKC/JCS normalization -> truncate to 2048 -> SHA-256.
++    Ensures secrets straddling the 2048-char boundary are redacted identically before truncation.
 +    """
 +    if not prompt or not isinstance(prompt, str):
 +        return ""
-+    stripped = prompt.strip()[:2048]
-+    # Canonical JSON normalization for JSON object/array prompts to resist whitespace variance
-+    if (stripped.startswith("{") and stripped.endswith("}")) or (stripped.startswith("[") and stripped.endswith("]")):
-+        try:
-+            parsed = json.loads(stripped)
-+            stripped = json.dumps(parsed, sort_keys=True, separators=(',', ':'), ensure_ascii=False)
-+        except Exception:
-+            pass
-+    safe_text = (redact_secrets(stripped) or stripped)
++    # Step 1: Redact secrets first before any truncation to avoid cutting secrets in half
++    safe_text = redact_secrets(prompt) or prompt
++    # Step 2: Unicode normalization (NFKC)
++    import unicodedata
++    if isinstance(safe_text, str):
++        safe_text = unicodedata.normalize("NFKC", safe_text).strip()
++    # Step 3: Canonical JSON normalization for JSON object/array prompts to resist whitespace variance
 +    if isinstance(safe_text, (dict, list)):
 +        safe_text = json.dumps(safe_text, sort_keys=True, separators=(',', ':'), ensure_ascii=False)
-+    elif isinstance(safe_text, str) and ((safe_text.strip().startswith("{") and safe_text.strip().endswith("}")) or (safe_text.strip().startswith("[") and safe_text.strip().endswith("]"))):
++    elif isinstance(safe_text, str) and ((safe_text.startswith("{") and safe_text.endswith("}")) or (safe_text.startswith("[") and safe_text.endswith("]"))):
 +        try:
-+            parsed_after = json.loads(safe_text)
-+            safe_text = json.dumps(parsed_after, sort_keys=True, separators=(',', ':'), ensure_ascii=False)
++            parsed = json.loads(safe_text)
++            safe_text = json.dumps(parsed, sort_keys=True, separators=(',', ':'), ensure_ascii=False)
 +        except Exception:
 +            pass
-+    return hashlib.sha256(str(safe_text).encode("utf-8")).hexdigest()
++    # Step 4: Truncate to max 2048 characters
++    clamped = str(safe_text)[:2048]
++    return hashlib.sha256(clamped.encode("utf-8")).hexdigest()
 +
 +
 +def verify_audit_meta(meta: dict) -> bool:
@@ -7670,7 +7807,7 @@ index 0000000..f11dfcc
 +if __name__ == "__main__":
 +    run_all_audits()
 diff --git a/scripts/synthesizer.py b/scripts/synthesizer.py
-index 2f7fb07..2100b49 100644
+index 2f7fb07..d736d55 100644
 --- a/scripts/synthesizer.py
 +++ b/scripts/synthesizer.py
 @@ -1,42 +1,76 @@
@@ -7762,7 +7899,7 @@ index 2f7fb07..2100b49 100644
  
  ## Core Architecture & Patterns
  {patterns_text}
-@@ -50,24 +84,72 @@ metadata:
+@@ -50,24 +84,87 @@ metadata:
  assert True, "Verification passed"
  ```
  """
@@ -7793,7 +7930,11 @@ index 2f7fb07..2100b49 100644
 +        return (False, "", f"AST validation failed: SyntaxError: {e}")
 +
 +    # Check for dangerous system calls, dynamic code evaluation, and unsafe modules (VULN-104, VULN-106)
-+    PROHIBITED_MODULES = {"subprocess", "socket", "pty", "ctypes"}
++    PROHIBITED_MODULES = {"subprocess", "socket", "pty", "ctypes", "shutil"}
++    DANGEROUS_CALLS = {
++        "system", "popen", "spawn", "execv", "execve", "fork", "eval", "exec",
++        "__import__", "unlink", "remove", "rmdir", "removedirs", "kill", "rmtree", "getattr"
++    }
 +    for node in ast.walk(parsed):
 +        if isinstance(node, ast.Import):
 +            for alias in node.names:
@@ -7804,13 +7945,24 @@ index 2f7fb07..2100b49 100644
 +                return (False, "", f"AST validation blocked prohibited module import: '{node.module}'")
 +        elif isinstance(node, ast.Call):
 +            target_name = None
-+            DANGEROUS_CALLS = {"system", "popen", "spawn", "execv", "execve", "fork", "eval", "exec", "__import__"}
 +            if isinstance(node.func, ast.Attribute) and node.func.attr in DANGEROUS_CALLS:
 +                target_name = node.func.attr
 +            elif isinstance(node.func, ast.Name) and node.func.id in DANGEROUS_CALLS:
 +                target_name = node.func.id
 +            if target_name:
 +                return (False, "", f"AST validation blocked dangerous call: {target_name}() is prohibited by sandbox security policy")
++
++            # Check for destructive file open modes (w, a, x, +)
++            is_open = (isinstance(node.func, ast.Name) and node.func.id == "open") or (isinstance(node.func, ast.Attribute) and node.func.attr == "open")
++            if is_open:
++                mode_str = None
++                if len(node.args) >= 2 and isinstance(node.args[1], ast.Constant) and isinstance(node.args[1].value, str):
++                    mode_str = node.args[1].value
++                for kw in node.keywords:
++                    if kw.arg == "mode" and isinstance(kw.value, ast.Constant) and isinstance(kw.value.value, str):
++                        mode_str = kw.value.value
++                if mode_str and any(c in mode_str for c in ("w", "a", "x", "+")):
++                    return (False, "", f"AST validation blocked open() with destructive mode '{mode_str}'")
 +
 +    if not allow_exec:
 +        return (True, "syntax_ok_not_executed: AST syntax and structural validation passed (execution gated)", "")
@@ -7838,7 +7990,7 @@ index 2f7fb07..2100b49 100644
              timeout=timeout_sec
          )
          return (result.returncode == 0, result.stdout, result.stderr)
-@@ -83,19 +165,29 @@ def run_sandbox_validation(test_code, timeout_sec=5):
+@@ -83,19 +180,29 @@ def run_sandbox_validation(test_code, timeout_sec=5):
                  pass
  
  
@@ -7874,7 +8026,7 @@ index 2f7fb07..2100b49 100644
          if not success:
              return {
                  "status": "failed",
-@@ -104,13 +196,23 @@ def synthesize_and_promote_skill(name, description, domain="general", test_code=
+@@ -104,13 +211,23 @@ def synthesize_and_promote_skill(name, description, domain="general", test_code=
                  "stdout": stdout
              }
  
@@ -7902,7 +8054,7 @@ index 2f7fb07..2100b49 100644
  
      # Step 4: Re-index into registry.json
      scripts_dir = os.path.dirname(os.path.abspath(__file__))
-@@ -121,13 +223,19 @@ def synthesize_and_promote_skill(name, description, domain="general", test_code=
+@@ -121,13 +238,19 @@ def synthesize_and_promote_skill(name, description, domain="general", test_code=
          reg_path = os.path.join(scripts_dir, "registry.json")
          build_index(reg_path)
      except Exception as e:
@@ -7924,7 +8076,7 @@ index 2f7fb07..2100b49 100644
      }
  
  
-@@ -138,7 +246,8 @@ if __name__ == "__main__":
+@@ -138,7 +261,8 @@ if __name__ == "__main__":
      parser.add_argument("--desc", "-d", required=True, help="Description of what the skill does")
      parser.add_argument("--domain", default="general", help="Technical domain")
      parser.add_argument("--test", "-t", default=None, help="Inline python test code to validate")
