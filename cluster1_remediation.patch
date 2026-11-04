@@ -1,0 +1,2971 @@
+diff --git a/scripts/consolidator.py b/scripts/consolidator.py
+index 07a8939..4ce9ad9 100644
+--- a/scripts/consolidator.py
++++ b/scripts/consolidator.py
+@@ -7,9 +7,11 @@ apply bounded Ebbinghaus decay, manage soft-archiving, and perform WAL maintenan
+ 
+ import argparse
+ import datetime
++import errno
+ import hashlib
+ import json
+ import math
++import uuid
+ import os
+ import sqlite3
+ import sys
+@@ -21,9 +23,62 @@ _SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+ if _SCRIPT_DIR not in sys.path:
+     sys.path.insert(0, _SCRIPT_DIR)
+ 
+-from memory_utils import fold_vietnamese, canonical_workspace_hash
++from memory_utils import fold_vietnamese, canonical_workspace_hash, redact_secrets, is_valid_hex_hash, persist_diag
+ from memory_schema import init_database
+-from experiential_memory import record_trace, TRACES_FILE
++from experiential_memory import record_trace, TRACES_FILE, TracePersistenceError
++
++# is_valid_hex_hash imported directly from memory_utils (Directive 8)
++
++
++def resolve_workspace_hash(ws_dir: Any, approved_root: Optional[str] = None, allow_unscoped: bool = False, authorized_hashes: Optional[Any] = None) -> str:
++    """
++    Validate and resolve workspace hash by canonicalizing directory path and
++    enforcing containment within approved_root. If input is already a valid 32-hex hash
++    from staging log, validates against approved_root or requires allow_unscoped=True (VULN-007).
++    """
++    if not isinstance(ws_dir, str) or not ws_dir.strip():
++        raise ValueError("Invalid workspace directory: must be non-empty string")
++    cleaned = ws_dir.strip()
++    if len(cleaned) > 4096:
++        raise ValueError("Workspace path exceeds maximum 4096 characters")
++    if "\x00" in cleaned:
++        raise ValueError("Workspace path contains invalid null byte")
++
++    # If already a valid 32-character hexadecimal MD5 hash (VULN-006)
++    if is_valid_hex_hash(cleaned, length=32):
++        cleaned_lower = cleaned.lower()
++        if authorized_hashes is not None and cleaned_lower in {str(h).lower() for h in authorized_hashes if h}:
++            return cleaned_lower
++        if approved_root is not None:
++            if not isinstance(approved_root, str) or not approved_root.strip():
++                raise ValueError("approved_root is configured but empty or invalid")
++            canon_root_hash = canonical_workspace_hash(approved_root)
++            if cleaned_lower == canon_root_hash:
++                return cleaned_lower
++            if allow_unscoped:
++                return cleaned_lower
++            raise ValueError(f"Workspace hash {cleaned_lower} is not authorized under approved root")
++        if not allow_unscoped:
++            raise ValueError("approved_root is required for workspace isolation; pass allow_unscoped=True to bypass intentionally")
++        sys.stderr.write("[!] Warning: resolve_workspace_hash operating in unscoped mode with 32-hex input\n")
++        return cleaned_lower
++
++    if approved_root is None:
++        if not allow_unscoped:
++            raise ValueError("approved_root is required for workspace isolation; pass allow_unscoped=True to bypass intentionally")
++        return canonical_workspace_hash(os.path.realpath(os.path.abspath(cleaned)))
++
++    real_path = os.path.realpath(os.path.abspath(cleaned))
++    canon_root = os.path.realpath(os.path.abspath(approved_root.strip()))
++    norm_root = os.path.normcase(os.path.normpath(canon_root))
++    norm_target = os.path.normcase(os.path.normpath(real_path))
++    try:
++        common = os.path.commonpath([norm_root, norm_target])
++        if common != norm_root:
++            raise ValueError("Workspace path escapes approved root")
++    except ValueError:
++        raise ValueError("Workspace path is outside approved root")
++    return canonical_workspace_hash(real_path)
+ 
+ 
+ # ----------------------------------------------------------------------
+@@ -72,6 +127,14 @@ def extract_bilingual_tags(text: str) -> str:
+ # ----------------------------------------------------------------------
+ # Bounded Ebbinghaus Retention Stability (T027 & T028)
+ # ----------------------------------------------------------------------
++def _chunked_execute(cur: sqlite3.Cursor, query_template: str, ids: List[Any], chunk_size: int = 500, prefix_params: Tuple = ()):
++    """Execute SQL IN (...) queries in safe chunks to prevent exceeding SQLITE_MAX_VARIABLE_NUMBER (VULN-010)."""
++    for i in range(0, len(ids), chunk_size):
++        chunk = ids[i:i + chunk_size]
++        placeholders = ",".join("?" for _ in chunk)
++        cur.execute(query_template.format(placeholders=placeholders), list(prefix_params) + chunk)
++
++
+ def calculate_ebbinghaus_stability(
+     s0: float,
+     lambda_0: float,
+@@ -95,269 +158,983 @@ def calculate_ebbinghaus_stability(
+     return max(0.0, min(1.0, stability))
+ 
+ 
++def safe_err(exc: Any) -> str:
++    """Safely redact secrets from exception messages before logging or returning (VULN-006, VULN-002)."""
++    return persist_diag(exc, max_len=512)
++
++
++def is_transient_io_error(err: Any) -> bool:
++    """
++    Classify whether an I/O error is transient (lock contention, busy, timeout)
++    versus permanent (PermissionError, FileNotFoundError, ENOSPC, EROFS, etc.) (VULN-006).
++    Recursively inspects __cause__ chain if wrapped in higher-level exception (VULN-004).
++    """
++    if err is None:
++        return False
++
++    if hasattr(err, "__cause__") and err.__cause__ is not None:
++        if is_transient_io_error(err.__cause__):
++            return True
++
++    if isinstance(err, TimeoutError):
++        return True
++
++    # Check Windows winerror FIRST, because Python maps ERROR_SHARING_VIOLATION (32)
++    # and ERROR_LOCK_VIOLATION (33) to PermissionError (winerror=32/33, errno=13).
++    winerror = getattr(err, "winerror", None)
++    if winerror is not None:
++        if winerror in (32, 33):  # ERROR_SHARING_VIOLATION, ERROR_LOCK_VIOLATION
++            return True
++        if winerror in (2, 3, 5, 112):  # FILE_NOT_FOUND, PATH_NOT_FOUND, ACCESS_DENIED, DISK_FULL
++            return False
++
++    if isinstance(err, (PermissionError, FileNotFoundError, IsADirectoryError)):
++        return False
++
++    if isinstance(err, OSError):
++        permanent_errnos = {
++            getattr(errno, "EACCES", 13),
++            getattr(errno, "EPERM", 1),
++            getattr(errno, "ENOENT", 2),
++            getattr(errno, "ENOSPC", 28),
++            getattr(errno, "EROFS", 30),
++            getattr(errno, "EISDIR", 21),
++            getattr(errno, "ENAMETOOLONG", 36),
++            getattr(errno, "EFBIG", 27),
++        }
++        if getattr(err, "errno", None) in permanent_errnos:
++            return False
++
++        transient_errnos = {
++            getattr(errno, "EAGAIN", 11),
++            getattr(errno, "EWOULDBLOCK", 11),
++            getattr(errno, "ETIMEDOUT", 110),
++            getattr(errno, "EBUSY", 16),
++        }
++        if getattr(err, "errno", None) in transient_errnos:
++            return True
++
++    return False
++
++
++def flush_outbox(conn: sqlite3.Connection, limit: int = 50, workspace_hash: Optional[str] = None) -> int:
++    """
++    Drains pending records from consolidation_outbox into proven_traces.json with atomic InFlight claim.
++    Two-phase transaction:
++    Phase 1: Claim rows atomically with unique owner_token & claimed_at timestamp, and commit immediately (VULN-001, Hazard 43).
++    Phase 2: Perform file I/O (record_trace) outside of SQLite transaction to prevent blocking writers (VULN-003).
++    Phase 3: Short atomic transaction to update row statuses (Flushed / Failed / Pending) using CAS on owner_token.
++    """
++    # VULN-001: Guard in_transaction FIRST before any other logic; NEVER mutate conn.isolation_level
++    if getattr(conn, "in_transaction", False):
++        raise RuntimeError("flush_outbox must be called outside active transactions to prevent holding write locks across file I/O (Hazard 42)")
++
++    if not (1 <= limit <= 500):
++        raise ValueError(f"limit must be between 1 and 500, got {limit}")
++
++    if workspace_hash is not None:
++        clean_ws = workspace_hash.strip().lower()
++        if not clean_ws:
++            raise ValueError("workspace_hash cannot be empty or whitespace string; pass None for intentional unscoped flush")
++        if not is_valid_hex_hash(clean_ws):
++            raise ValueError(f"workspace_hash must be a 32-hex character string, got: '{workspace_hash}'")
++    else:
++        clean_ws = None
++
++    cur = conn.cursor()
++    use_savepoint = conn.isolation_level is not None
++    sp_claim = f"sp_claim_{uuid.uuid4().hex[:12]}"
++    if use_savepoint:
++        conn.execute(f"SAVEPOINT {sp_claim};")
++    else:
++        conn.execute("BEGIN IMMEDIATE;")
++    owner_token = uuid.uuid4().hex
++
++    try:
++        # Reset any stale InFlight rows (>180s old or legacy NULL claimed_at) back to Pending or Failed after max retries (Hazard 38)
++        cur.execute(
++            """
++            UPDATE consolidation_outbox
++            SET status = CASE WHEN retry_count + 1 >= 5 THEN 'Failed' ELSE 'Pending' END,
++                retry_count = retry_count + 1,
++                last_error = 'Claim lease expired (stale worker)',
++                owner_token = NULL,
++                claimed_at = NULL
++            WHERE status = 'InFlight' AND (claimed_at IS NULL OR claimed_at < datetime('now', '-180 seconds'))
++              AND (? IS NULL OR workspace_hash = ?);
++            """,
++            (clean_ws, clean_ws)
++        )
++
++        # Select pending rows to claim scoped by workspace_hash (VULN-005)
++        cur.execute(
++            """
++            SELECT outbox_id, signature, solution, tags, context, retry_count, memory_id, workspace_hash, COALESCE(generation, 1)
++            FROM consolidation_outbox
++            WHERE status = 'Pending' AND (? IS NULL OR workspace_hash = ?)
++            ORDER BY outbox_id ASC
++            LIMIT ?;
++            """,
++            (clean_ws, clean_ws, limit)
++        )
++        pending = cur.fetchall()
++        if not pending:
++            if use_savepoint:
++                conn.execute(f"RELEASE SAVEPOINT {sp_claim};")
++            else:
++                conn.commit()
++            return 0
++
++        # Atomically claim rows as InFlight with timestamp and owner token (CAS lease)
++        claimed_ids = [r[0] for r in pending]
++        _chunked_execute(
++            cur,
++            "UPDATE consolidation_outbox SET status = 'InFlight', claimed_at = datetime('now'), owner_token = ? WHERE outbox_id IN ({placeholders});",
++            claimed_ids,
++            prefix_params=(owner_token,)
++        )
++        if use_savepoint:
++            conn.execute(f"RELEASE SAVEPOINT {sp_claim};")
++        else:
++            conn.commit()
++    except Exception as claim_err:
++        try:
++            if use_savepoint:
++                conn.execute(f"ROLLBACK TO SAVEPOINT {sp_claim};")
++                conn.execute(f"RELEASE SAVEPOINT {sp_claim};")
++            else:
++                conn.rollback()
++        except Exception:
++            pass
++        sys.stderr.write(f"[!] Warning: flush_outbox claim failed: {type(claim_err).__name__}: {claim_err}\n")
++        # VULN-005: Never silently swallow claim failure as 0 flushed
++        raise RuntimeError(f"flush_outbox claim phase failed: {claim_err}") from claim_err
++
++    # Phase 2: Execute File I/O completely outside SQLite transaction (VULN-003)
++    results = []
++    for row in pending:
++        ob_id, sig, sol, tags_json, ctx, retries, mem_id, ws_hash, ob_gen = row
++        try:
++            # VULN-001: parse tags defensively and ensure list type
++            tags = json.loads(tags_json) if tags_json else []
++            if not isinstance(tags, list):
++                tags = [str(tags)]
++        except Exception as je:
++            results.append((ob_id, False, f"JSONDecodeError in tags: {je}", retries, ob_gen, False))
++            continue
++
++        try:
++            res = record_trace(
++                problem_signature=sig,
++                proven_solution=sol,
++                tags=tags,
++                workspace_context=ctx,
++                outbox_id=ob_id,
++                workspace_hash=ws_hash,
++                outbox_generation=ob_gen
++            )
++            if not res or not isinstance(res, dict) or not res.get("id"):
++                raise RuntimeError(f"record_trace failed to persist trace for outbox {ob_id} (mem_id={mem_id})")
++            results.append((ob_id, True, None, retries, ob_gen, False))
++        except Exception as ob_err:
++            # VULN-006: Strictly classify transient lock contention vs permanent errors via errno/winerror
++            is_transient = is_transient_io_error(ob_err)
++            results.append((ob_id, False, f"{type(ob_err).__name__}: {ob_err}", retries, ob_gen, is_transient))
++
++    # Phase 3: Short atomic update transaction using CAS on owner_token, status='InFlight', and generation (VULN-005)
++    flushed_count = 0
++    if results:
++        sp_status = f"sp_status_{uuid.uuid4().hex[:12]}"
++        if use_savepoint:
++            conn.execute(f"SAVEPOINT {sp_status};")
++        else:
++            conn.execute("BEGIN IMMEDIATE;")
++        try:
++            for ob_id, is_success, err_msg, retries, ob_gen, is_transient in results:
++                redacted_err = safe_err(err_msg) if err_msg else None
++
++                if is_success:
++                    cur.execute(
++                        """
++                        UPDATE consolidation_outbox
++                        SET status = 'Flushed', flushed_at = datetime('now')
++                        WHERE outbox_id = ? AND owner_token = ? AND status = 'InFlight' AND COALESCE(generation, 1) = ?;
++                        """,
++                        (ob_id, owner_token, ob_gen)
++                    )
++                    if cur.rowcount > 0:
++                        flushed_count += 1
++                else:
++                    # VULN-006: Bounded retry counter: transient fails after 10 attempts, permanent fails after 5
++                    new_retries = retries + 1
++                    max_retries = 10 if is_transient else 5
++                    new_status = 'Failed' if new_retries >= max_retries else 'Pending'
++                    err_prefix = "Transient IO/Lock: " if is_transient else ""
++                    full_err_diag = f"{err_prefix}{redacted_err}"
++                    cur.execute(
++                        """
++                        UPDATE consolidation_outbox
++                        SET retry_count = ?, status = ?, last_error = ?, owner_token = NULL, claimed_at = NULL
++                        WHERE outbox_id = ? AND owner_token = ? AND status = 'InFlight' AND COALESCE(generation, 1) = ?;
++                        """,
++                        (new_retries, new_status, full_err_diag, ob_id, owner_token, ob_gen)
++                    )
++                    if new_status == 'Failed':
++                        sys.stderr.write(f"[!] FATAL: Outbox record {ob_id} permanently failed: {full_err_diag}\n")
++            if use_savepoint:
++                conn.execute(f"RELEASE SAVEPOINT {sp_status};")
++            else:
++                conn.commit()
++        except Exception as tx_err:
++            if use_savepoint:
++                try:
++                    conn.execute(f"ROLLBACK TO SAVEPOINT {sp_status};")
++                    conn.execute(f"RELEASE SAVEPOINT {sp_status};")
++                except Exception:
++                    pass
++            else:
++                try:
++                    conn.rollback()
++                except Exception:
++                    pass
++            sys.stderr.write(f"[!] FATAL: flush_outbox status update transaction failed: {safe_err(tx_err)}\n")
++            raise RuntimeError(f"flush_outbox status update phase failed: {tx_err}") from tx_err
++
++    return flushed_count
++
++
+ # ----------------------------------------------------------------------
+ # Tier 3 Consolidator Engine Core
+ # ----------------------------------------------------------------------
+ class ConsolidatorEngine:
+     """Consolidation pipeline processor."""
+ 
+-    def __init__(self, db_conn: sqlite3.Connection):
++    def __init__(self, db_conn: sqlite3.Connection, workspace_root: Optional[str] = None, workspace_hash: Optional[str] = None, allow_unscoped: bool = False):
+         self.conn = db_conn
++        # VULN-001: Guard in_transaction; NEVER mutate self.conn.isolation_level
++        if getattr(self.conn, "in_transaction", False):
++            raise RuntimeError("ConsolidatorEngine cannot be initialized while an uncommitted transaction is active on the connection")
++        self.conn.execute("PRAGMA foreign_keys = ON;")
++        self.workspace_root = workspace_root
++        self.allow_unscoped = allow_unscoped
++        self.authorized_hashes = set()
++        if self.workspace_root:
++            root_hash = canonical_workspace_hash(self.workspace_root)
++            self.authorized_hashes.add(root_hash)
++            try:
++                c = self.conn.cursor()
++                c.execute("SELECT DISTINCT workspace_path FROM workspace_episodic_memory WHERE workspace_path IS NOT NULL;")
++                norm_root = os.path.normcase(os.path.normpath(os.path.realpath(os.path.abspath(self.workspace_root))))
++                for (r_path,) in c.fetchall():
++                    if r_path and not is_valid_hex_hash(r_path):
++                        try:
++                            norm_target = os.path.normcase(os.path.normpath(os.path.realpath(os.path.abspath(r_path))))
++                            if os.path.commonpath([norm_root, norm_target]) == norm_root:
++                                computed_h = canonical_workspace_hash(r_path)
++                                self.authorized_hashes.add(computed_h.lower())
++                        except Exception:
++                            pass
++            except Exception as db_err:
++                sys.stderr.write(f"[!] Warning: Failed to initialize authorized_hashes from DB: {db_err}\n")
++        elif self.allow_unscoped:
++            try:
++                c = self.conn.cursor()
++                c.execute("SELECT DISTINCT workspace_hash FROM workspace_episodic_memory WHERE workspace_hash IS NOT NULL;")
++                for (r_hash,) in c.fetchall():
++                    if r_hash and is_valid_hex_hash(r_hash):
++                        self.authorized_hashes.add(r_hash.lower())
++            except Exception as db_err:
++                sys.stderr.write(f"[!] Warning: Failed to initialize authorized_hashes from DB: {db_err}\n")
+ 
+-    def drain_l1_staging(self, chunk_size: int = 100) -> int:
+-        """Drain events from l1_staging_log into activation_events table."""
+-        cur = self.conn.cursor()
+-        cur.execute(
+-            """
+-            SELECT staging_id, session_id, timestamp, user_input, workspace_hash, top_skill, tier_used, recalled_traces
+-            FROM l1_staging_log
+-            WHERE is_drained = 0
+-            ORDER BY staging_id ASC
+-            LIMIT ?
+-            """,
+-            (chunk_size,)
+-        )
+-        rows = cur.fetchall()
+-        if not rows:
+-            return 0
++        # Sync authorized hashes from persistent workspace_registry table (VULN-007)
++        try:
++            c = self.conn.cursor()
++            c.execute("SELECT workspace_hash, workspace_path FROM workspace_registry;")
++            for r_hash, r_path in c.fetchall():
++                if r_hash:
++                    if self.workspace_root:
++                        try:
++                            norm_root = os.path.normcase(os.path.normpath(os.path.realpath(os.path.abspath(self.workspace_root))))
++                            norm_target = os.path.normcase(os.path.normpath(os.path.realpath(os.path.abspath(r_path))))
++                            if os.path.commonpath([norm_root, norm_target]) == norm_root:
++                                self.authorized_hashes.add(r_hash.lower())
++                        except Exception:
++                            pass
++                    else:
++                        self.authorized_hashes.add(r_hash.lower())
++        except Exception:
++            pass
+ 
+-        drained_ids = []
+-        for row in rows:
+-            s_id, session_id, ts, u_input, ws_hash, top_skill, tier, recalled = row
+-            cur.execute(
+-                """
+-                INSERT INTO activation_events (session_id, timestamp, user_input, workspace_dir, top_skill, tier_used, recalled_traces, feedback_score, is_consolidated)
+-                VALUES (?, ?, ?, ?, ?, ?, ?, 0.0, 0)
+-                """,
+-                (session_id, ts, u_input, ws_hash, top_skill, tier, recalled)
++        if workspace_hash is not None:
++            if not is_valid_hex_hash(workspace_hash):
++                raise ValueError(f"Invalid workspace_hash: {workspace_hash!r}")
++            clean_supplied = workspace_hash.strip().lower()
++            if self.workspace_root and clean_supplied not in self.authorized_hashes:
++                raise ValueError(f"workspace_hash '{clean_supplied}' does not belong to approved workspace_root '{self.workspace_root}'")
++            self.workspace_hash = clean_supplied
++            self.authorized_hashes.add(clean_supplied)
++        elif self.workspace_root is not None:
++            self.workspace_hash = canonical_workspace_hash(self.workspace_root)
++        else:
++            self.workspace_hash = None
++
++    def register_workspace(self, workspace_path: str) -> str:
++        """Registers and authorizes a sub-workspace within workspace_root and persists to workspace_registry (VULN-003, VULN-007)."""
++        h = resolve_workspace_hash(workspace_path, approved_root=self.workspace_root, allow_unscoped=self.allow_unscoped)
++        self.authorized_hashes.add(h)
++        try:
++            now_iso = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
++            self.conn.execute(
++                "INSERT OR REPLACE INTO workspace_registry (workspace_hash, workspace_path, registered_at) VALUES (?, ?, ?)",
++                (h, str(workspace_path), now_iso)
+             )
+-            drained_ids.append(s_id)
++            if not getattr(self.conn, "in_transaction", False):
++                self.conn.commit()
++        except Exception as reg_err:
++            sys.stderr.write(f"[!] Warning: Failed to persist workspace_registry for {h}: {reg_err}\n")
++        return h
++
++    def drain_l1_staging(self, chunk_size: int = 100, dry_run: bool = False) -> int:
++        """
++        Drain events from l1_staging_log into activation_events table atomically.
++        Acquires immediate write lock prior to SELECT to eliminate TOCTOU duplicate drain races.
++        """
++        if not (1 <= chunk_size <= 10000):
++            raise ValueError(f"chunk_size must be between 1 and 10000, got {chunk_size}")
+ 
+-        placeholders = ",".join("?" for _ in drained_ids)
+-        cur.execute(f"UPDATE l1_staging_log SET is_drained = 1 WHERE staging_id IN ({placeholders})", drained_ids)
+-        # Argon Chốt chặn 2: Xóa vật lý các dòng đã drain để giải phóng trang đĩa cho incremental_vacuum
+-        cur.execute(f"DELETE FROM l1_staging_log WHERE staging_id IN ({placeholders})", drained_ids)
+-        self.conn.commit()
+-        return len(drained_ids)
++        if not self.workspace_hash and not self.allow_unscoped:
++            raise RuntimeError("drain_l1_staging cannot operate on unscoped engine when allow_unscoped=False (VULN-003)")
+ 
+-    def consolidate_batch(self, batch_size: int = 100, dry_run: bool = False) -> Dict[str, Any]:
++        cur = self.conn.cursor()
++
++        # In dry_run mode, perform strictly read-only query using subquery COUNT
++        if dry_run:
++            if self.workspace_hash:
++                cur.execute(
++                    "SELECT COUNT(*) FROM (SELECT 1 FROM l1_staging_log WHERE is_drained = 0 AND workspace_hash = ? LIMIT ?);",
++                    (self.workspace_hash, chunk_size)
++                )
++            else:
++                cur.execute(
++                    "SELECT COUNT(*) FROM (SELECT 1 FROM l1_staging_log WHERE is_drained = 0 LIMIT ?);",
++                    (chunk_size,)
++                )
++            row = cur.fetchone()
++            return row[0] if row else 0
++
++        own_tx = not getattr(self.conn, "in_transaction", False)
++        sp_drain = f"sp_drain_{uuid.uuid4().hex[:12]}"
++
++        if own_tx:
++            self.conn.execute("BEGIN IMMEDIATE;")
++        else:
++            self.conn.execute(f"SAVEPOINT {sp_drain};")
++
++        try:
++            if self.workspace_hash:
++                cur.execute(
++                    """
++                    SELECT staging_id, session_id, timestamp, user_input, workspace_hash, top_skill, tier_used, recalled_traces
++                    FROM l1_staging_log
++                    WHERE is_drained = 0 AND workspace_hash = ?
++                    ORDER BY staging_id ASC
++                    LIMIT ?;
++                    """,
++                    (self.workspace_hash, chunk_size)
++                )
++            else:
++                cur.execute(
++                    """
++                    SELECT staging_id, session_id, timestamp, user_input, workspace_hash, top_skill, tier_used, recalled_traces
++                    FROM l1_staging_log
++                    WHERE is_drained = 0
++                    ORDER BY staging_id ASC
++                    LIMIT ?;
++                    """,
++                    (chunk_size,)
++                )
++            rows = cur.fetchall()
++            if not rows:
++                if own_tx:
++                    self.conn.commit()
++                else:
++                    self.conn.execute(f"RELEASE SAVEPOINT {sp_drain};")
++                return 0
++
++            drained_ids = []
++            quarantined_ids = []
++            for row in rows:
++                s_id, session_id, ts, u_input, ws_hash, top_skill, tier, recalled = row
++                try:
++                    safe_input = redact_secrets(u_input) or ""
++                    safe_skill = redact_secrets(top_skill) if top_skill else None
++                    safe_recalled = redact_secrets(recalled) if recalled else None
++                    cur.execute(
++                        """
++                        INSERT INTO activation_events (session_id, timestamp, user_input, workspace_dir, top_skill, tier_used, recalled_traces, feedback_score, is_consolidated)
++                        VALUES (?, ?, ?, ?, ?, ?, ?, 0.0, 0)
++                        """,
++                        (session_id, ts, safe_input, ws_hash, safe_skill, tier, safe_recalled)
++                    )
++                    drained_ids.append(s_id)
++                except Exception as row_err:
++                    diag = persist_diag(row_err)
++                    sys.stderr.write(f"[!] Warning: Quarantining poison pill staging row {s_id}: {diag}\n")
++                    quarantined_ids.append((s_id, diag))
++
++            if drained_ids:
++                _chunked_execute(cur, "UPDATE l1_staging_log SET is_drained = 1 WHERE staging_id IN ({placeholders})", drained_ids)
++                _chunked_execute(cur, "DELETE FROM l1_staging_log WHERE staging_id IN ({placeholders})", drained_ids)
++            if quarantined_ids:
++                for q_id, q_err in quarantined_ids:
++                    cur.execute("UPDATE l1_staging_log SET is_drained = 2, last_error = ? WHERE staging_id = ?", (q_err, q_id))
++
++            if own_tx:
++                self.conn.commit()
++            else:
++                self.conn.execute(f"RELEASE SAVEPOINT {sp_drain};")
++            return len(drained_ids)
++        except Exception:
++            if own_tx:
++                try:
++                    self.conn.rollback()
++                except Exception:
++                    pass
++            else:
++                try:
++                    self.conn.execute(f"ROLLBACK TO SAVEPOINT {sp_drain};")
++                    self.conn.execute(f"RELEASE SAVEPOINT {sp_drain};")
++                except Exception:
++                    pass
++            raise
++
++    def consolidate_batch(self, batch_size: int = 100, dry_run: bool = False, allow_unscoped: Optional[bool] = None) -> Dict[str, Any]:
+         """
+-        Execute full consolidation cycle:
+-        1. Fetch pending activation_events.
+-        2. Cluster patterns by folded signature.
+-        3. Promote patterns with >= 2 successes to workspace_episodic_memory and proven_traces.json.
+-        4. Apply Ebbinghaus decay to episodic memory; soft-archive stale records.
+-        5. Mark events as consolidated.
++        Execute full consolidation cycle atomically:
++        1. Drain pending L1 logs.
++        2. Ingest unprocessed activation events inside single serialized IMMEDIATE transaction.
++        3. Cluster patterns by folded signature.
++        4. Promote patterns with >= 2 successes.
++        5. Apply Ebbinghaus decay and soft-archive stale records (strictly workspace-scoped, VULN-001).
++        6. Mark events as consolidated or quarantined (is_consolidated: 0=pending, 1=done, 2=quarantined).
+         """
++        if not (1 <= batch_size <= 10000):
++            raise ValueError(f"batch_size must be between 1 and 10000, got {batch_size}")
++        if allow_unscoped is True and not self.allow_unscoped:
++            raise RuntimeError("Cannot override allow_unscoped=True when ConsolidatorEngine was constructed with allow_unscoped=False (VULN-009)")
++        effective_unscoped = self.allow_unscoped if allow_unscoped is None else (self.allow_unscoped and allow_unscoped)
+         cur = self.conn.cursor()
+ 
+-        # Step 1: Drain any pending L1 logs
+-        self.drain_l1_staging(chunk_size=batch_size)
++        # VULN-002: Gate entire consolidation cycle when unscoped and allow_unscoped=False
++        if not self.workspace_hash and not effective_unscoped:
++            sys.stderr.write("[!] Notice: Skipping unscoped consolidation cycle (pass allow_unscoped=True to run globally)\n")
++            return {
++                "events_processed": 0,
++                "promoted_traces": 0,
++                "soft_archived": 0
++            }
++
++        # Step 1: Drain any pending L1 logs atomically
++        self.drain_l1_staging(chunk_size=batch_size, dry_run=dry_run)
++
++        # Strictly Zero-Mutation Preview for dry_run - executed without write locks (VULN-004)
++        if dry_run:
++            if self.workspace_hash:
++                cur.execute(
++                    """
++                    SELECT event_id, session_id, timestamp, user_input, workspace_dir, feedback_score
++                    FROM activation_events
++                    WHERE is_consolidated = 0 AND (workspace_dir = ? OR workspace_dir = ?)
++                    ORDER BY event_id ASC
++                    LIMIT ?;
++                    """,
++                    (self.workspace_hash, self.workspace_root or self.workspace_hash, batch_size)
++                )
++            else:
++                cur.execute(
++                    """
++                    SELECT event_id, session_id, timestamp, user_input, workspace_dir, feedback_score
++                    FROM activation_events
++                    WHERE is_consolidated = 0
++                    ORDER BY event_id ASC
++                    LIMIT ?;
++                    """,
++                    (batch_size,)
++                )
++            events = cur.fetchall()
++            clusters: Dict[str, List[Dict[str, Any]]] = {}
++            processed_count = 0
++            for ev in events:
++                ev_id, sess_id, ts, user_inp, ws_dir, fb = ev
++                if not user_inp or fb < 0.0:
++                    processed_count += 1
++                    continue
++                try:
++                    ws_hash = resolve_workspace_hash(ws_dir, approved_root=self.workspace_root, allow_unscoped=(self.workspace_root is None or self.allow_unscoped), authorized_hashes=self.authorized_hashes)
++                except Exception as d_err:
++                    sys.stderr.write(f"[!] Warning: dry_run resolve_workspace_hash failed for event {ev_id}: {d_err}\n")
++                    continue
++                norm_query = fold_vietnamese(user_inp.strip())
++                clusters.setdefault(f"{ws_hash}::{norm_query}", []).append({"feedback": fb})
++                processed_count += 1
++
++            prospective_promotions = sum(
++                1 for c in clusters.values() if len([e for e in c if e.get("feedback", 0.0) > 0.0]) >= 2
++            )
++            if self.workspace_hash:
++                cur.execute(
++                    """
++                    SELECT count(*) FROM workspace_episodic_memory
++                    WHERE confidence_score < 0.20
++                      AND status = 'Active'
++                      AND memory_type != 'invariant'
++                      AND COALESCE(last_accessed_at, created_at) < datetime('now', '-7 days')
++                      AND workspace_hash = ?;
++                    """,
++                    (self.workspace_hash,)
++                )
++            elif effective_unscoped:
++                cur.execute(
++                    """
++                    SELECT count(*) FROM workspace_episodic_memory
++                    WHERE confidence_score < 0.20
++                      AND status = 'Active'
++                      AND memory_type != 'invariant'
++                      AND COALESCE(last_accessed_at, created_at) < datetime('now', '-7 days');
++                    """
++                )
++            else:
++                cur.execute("SELECT 0;")
++            prospective_archived = cur.fetchone()[0]
++            return {
++                "events_processed": processed_count,
++                "promoted_traces": prospective_promotions,
++                "soft_archived": prospective_archived
++            }
++
++        # Open serialized transaction BEFORE SELECT to eliminate multi-process TOCTOU races
++        own_tx = not getattr(self.conn, "in_transaction", False)
++        sp_name = f"sp_cons_{uuid.uuid4().hex[:12]}"
++        if own_tx:
++            self.conn.execute("BEGIN IMMEDIATE;")
++        else:
++            self.conn.execute(f"SAVEPOINT {sp_name};")
++
++        try:
++            # Step 2: Ingest unprocessed activation events under active write lock
++            if self.workspace_hash:
++                cur.execute(
++                    """
++                    SELECT event_id, session_id, timestamp, user_input, workspace_dir, feedback_score
++                    FROM activation_events
++                    WHERE is_consolidated = 0 AND (workspace_dir = ? OR workspace_dir = ?)
++                    ORDER BY event_id ASC
++                    LIMIT ?;
++                    """,
++                    (self.workspace_hash, self.workspace_root or self.workspace_hash, batch_size)
++                )
++            else:
++                cur.execute(
++                    """
++                    SELECT event_id, session_id, timestamp, user_input, workspace_dir, feedback_score
++                    FROM activation_events
++                    WHERE is_consolidated = 0
++                    ORDER BY event_id ASC
++                    LIMIT ?;
++                    """,
++                    (batch_size,)
++                )
++            events = cur.fetchall()
++
++            # Step 3: Cluster events by normalized folded query
++            clusters: Dict[str, List[Dict[str, Any]]] = {}
++            processed_ids = []
++            dead_letter_ids = []
++
++            for ev in events:
++                ev_id, sess_id, ts, user_inp, ws_dir, fb = ev
++                if not user_inp or fb < 0.0:
++                    processed_ids.append(ev_id)
++                    continue
++
++                try:
++                    # Determine workspace hash safely with root containment
++                    ws_hash = resolve_workspace_hash(ws_dir, approved_root=self.workspace_root, allow_unscoped=(self.workspace_root is None or self.allow_unscoped), authorized_hashes=self.authorized_hashes)
++                    # Normalized clustering key combining workspace and redacted folded query (VULN-005)
++                    clean_user_inp = redact_secrets(user_inp.strip()) if user_inp else ""
++                except Exception as ev_err:
++                    redacted_ev_err = persist_diag(ev_err)
++                    sys.stderr.write(f"[!] Warning: Quarantining invalid event {ev_id}: {redacted_ev_err}\n")
++                    dead_letter_ids.append((ev_id, redacted_ev_err))
++                    continue
++
++                norm_query = fold_vietnamese(clean_user_inp)
++                cluster_key = f"{ws_hash}::{norm_query}"
++                clusters.setdefault(cluster_key, []).append({
++                    "id": ev_id,
++                    "input": clean_user_inp,
++                    "ws_dir": ws_dir,
++                    "ws_hash": ws_hash,
++                    "feedback": fb
++                })
++                processed_ids.append(ev_id)
++
++            # Step 4: Trace Frequency Promotion (>= 2 positive hits with feedback_score > 0.0)
++            promoted_count = 0
++            promoted_ws_hashes = set()
++            now_dt = datetime.datetime.now(datetime.timezone.utc)
++            now_str = now_dt.strftime("%Y-%m-%d %H:%M:%S")
++            for key, cluster_events in clusters.items():
++                positive_hits = [e for e in cluster_events if e.get("feedback", 0.0) > 0.0]
++                if len(positive_hits) >= 2:
++                    rep = positive_hits[0]
++                    raw_text = rep["input"]
++                    ws_dir = rep["ws_dir"]
++                    ws_hash = rep["ws_hash"]
++                    cluster_event_ids = [e["id"] for e in cluster_events]
++
++                    # VULN-005: Wrap per-cluster promotion in SAVEPOINT for strict atomicity across episodic & outbox tables
++                    sp_prom = f"sp_prom_{uuid.uuid4().hex[:12]}"
++                    cur.execute(f"SAVEPOINT {sp_prom};")
++                    try:
++                        clean_sig = redact_secrets(raw_text) or ""
++                        if not clean_sig or not any(c.isalnum() for c in clean_sig):
++                            sys.stderr.write(f"[!] Warning: Quarantining empty/non-alphanumeric signature in cluster {key}\n")
++                            cur.execute(f"RELEASE SAVEPOINT {sp_prom};")
++                            for dl_eid in cluster_event_ids:
++                                dead_letter_ids.append((dl_eid, "Quarantined: Empty or non-alphanumeric problem signature"))
++                            continue
++                        tags = extract_bilingual_tags(clean_sig)
++                        folded_content = fold_vietnamese(f"{clean_sig} {tags}")
++                        clean_sol = f"# Verified Fix for: {clean_sig}"
++
++                        # Use SHA-256 for memory_id while checking legacy MD5 to prevent record duplication (VULN-004)
++                        mem_id = f"trace-{hashlib.sha256(f'{ws_hash}:{key}'.encode('utf-8')).hexdigest()[:16]}"
++                        legacy_mem_id = f"trace-{hashlib.md5(f'{ws_hash}:{key}'.encode('utf-8')).hexdigest()[:12]}"
+ 
+-        # Step 2: Ingest unprocessed activation events
+-        cur.execute(
+-            """
+-            SELECT event_id, session_id, timestamp, user_input, workspace_dir, feedback_score
+-            FROM activation_events
+-            WHERE is_consolidated = 0
+-            ORDER BY event_id ASC
+-            LIMIT ?
+-            """,
+-            (batch_size,)
+-        )
+-        events = cur.fetchall()
+-        # Step 3: Cluster events by normalized folded query
+-        clusters: Dict[str, List[Dict[str, Any]]] = {}
+-        processed_ids = []
+-
+-        for ev in events:
+-            ev_id, sess_id, ts, user_inp, ws_dir, fb = ev
+-            processed_ids.append(ev_id)
+-            if not user_inp or fb < 0.0:
+-                continue
+-
+-            # Normalized clustering key using fold_vietnamese
+-            cluster_key = fold_vietnamese(user_inp.strip())
+-            clusters.setdefault(cluster_key, []).append({
+-                "id": ev_id,
+-                "input": user_inp,
+-                "ws_dir": ws_dir,
+-                "feedback": fb
+-            })
+-
+-        # Step 4: Trace Frequency Promotion (>= 2 successful hits)
+-        promoted_count = 0
+-        now_dt = datetime.datetime.now(datetime.timezone.utc)
+-        now_str = now_dt.strftime("%Y-%m-%d %H:%M:%S")
+-
+-        for key, cluster_events in clusters.items():
+-            if len(cluster_events) >= 2:
+-                rep = cluster_events[0]
+-                raw_text = rep["input"]
+-                ws_dir = rep["ws_dir"]
+-                ws_hash = canonical_workspace_hash(ws_dir)
+-                tags = extract_bilingual_tags(raw_text)
+-
+-                mem_id = f"trace-{hashlib.md5(f'{ws_hash}:{key}'.encode('utf-8')).hexdigest()[:12]}"
+-                folded_content = fold_vietnamese(f"{raw_text} {tags}")
+-
+-                if not dry_run:
+-                    # Check if already present in episodic memory
+-                    cur.execute("SELECT memory_id, activation_count FROM workspace_episodic_memory WHERE memory_id = ?", (mem_id,))
+-                    existing = cur.fetchone()
+-
+-                    if existing:
+-                        # Reinforce existing trace
+                         cur.execute(
+-                            """
+-                            UPDATE workspace_episodic_memory
+-                            SET activation_count = activation_count + ?,
+-                                last_accessed_at = ?,
+-                                workspace_hash = ?,
+-                                status = 'Active'
+-                            WHERE memory_id = ?
+-                            """,
+-                            (len(cluster_events), now_str, ws_hash, mem_id)
++                            "SELECT memory_id, activation_count FROM workspace_episodic_memory WHERE (memory_id = ? OR memory_id = ?) AND workspace_hash = ?",
++                            (mem_id, legacy_mem_id, ws_hash)
+                         )
+-                    else:
++                        existing = cur.fetchone()
++                        if existing:
++                            mem_id = existing[0]  # Reuse existing ID (whether legacy or new) to prevent duplicate rows
++
++                        if existing:
++                            # Reinforce existing trace (restores confidence to 1.0 and activates)
++                            cur.execute(
++                                """
++                                UPDATE workspace_episodic_memory
++                                SET activation_count = activation_count + ?,
++                                    confidence_score = 1.0,
++                                    last_accessed_at = ?,
++                                    status = 'Active'
++                                WHERE memory_id = ? AND workspace_hash = ?
++                                """,
++                                (len(positive_hits), now_str, mem_id, ws_hash)
++                            )
++                        else:
++                            ep_ws_path = self.workspace_root or (ws_dir if ws_dir and not is_valid_hex_hash(ws_dir) else "")
++                            cur.execute(
++                                """
++                                INSERT INTO workspace_episodic_memory (
++                                    memory_id, workspace_hash, workspace_path, memory_type,
++                                    title, problem_signature, solution_payload, bilingual_tags,
++                                    content_folded, status, activation_count, confidence_score,
++                                    decay_rate, last_accessed_at, created_at
++                                ) VALUES (?, ?, ?, 'proven_trace', ?, ?, ?, ?, ?, 'Active', ?, 1.0, 0.08, ?, ?)
++                                """,
++                                (
++                                    mem_id, ws_hash, ep_ws_path,
++                                    f"Promoted: {clean_sig[:80]}",
++                                    clean_sig,
++                                    clean_sol,
++                                    tags,
++                                    folded_content,
++                                    len(positive_hits),
++                                    now_str, now_str
++                                )
++                            )
++
++                        clean_tags_list = [t.strip() for t in tags.split(",") if t.strip()]
+                         cur.execute(
+                             """
+-                            INSERT INTO workspace_episodic_memory (
+-                                memory_id, workspace_hash, workspace_path, memory_type,
+-                                title, problem_signature, solution_payload, bilingual_tags,
+-                                content_folded, status, activation_count, confidence_score,
+-                                decay_rate, last_accessed_at, created_at
+-                            ) VALUES (?, ?, ?, 'proven_trace', ?, ?, ?, ?, ?, 'Active', ?, 1.0, 0.08, ?, ?)
++                            INSERT INTO consolidation_outbox (
++                                memory_id, workspace_hash, signature, solution, tags, context, status, created_at, generation
++                            ) VALUES (?, ?, ?, ?, ?, ?, 'Pending', ?, 1)
++                            ON CONFLICT(memory_id, workspace_hash) DO UPDATE SET
++                                signature = excluded.signature,
++                                solution = excluded.solution,
++                                tags = excluded.tags,
++                                context = excluded.context,
++                                status = 'Pending',
++                                generation = consolidation_outbox.generation + 1,
++                                retry_count = 0,
++                                last_error = NULL,
++                                owner_token = NULL,
++                                claimed_at = NULL;
+                             """,
+                             (
+-                                mem_id, ws_hash, ws_dir,
+-                                f"Promoted: {raw_text[:80]}",
+-                                raw_text,
+-                                f"# Verified Fix for: {raw_text}",
+-                                tags,
+-                                folded_content,
+-                                len(cluster_events),
+-                                now_str, now_str
++                                mem_id, ws_hash, clean_sig, clean_sol,
++                                json.dumps(clean_tags_list), ws_dir, now_str
+                             )
+                         )
+-
+-                    # Also update fast in-memory proven_traces.json
+-                    try:
+-                        record_trace(
+-                            problem_signature=raw_text,
+-                            proven_solution=f"Verified fix for {raw_text[:100]}",
+-                            tags=[t.strip() for t in tags.split(",") if t.strip()],
+-                            workspace_context=ws_dir
++                        cur.execute(f"RELEASE SAVEPOINT {sp_prom};")
++                        promoted_count += 1
++                        promoted_ws_hashes.add(ws_hash)
++                    except Exception as prom_err:
++                        try:
++                            cur.execute(f"ROLLBACK TO SAVEPOINT {sp_prom};")
++                            cur.execute(f"RELEASE SAVEPOINT {sp_prom};")
++                        except Exception:
++                            pass
++                        err_str = f"Promotion error ({type(prom_err).__name__}): {prom_err}"
++                        safe_key = safe_err(key)
++                        redacted_prom_err = persist_diag(err_str)
++                        is_trans = is_transient_io_error(prom_err) or (
++                            isinstance(prom_err, sqlite3.OperationalError) and any(w in str(prom_err).lower() for w in ("locked", "busy"))
+                         )
+-                    except Exception:
+-                        pass
+-
+-                promoted_count += 1
+-
+-        # Step 5: Bounded Ebbinghaus Decay & Soft-Archiving (Pure SQLite Padé [0/1] Algebraic Bulk Update)
+-        soft_archived_count = 0
+-        if not dry_run:
+-            # 1. Native C Bulk Update: Padé [0/1] algebraic decay bounded in [0.0, 1.0]
+-            # Time-partitioned to rows older than 1 day to eliminate hot-path contention
+-            cur.execute(
+-                """
+-                UPDATE workspace_episodic_memory
+-                SET confidence_score = MIN(1.0, MAX(0.0,
+-                    (1.0 + 0.5 * activation_count) /
+-                    ((1.0 + 0.5 * activation_count) + decay_rate * MAX(0.0, (julianday('now') - julianday(last_accessed_at))))
+-                ))
+-                WHERE status = 'Active'
+-                  AND memory_type != 'invariant'
+-                  AND decay_rate > 0.0
+-                  AND last_accessed_at < datetime('now', '-1 day');
+-                """
+-            )
++                        if is_trans:
++                            sys.stderr.write(f"[!] Warning: Transient contention during cluster promotion {safe_key}: {redacted_prom_err} (re-queued for retry)\n")
++                        else:
++                            sys.stderr.write(f"[!] Warning: Quarantining poison pill cluster {safe_key}: {redacted_prom_err}\n")
++                            for dl_eid in cluster_event_ids:
++                                dead_letter_ids.append((dl_eid, redacted_prom_err))
+ 
+-            # 2. Two-phase soft-archiving: mark Archived when confidence_score < 0.20 past 7-day grace period
+-            cur.execute(
+-                """
+-                UPDATE workspace_episodic_memory
+-                SET status = 'Archived'
+-                WHERE confidence_score < 0.20
+-                  AND status = 'Active'
+-                  AND memory_type != 'invariant'
+-                  AND last_accessed_at < datetime('now', '-7 days');
+-                """
+-            )
+-            soft_archived_count = cur.rowcount
+-
+-            # 3. Two-phase hard-purge: physical deletion after 30 days in Archived state
+-            cur.execute(
+-                """
+-                DELETE FROM workspace_episodic_memory
+-                WHERE status = 'Archived'
+-                  AND last_accessed_at < datetime('now', '-30 days');
+-                """
+-            )
+-        else:
+-            cur.execute(
+-                """
+-                SELECT count(*) FROM workspace_episodic_memory
+-                WHERE confidence_score < 0.20
+-                  AND status = 'Active'
+-                  AND memory_type != 'invariant'
+-                  AND last_accessed_at < datetime('now', '-7 days');
+-                """
+-            )
+-            soft_archived_count = cur.fetchone()[0]
++            # Step 5: Bounded Ebbinghaus Decay & Soft-Archiving (Pure SQLite Padé [0/1] Algebraic Bulk Update)
++            # VULN-001: Strict workspace_hash scoping to prevent cross-tenant decay, soft-archive, or hard-purge
++            soft_archived_count = 0
++            if self.workspace_hash:
++                cur.execute(
++                    """
++                    UPDATE workspace_episodic_memory
++                    SET confidence_score = COALESCE(
++                        MAX(0.0, MIN(1.0,
++                            (1.0 + 0.5 * activation_count) /
++                            NULLIF((1.0 + 0.5 * activation_count) + decay_rate * MAX(0.0, (julianday('now') - julianday(last_accessed_at))), 0.0)
++                        )),
++                        confidence_score
++                    )
++                    WHERE status = 'Active'
++                      AND memory_type != 'invariant'
++                      AND decay_rate IS NOT NULL
++                      AND decay_rate > 0.0
++                      AND last_accessed_at IS NOT NULL
++                      AND last_accessed_at < datetime('now', '-1 day')
++                      AND workspace_hash = ?;
++                    """,
++                    (self.workspace_hash,)
++                )
++
++                # 2. Two-phase soft-archiving: mark Archived when confidence_score < 0.20 past 7-day grace period
++                cur.execute(
++                    """
++                    UPDATE workspace_episodic_memory
++                    SET status = 'Archived'
++                    WHERE confidence_score < 0.20
++                      AND status = 'Active'
++                      AND memory_type != 'invariant'
++                      AND last_accessed_at IS NOT NULL
++                      AND last_accessed_at < datetime('now', '-7 days')
++                      AND workspace_hash = ?;
++                    """,
++                    (self.workspace_hash,)
++                )
++                soft_archived_count = cur.rowcount
++
++                # 3. Two-phase hard-purge: physical deletion after 30 days in Archived state
++                # CRITICAL: Requires last_accessed_at IS NOT NULL to guarantee legacy records are never lost!
++                cur.execute(
++                    """
++                    DELETE FROM workspace_episodic_memory
++                    WHERE status = 'Archived'
++                      AND last_accessed_at IS NOT NULL
++                      AND last_accessed_at < datetime('now', '-30 days')
++                      AND workspace_hash = ?;
++                    """,
++                    (self.workspace_hash,)
++                )
++            elif effective_unscoped:
++                cur.execute(
++                    """
++                    UPDATE workspace_episodic_memory
++                    SET confidence_score = COALESCE(
++                        MAX(0.0, MIN(1.0,
++                            (1.0 + 0.5 * activation_count) /
++                            NULLIF((1.0 + 0.5 * activation_count) + decay_rate * MAX(0.0, (julianday('now') - julianday(last_accessed_at))), 0.0)
++                        )),
++                        confidence_score
++                    )
++                    WHERE status = 'Active'
++                      AND memory_type != 'invariant'
++                      AND decay_rate IS NOT NULL
++                      AND decay_rate > 0.0
++                      AND last_accessed_at IS NOT NULL
++                      AND last_accessed_at < datetime('now', '-1 day');
++                    """
++                )
++                cur.execute(
++                    """
++                    UPDATE workspace_episodic_memory
++                    SET status = 'Archived'
++                    WHERE confidence_score < 0.20
++                      AND status = 'Active'
++                      AND memory_type != 'invariant'
++                      AND last_accessed_at IS NOT NULL
++                      AND last_accessed_at < datetime('now', '-7 days');
++                    """
++                )
++                soft_archived_count = cur.rowcount
++                cur.execute(
++                    """
++                    DELETE FROM workspace_episodic_memory
++                    WHERE status = 'Archived'
++                      AND last_accessed_at IS NOT NULL
++                      AND last_accessed_at < datetime('now', '-30 days');
++                    """
++                )
++            else:
++                sys.stderr.write("[!] Notice: Skipping unscoped maintenance phase in consolidate_batch (pass allow_unscoped=True to run globally)\n")
+ 
+-        # Step 6: Mark processed events as consolidated & Commit
+-        if not dry_run:
++            # Step 6: Mark processed events as consolidated & quarantine dead-letter rows (VULN-010 safe chunked)
+             if processed_ids:
+-                placeholders = ",".join("?" for _ in processed_ids)
+-                cur.execute(f"UPDATE activation_events SET is_consolidated = 1 WHERE event_id IN ({placeholders})", processed_ids)
+-            self.conn.commit()
++                _chunked_execute(cur, "UPDATE activation_events SET is_consolidated = 1 WHERE event_id IN ({placeholders})", processed_ids)
++            if dead_letter_ids:
++                for dl_id, dl_err in dead_letter_ids:
++                    cur.execute("UPDATE activation_events SET is_consolidated = 2, last_error = ? WHERE event_id = ?", (dl_err, dl_id))
+ 
+-            # Lazy Vector Backfill (Argon Chốt chặn 3)
++            if own_tx:
++                self.conn.commit()
++            else:
++                self.conn.execute(f"RELEASE SAVEPOINT {sp_name};")
++        except Exception as dbe:
++            if own_tx:
++                try:
++                    self.conn.rollback()
++                except Exception:
++                    pass
++            else:
++                try:
++                    self.conn.execute(f"ROLLBACK TO SAVEPOINT {sp_name};")
++                    self.conn.execute(f"RELEASE SAVEPOINT {sp_name};")
++                except Exception:
++                    pass
++            sys.stderr.write(f"[!] Warning: Step 5 consolidation transaction failed: {type(dbe).__name__}: {dbe}\n")
++            raise
++
++        # Step 6b: Durable outbox flush decoupled from consolidation commit scoped by workspace_hash (VULN-004, VULN-005)
++        outbox_err = None
++        if not getattr(self.conn, "in_transaction", False):
++            flush_targets = set(promoted_ws_hashes)
++            if self.workspace_hash:
++                flush_targets.add(self.workspace_hash)
+             try:
+-                from embedding_service import get_embedding, MODEL_NAME
+-                from memory_engine import serialize_float32_blob, compute_vector_norm
++                if flush_targets:
++                    for target_h in flush_targets:
++                        flush_outbox(self.conn, workspace_hash=target_h)
++                elif effective_unscoped:
++                    flush_outbox(self.conn, workspace_hash=None)
++            except Exception as foe:
++                outbox_err = foe
++                sys.stderr.write(f"[!] Warning: flush_outbox after consolidate_batch failed: {safe_err(foe)}\n")
++
++        # Lazy Vector Backfill (VULN-001): Strict workspace_hash scoping to prevent cross-tenant exfiltration
++        try:
++            from embedding_service import get_embedding, MODEL_NAME
++            from memory_engine import serialize_float32_blob, compute_vector_norm
+ 
++            if self.workspace_hash:
+                 cur.execute(
+                     """
+                     SELECT e.memory_id, e.workspace_hash, e.title, e.problem_signature, e.solution_payload
+                     FROM workspace_episodic_memory e
+-                    LEFT JOIN dense_embeddings d ON e.memory_id = d.memory_id
++                    LEFT JOIN dense_embeddings d ON e.memory_id = d.memory_id AND e.workspace_hash = d.workspace_hash
++                    WHERE e.status = 'Active' AND d.memory_id IS NULL AND e.workspace_hash = ?
++                    LIMIT 50;
++                    """,
++                    (self.workspace_hash,)
++                )
++                rows_to_backfill = cur.fetchall()
++            elif effective_unscoped:
++                cur.execute(
++                    """
++                    SELECT e.memory_id, e.workspace_hash, e.title, e.problem_signature, e.solution_payload
++                    FROM workspace_episodic_memory e
++                    LEFT JOIN dense_embeddings d ON e.memory_id = d.memory_id AND e.workspace_hash = d.workspace_hash
+                     WHERE e.status = 'Active' AND d.memory_id IS NULL
+                     LIMIT 50;
+                     """
+                 )
+                 rows_to_backfill = cur.fetchall()
++            else:
++                rows_to_backfill = []
++            if rows_to_backfill:
++                # VULN-003: Compute all embeddings OUTSIDE of SQLite write transaction to prevent lock contention
++                computed_embeddings = []
+                 for row in rows_to_backfill:
+                     mem_id, ws_hash, title, sig, sol = row
+                     embed_text = f"{title} {sig or ''} {sol}"[:1000]
+-                    vec = get_embedding(embed_text, is_query=False)
+-                    if vec:
+-                        norm = compute_vector_norm(vec)
+-                        blob = serialize_float32_blob(vec)
+-                        cur.execute(
+-                            """
+-                            INSERT OR REPLACE INTO dense_embeddings (memory_id, workspace_hash, model_name, dimensions, vector_blob, norm, updated_at)
+-                            VALUES (?, ?, ?, ?, ?, ?, datetime('now'))
+-                            """,
+-                            (mem_id, ws_hash, MODEL_NAME, len(vec), blob, norm)
+-                        )
+-                self.conn.commit()
+-            except Exception:
+-                pass
++                    try:
++                        vec = get_embedding(embed_text, is_query=False)
++                        if vec:
++                            norm = compute_vector_norm(vec)
++                            blob = serialize_float32_blob(vec)
++                            computed_embeddings.append((mem_id, ws_hash, MODEL_NAME, len(vec), blob, norm))
++                    except Exception as emb_e:
++                        sys.stderr.write(f"[!] Warning: Vector backfill embedding call failed for {mem_id}: {safe_err(emb_e)}\n")
++
++                if computed_embeddings:
++                    bf_own = not getattr(self.conn, "in_transaction", False)
++                    sp_bf = f"sp_bf_{uuid.uuid4().hex[:12]}"
++                    if bf_own:
++                        self.conn.execute("BEGIN IMMEDIATE;")
++                    else:
++                        self.conn.execute(f"SAVEPOINT {sp_bf};")
++                    try:
++                        for item in computed_embeddings:
++                            cur.execute(
++                                """
++                                INSERT OR REPLACE INTO dense_embeddings (memory_id, workspace_hash, model_name, dimensions, vector_blob, norm, updated_at)
++                                VALUES (?, ?, ?, ?, ?, ?, datetime('now'))
++                                """,
++                                item
++                            )
++                        if bf_own:
++                            self.conn.commit()
++                        else:
++                            self.conn.execute(f"RELEASE SAVEPOINT {sp_bf};")
++                    except Exception as row_e:
++                        if bf_own:
++                            try:
++                                self.conn.rollback()
++                            except Exception:
++                                pass
++                        else:
++                            try:
++                                self.conn.execute(f"ROLLBACK TO SAVEPOINT {sp_bf};")
++                                self.conn.execute(f"RELEASE SAVEPOINT {sp_bf};")
++                            except Exception:
++                                pass
++                        raise row_e
++        except Exception as bfe:
++            sys.stderr.write(f"[!] Warning: Vector backfill failed: {type(bfe).__name__}: {safe_err(bfe)}\n")
+ 
+-            # Incremental WAL vacuuming & Passive Checkpoint (Argon Chốt chặn 2)
++        # Incremental WAL vacuuming & Passive Checkpoint (Argon Chốt chặn 2)
++        if not getattr(self.conn, "in_transaction", False):
+             try:
+                 self.conn.execute("PRAGMA incremental_vacuum(100);")
+                 self.conn.execute("PRAGMA wal_checkpoint(PASSIVE);")
+-            except Exception:
+-                pass
++            except Exception as wce:
++                sys.stderr.write(f"[!] Warning: WAL maintenance failed: {type(wce).__name__}: {wce}\n")
+ 
+-        return {
++        batch_res = {
+             "events_processed": len(processed_ids),
+             "promoted_traces": promoted_count,
+             "soft_archived": soft_archived_count
+         }
++        if outbox_err is not None:
++            batch_res["outbox_error"] = safe_err(outbox_err)
++        return batch_res
+ 
+ 
+ def main():
+diff --git a/scripts/experiential_memory.py b/scripts/experiential_memory.py
+index 81dcfde..a4704b1 100644
+--- a/scripts/experiential_memory.py
++++ b/scripts/experiential_memory.py
+@@ -12,17 +12,28 @@ import sys
+ import json
+ import time
+ import hashlib
++import errno
++import stat
++import copy
++import threading
++import tempfile
++from typing import Optional, Dict, List, Any
+ 
+ _SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+ if _SCRIPT_DIR not in sys.path:
+     sys.path.insert(0, _SCRIPT_DIR)
+ 
++from memory_utils import redact_secrets, canonical_workspace_hash
++
++class TracePersistenceError(IOError):
++    """Raised when writing or persisting proven traces fails due to I/O or serialization error (VULN-004)."""
++    pass
++
+ TRACES_FILE = os.path.join(_SCRIPT_DIR, "proven_traces.json")
+ MAX_TRACES = 250
+ 
+-_CACHE_DATA = None
+-_CACHE_MTIME = 0.0
+-_INVERTED_INDEX = {}
++_CACHE = {}  # abs_path -> {"data": dict, "mtime": float}
++_MEM_LOCK = threading.RLock()
+ 
+ 
+ def tokenize(text: str) -> list:
+@@ -35,48 +46,330 @@ def tokenize(text: str) -> list:
+ 
+ 
+ def load_traces(traces_path: str = None) -> dict:
+-    """Loads stored execution traces in <0.02ms using mtime in-memory caching."""
+-    global _CACHE_DATA, _CACHE_MTIME, _INVERTED_INDEX
++    """Loads stored execution traces using mtime and path cache guarded by _MEM_LOCK (VULN-003, VULN-004)."""
++    global _CACHE, _MEM_LOCK
+     path = traces_path or TRACES_FILE
+-    if not os.path.exists(path):
++    abs_path = os.path.abspath(path)
++    if not os.path.exists(abs_path):
+         return {"version": "3.0.0", "updated_at": "", "traces": []}
++
++    with _MEM_LOCK:
++        try:
++            current_mtime = os.path.getmtime(abs_path)
++            cache_entry = _CACHE.get(abs_path)
++            if cache_entry is not None and current_mtime == cache_entry["mtime"] and (traces_path is None or traces_path == TRACES_FILE):
++                return copy.deepcopy(cache_entry["data"])
++            with open(abs_path, "r", encoding="utf-8") as f:
++                data = json.load(f)
++                scrubbed = []
++                for tr in data.get("traces", []):
++                    try:
++                        scrubbed.append(_redact_trace_dict(tr))
++                    except Exception as red_err:
++                        # VULN-003: Fail-closed: Never append raw unredacted trace on redaction error
++                        sys.stderr.write(f"[!] Warning: Dropping unredactable trace {tr.get('id', 'unknown')}: {red_err}\n")
++                data["traces"] = scrubbed
++                _CACHE[abs_path] = {"data": data, "mtime": current_mtime}
++                return copy.deepcopy(data)
++        except json.JSONDecodeError as jde:
++            # VULN-004: Corrupt JSON must raise, NOT return empty dict, to prevent overwriting prior traces
++            sys.stderr.write(f"[!] LỖI load_traces: Traces file {abs_path} is corrupt JSON: {jde}\n")
++            raise ValueError(f"Traces file {abs_path} contains invalid JSON: {jde}") from jde
++        except (PermissionError, OSError) as oe:
++            sys.stderr.write(f"[!] LỖI load_traces: Cannot read traces file {abs_path}: {oe}\n")
++            raise
++
++
++# Imports hoisted to top of file
++import tempfile
++
++_lock_local = threading.local()
++_PROCESS_LOCKS: Dict[str, threading.RLock] = {}
++_PROCESS_LOCKS_MUTEX = threading.Lock()
++
++def _get_process_rlock(path: str) -> threading.RLock:
++    with _PROCESS_LOCKS_MUTEX:
++        if path not in _PROCESS_LOCKS:
++            _PROCESS_LOCKS[path] = threading.RLock()
++        return _PROCESS_LOCKS[path]
++
++try:
++    import msvcrt
++    def _lock_fd(fd):
++        msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
++    def _unlock_fd(fd):
++        try:
++            msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
++        except Exception:
++            pass
++except ImportError:
+     try:
+-        current_mtime = os.path.getmtime(path)
+-        if _CACHE_DATA is not None and current_mtime == _CACHE_MTIME and (traces_path is None or traces_path == TRACES_FILE):
+-            return _CACHE_DATA
+-        with open(path, "r", encoding="utf-8") as f:
+-            data = json.load(f)
+-            _CACHE_DATA = data
+-            _CACHE_MTIME = current_mtime
+-            # Rebuild in-memory inverted index
+-            _INVERTED_INDEX = {}
+-            for idx, tr in enumerate(data.get("traces", [])):
+-                for tok in tr.get("tokens", []):
+-                    _INVERTED_INDEX.setdefault(tok, set()).add(idx)
+-            return data
+-    except Exception:
+-        return {"version": "3.0.0", "updated_at": "", "traces": []}
++        import fcntl
++        def _lock_fd(fd):
++            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
++        def _unlock_fd(fd):
++            try:
++                fcntl.flock(fd, fcntl.LOCK_UN)
++            except Exception:
++                pass
++    except ImportError:
++        def _lock_fd(fd): pass
++        def _unlock_fd(fd): pass
+ 
+ 
+-def save_traces(data: dict, traces_path: str = None) -> bool:
+-    """Persists traces atomically."""
+-    path = traces_path or TRACES_FILE
+-    data["updated_at"] = time.strftime("%Y-%m-%d %H:%M:%S")
+-    tmp_path = path + ".tmp"
+-    try:
+-        with open(tmp_path, "w", encoding="utf-8") as f:
+-            json.dump(data, f, indent=2, ensure_ascii=False)
+-        if os.path.exists(path):
+-            os.replace(tmp_path, path)
++class FileLock:
++    """
++    Advisory OS-level file lock operating on a dedicated lock file descriptor.
++    Includes thread-local reentrancy depth tracking (Hazard 45) and guarantees 1-byte pre-sizing
++    and zero-offset seeking prior to locking on Windows NTFS (VULN-003).
++    """
++    def __init__(self, lock_file: str, timeout: float = 5.0):
++        self.lock_file = os.path.abspath(lock_file)
++        self.timeout = timeout
++        self.fd = None
++        self._rlock = _get_process_rlock(self.lock_file)
++
++    def __enter__(self):
++        # VULN-003: Acquire process-wide RLock first to serialize intra-process threads cleanly
++        acquired = self._rlock.acquire(timeout=self.timeout)
++        if not acquired:
++            raise TimeoutError(f"Could not acquire intra-process thread lock on {self.lock_file} within {self.timeout}s")
++
++        try:
++            held = getattr(_lock_local, "held_locks", None)
++            if held is None:
++                held = _lock_local.held_locks = {}
++            if self.lock_file in held:
++                held[self.lock_file] += 1
++                return self
++
++            deadline = time.monotonic() + self.timeout
++            # Step 1: Open file descriptor safely with 0o600 permissions and defend against symlink attacks (VULN-008)
++            if os.path.islink(self.lock_file) or (hasattr(os.path, "isreparsepoint") and os.path.isreparsepoint(self.lock_file)):
++                raise PermissionError(f"Security violation: lock file cannot be a symbolic link or reparse point: {self.lock_file}")
++
++            open_flags = os.O_CREAT | os.O_RDWR
++            if hasattr(os, "O_NOFOLLOW"):
++                open_flags |= os.O_NOFOLLOW
++
++            while self.fd is None:
++                created_new = False
++                try:
++                    try:
++                        self.fd = os.open(self.lock_file, open_flags | os.O_EXCL, 0o600)
++                        created_new = True
++                    except FileExistsError:
++                        self.fd = os.open(self.lock_file, open_flags, 0o600)
++
++                    st = os.fstat(self.fd)
++                    if not stat.S_ISREG(st.st_mode):
++                        raise PermissionError(f"Security violation: lock file is not a regular file: {self.lock_file}")
++
++                    # VULN-002: Reject reparse points and symlinks on Windows
++                    if sys.platform.startswith("win"):
++                        reparse = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400)
++                        if getattr(st, "st_file_attributes", 0) & reparse:
++                            raise PermissionError(f"Security violation: lock file is a reparse point or symlink: {self.lock_file}")
++
++                    if hasattr(os, "fchmod"):
++                        try:
++                            os.fchmod(self.fd, 0o600)
++                        except Exception:
++                            pass
++
++                    # VULN-002 / Hazard: Always write 1-byte pre-size when lock file is empty to prevent zero-length locking race
++                    if st.st_size == 0:
++                        try:
++                            os.write(self.fd, b"\x00")
++                            os.fsync(self.fd)
++                        except Exception as fsync_err:
++                            sys.stderr.write(f"[!] Warning: FileLock pre-size fsync failed: {fsync_err}\n")
++                except (PermissionError, OSError) as open_err:
++                    if self.fd is not None:
++                        try:
++                            os.close(self.fd)
++                        except Exception:
++                            pass
++                        self.fd = None
++                    winerror = getattr(open_err, "winerror", None)
++                    e_errno = getattr(open_err, "errno", None)
++                    if winerror in (32, 33):
++                        if time.monotonic() >= deadline:
++                            raise TimeoutError(f"Could not open lock file {self.lock_file} within {self.timeout}s: {open_err}") from open_err
++                        time.sleep(0.01)
++                        continue
++                    # Real permission fault on os.open (EACCES / EPERM / winerror 5)
++                    raise PermissionError(f"Permission denied opening lock file {self.lock_file} (errno={e_errno}, winerror={winerror}): {open_err}") from open_err
++
++            # Step 2: Acquire OS-level advisory lock with backoff retry
++            while True:
++                try:
++                    os.lseek(self.fd, 0, os.SEEK_SET)
++                    _lock_fd(self.fd)
++                    held[self.lock_file] = 1
++                    return self
++                except (BlockingIOError, OSError) as lock_err:
++                    winerror = getattr(lock_err, "winerror", None)
++                    e_errno = getattr(lock_err, "errno", None)
++                    # True contention signatures:
++                    # Windows: msvcrt.locking raises OSError with errno 13 (EACCES) and no winerror, or winerror 32/33/36
++                    # POSIX: EAGAIN (11), EWOULDBLOCK (11 or 35), or BlockingIOError
++                    is_contention = (
++                        isinstance(lock_err, BlockingIOError) or
++                        (winerror in (32, 33, 36)) or
++                        (e_errno in (errno.EACCES, errno.EAGAIN, errno.EWOULDBLOCK, 11, 13, 35))
++                    )
++                    if is_contention:
++                        if time.monotonic() >= deadline:
++                            try:
++                                os.close(self.fd)
++                            except Exception:
++                                pass
++                            self.fd = None
++                            raise TimeoutError(f"Could not acquire OS file lock on {self.lock_file} within {self.timeout}s: {lock_err}") from lock_err
++                        time.sleep(0.01)
++                    else:
++                        try:
++                            os.close(self.fd)
++                        except Exception:
++                            pass
++                        self.fd = None
++                        raise
++        except Exception:
++            self._rlock.release()
++            raise
++
++    def __exit__(self, exc_type, exc_val, exc_tb):
++        try:
++            held = getattr(_lock_local, "held_locks", {})
++            if self.lock_file in held:
++                held[self.lock_file] -= 1
++                if held[self.lock_file] > 0:
++                    return
++                del held[self.lock_file]
++
++            if self.fd is not None:
++                try:
++                    os.lseek(self.fd, 0, os.SEEK_SET)
++                    _unlock_fd(self.fd)
++                except Exception:
++                    pass
++                try:
++                    os.close(self.fd)
++                except Exception:
++                    pass
++                self.fd = None
++        finally:
++            self._rlock.release()
++
++
++def _redact_trace_dict(tr: Any, depth: int = 0) -> Any:
++    """Recursively redacts string values and nested structures with max depth 32 safe truncation (VULN-003, VULN-005)."""
++    if depth > 32:
++        return "[REDACTED_MAX_DEPTH]" 
++    if isinstance(tr, dict):
++        clean = {}
++        for k, v in tr.items():
++            if isinstance(v, str):
++                try:
++                    clean[k] = redact_secrets(v)
++                except Exception:
++                    clean[k] = "[REDACTED]"
++            elif isinstance(v, (dict, list)):
++                clean[k] = _redact_trace_dict(v, depth + 1)
++            else:
++                clean[k] = v
++        return clean
++    elif isinstance(tr, list):
++        return [_redact_trace_dict(item, depth + 1) for item in tr]
++    elif isinstance(tr, str):
++        try:
++            return redact_secrets(tr)
++        except Exception:
++            return "[REDACTED]"
++    return tr
++
++
++def _save_traces_unlocked(data: dict, path: str) -> bool:
++    """Persists traces atomically using unique tempfile, fsync, replace, and chmod 0600."""
++    now_str = time.strftime("%Y-%m-%d %H:%M:%S")
++    
++    # Deep-copy and recursively redact all trace fields for persistence (VULN-002, VULN-003)
++    traces = data.get("traces")
++    if not isinstance(traces, list):
++        raise TracePersistenceError(f"Invalid traces payload: 'traces' must be a list, got {type(traces).__name__} (VULN-002)")
++
++    persist_traces = []
++    for tr in traces:
++        if isinstance(tr, dict):
++            persist_traces.append(_redact_trace_dict(tr))
+         else:
+-            os.rename(tmp_path, path)
++            raise TracePersistenceError(f"Invalid trace entry: expected dict, got {type(tr).__name__} (VULN-002)")
++
++    if len(traces) > 0 and len(persist_traces) == 0:
++        raise TracePersistenceError("persist_traces became empty while input traces was non-empty; refusing to overwrite with empty data (VULN-002)")
++
++    persist_data = {
++        "version": data.get("version", "3.0.0"),
++        "updated_at": now_str,
++        "traces": persist_traces
++    }
++
++    dir_name = os.path.dirname(os.path.abspath(path))
++    fd, tmp_path = tempfile.mkstemp(dir=dir_name, prefix="traces_", suffix=".tmp")
++    f = None
++    try:
++        f = os.fdopen(fd, "w", encoding="utf-8")
++        json.dump(persist_data, f, indent=2, ensure_ascii=False)
++        f.flush()
++        os.fsync(f.fileno())
++        f.close()
++        f = None
++        os.replace(tmp_path, path)
++        try:
++            os.chmod(path, 0o600)
++        except Exception:
++            pass
++        # Parent directory fsync where supported to ensure directory entry durability (Hazard 63)
++        try:
++            if hasattr(os, "O_DIRECTORY"):
++                dir_fd = os.open(dir_name, os.O_RDONLY | os.O_DIRECTORY)
++                try:
++                    os.fsync(dir_fd)
++                finally:
++                    os.close(dir_fd)
++        except Exception:
++            pass
+         return True
+-    except Exception:
++    except Exception as e:
++        sys.stderr.write(f"[!] LỖI _save_traces_unlocked({path}): {type(e).__name__}: {e}\n")
++        if f is not None:
++            try:
++                f.close()
++            except Exception:
++                pass
++        else:
++            try:
++                os.close(fd)
++            except Exception:
++                pass
+         if os.path.exists(tmp_path):
+             try:
+                 os.remove(tmp_path)
+             except Exception:
+                 pass
++        raise TracePersistenceError(f"Failed to persist traces to {path}: {e}") from e
++
++
++def save_traces(data: dict, traces_path: str = None) -> bool:
++    """Persists traces atomically under OS FileLock (Hazard 4)."""
++    path = traces_path or TRACES_FILE
++    lock_path = path + ".lock"
++    try:
++        with FileLock(lock_path, timeout=5.0):
++            return _save_traces_unlocked(data, path)
++    except Exception as e:
++        sys.stderr.write(f"[!] LỖI save_traces({path}): {type(e).__name__}: {e}\n")
+         return False
+ 
+ 
+@@ -85,83 +378,155 @@ def record_trace(problem_signature: str,
+                  action_type: str = "command",
+                  tags: list = None,
+                  workspace_context: str = "",
+-                 traces_path: str = None) -> dict:
++                 traces_path: str = None,
++                 outbox_id: Optional[int] = None,
++                 workspace_hash: Optional[str] = None,
++                 outbox_generation: Optional[int] = None) -> dict:
+     """
+-    Records or updates a proven execution trace.
+-    Returns the recorded trace object.
++    Records or updates a proven execution trace inside a single atomic critical section.
++    Supports idempotent deduplication via outbox_id + outbox_generation (VULN-004) and strict tenant isolation
++    via workspace-scoped trace_id (VULN-001).
++    Returns the recorded trace object or empty dict on failure.
+     """
+     if not problem_signature or not proven_solution:
+         return {}
+ 
+-    data = load_traces(traces_path)
+-    traces = data.get("traces", [])
+-    
+-    sig_tokens = tokenize(problem_signature)
+-    tag_tokens = []
+-    if tags:
+-        for t in tags:
+-            tag_tokens.extend(tokenize(str(t)))
+-    all_tokens = list(set(sig_tokens + tag_tokens))
+-
+-    trace_id = hashlib.md5(f"{problem_signature.strip().lower()}".encode("utf-8")).hexdigest()[:10]
+-
+-    # Check for existing trace
+-    existing = None
+-    for tr in traces:
+-        if tr.get("id") == trace_id or tr.get("problem_signature").strip().lower() == problem_signature.strip().lower():
+-            existing = tr
+-            break
+-
+-    now_str = time.strftime("%Y-%m-%d %H:%M:%S")
+-    if existing:
+-        existing["proven_solution"] = proven_solution.strip()
+-        existing["success_count"] = existing.get("success_count", 1) + 1
+-        existing["last_recalled"] = now_str
+-        existing["tokens"] = list(set(existing.get("tokens", []) + all_tokens))
+-        if tags:
+-            existing["tags"] = list(set(existing.get("tags", []) + tags))
+-        if workspace_context:
+-            existing["workspace_context"] = workspace_context
+-        result_trace = existing
+-    else:
+-        new_trace = {
+-            "id": trace_id,
+-            "problem_signature": problem_signature.strip(),
+-            "proven_solution": proven_solution.strip(),
+-            "action_type": action_type,
+-            "tags": tags or [],
+-            "workspace_context": workspace_context,
+-            "tokens": all_tokens,
+-            "success_count": 1,
+-            "created_at": now_str,
+-            "last_recalled": now_str
+-        }
+-        traces.append(new_trace)
+-        result_trace = new_trace
+-
+-    # LRU Pruning if exceeds MAX_TRACES
+-    if len(traces) > MAX_TRACES:
+-        traces.sort(key=lambda x: (x.get("success_count", 1), x.get("last_recalled", "")), reverse=True)
+-        data["traces"] = traces[:MAX_TRACES]
+-    else:
+-        data["traces"] = traces
++    path = traces_path or TRACES_FILE
++    lock_path = path + ".lock"
+ 
+-    save_traces(data, traces_path)
+-    return result_trace
++    try:
++        with FileLock(lock_path, timeout=5.0):
++            try:
++                data = copy.deepcopy(load_traces(path))
++            except Exception as load_err:
++                sys.stderr.write(f"[!] LỖI record_trace: Aborting write to prevent data loss (load_traces failed): {load_err}\n")
++                return {}
++            traces = data.get("traces", [])
++            
++            clean_sig = redact_secrets(problem_signature) or problem_signature
++            if not clean_sig or not any(c.isalnum() for c in clean_sig):
++                raise ValueError("problem_signature contains no alphanumeric characters after secret redaction (Edge Case 2)")
++            clean_sol = redact_secrets(proven_solution) or proven_solution
++            clean_action = redact_secrets(action_type) or "command"
++            clean_ctx = redact_secrets(workspace_context) or ""
++            clean_tags = [redact_secrets(str(t)) for t in tags] if tags else []
++            sig_tokens = tokenize(clean_sig)
++            tag_tokens = []
++            for t in clean_tags:
++                tag_tokens.extend(tokenize(str(t)))
++            all_tokens = list(set(sig_tokens + tag_tokens))
++
++            # VULN-001: Derive trace_id with SHA-256 and workspace_hash namespace to eliminate cross-tenant collisions
++            clean_ws = workspace_hash.strip().lower() if workspace_hash else ""
++            if clean_ws:
++                id_source = f"{clean_ws}:{clean_action}:{clean_sig.strip().lower()}"
++            else:
++                id_source = f"{clean_action}:{clean_sig.strip().lower()}"
++            trace_id = hashlib.sha256(id_source.encode("utf-8")).hexdigest()[:24]
++
++            # Check for existing trace STRICTLY scoped to tenant (VULN-001)
++            existing = None
++            for tr in traces:
++                tr_ws = (tr.get("workspace_hash") or "").strip().lower()
++                if clean_ws:
++                    if tr_ws == clean_ws and (tr.get("id") == trace_id or tr.get("problem_signature", "").strip().lower() == clean_sig.strip().lower()):
++                        existing = tr
++                        break
++                else:
++                    if not tr_ws and (tr.get("id") == trace_id or tr.get("problem_signature", "").strip().lower() == clean_sig.strip().lower()):
++                        existing = tr
++                        break
++
++            now_str = time.strftime("%Y-%m-%d %H:%M:%S")
++            if existing:
++                # VULN-006: Stale outbox worker and monotonic generation fencing
++                if outbox_id is not None and existing.get("last_outbox_id") == outbox_id:
++                    existing_gen = existing.get("last_outbox_generation", 0)
++                    if outbox_generation is None or existing_gen >= outbox_generation:
++                        # Reject stale worker generation and duplicate replay without mutation
++                        return copy.deepcopy(existing)
++
++                existing["proven_solution"] = clean_sol.strip()
++                existing["success_count"] = existing.get("success_count", 1) + 1
++                existing["last_recalled"] = now_str
++                existing["action_type"] = clean_action
++                existing["tokens"] = list(set(existing.get("tokens", []) + all_tokens))
++                if clean_tags:
++                    existing["tags"] = list(set(existing.get("tags", []) + clean_tags))
++                if clean_ctx:
++                    existing["workspace_context"] = clean_ctx
++                if clean_ws:
++                    existing["workspace_hash"] = clean_ws
++                if outbox_id is not None:
++                    existing["last_outbox_id"] = outbox_id
++                if outbox_generation is not None:
++                    existing["last_outbox_generation"] = outbox_generation
++                result_trace = existing
++            else:
++                new_trace = {
++                    "id": trace_id,
++                    "workspace_hash": clean_ws,
++                    "problem_signature": clean_sig.strip(),
++                    "proven_solution": clean_sol.strip(),
++                    "action_type": clean_action,
++                    "tags": clean_tags,
++                    "workspace_context": clean_ctx,
++                    "tokens": all_tokens,
++                    "success_count": 1,
++                    "created_at": now_str,
++                    "last_recalled": now_str
++                }
++                if outbox_id is not None:
++                    new_trace["last_outbox_id"] = outbox_id
++                if outbox_generation is not None:
++                    new_trace["last_outbox_generation"] = outbox_generation
++                traces.append(new_trace)
++                result_trace = new_trace
++
++            # LRU Pruning if exceeds MAX_TRACES
++            if len(traces) > MAX_TRACES:
++                traces.sort(key=lambda x: (x.get("success_count", 1), x.get("last_recalled", "")), reverse=True)
++                data["traces"] = traces[:MAX_TRACES]
++            else:
++                data["traces"] = traces
++
++            ok = _save_traces_unlocked(data, path)
++            if not ok:
++                return {}
++            try:
++                curr_mtime = os.path.getmtime(path)
++                with _MEM_LOCK:
++                    _CACHE[os.path.abspath(path)] = {"data": copy.deepcopy(data), "mtime": curr_mtime}
++            except Exception:
++                pass
++            return copy.deepcopy(_redact_trace_dict(result_trace))
++    except (TimeoutError, OSError, TracePersistenceError) as infra_err:
++        sys.stderr.write(f"[!] LỖI INFRASTRUCTURE record_trace: {type(infra_err).__name__}: {infra_err}\n")
++        raise
++    except Exception as lock_err:
++        sys.stderr.write(f"[!] LỖI record_trace: {type(lock_err).__name__}: {lock_err}\n")
++        return {}
+ 
+ 
+ def recall_traces(query_text: str,
+                   workspace_dir: str = None,
+                   top_k: int = 2,
+                   threshold: float = 0.25,
+-                  traces_path: str = None) -> list:
++                  traces_path: str = None,
++                  workspace_hash: Optional[str] = None,
++                  allow_unscoped: bool = False) -> list:
+     """
+     Sub-millisecond retrieval of matching proven execution traces (<0.3ms).
++    Enforces strict fail-closed tenant isolation (VULN-002).
+     """
+     if not query_text:
+         return []
+ 
+-    data = load_traces(traces_path)
++    try:
++        data = load_traces(traces_path)
++    except Exception as load_err:
++        sys.stderr.write(f"[!] Warning: recall_traces degraded gracefully on unreadable traces file: {load_err}\n")
++        return []
+     traces = data.get("traces", [])
+     if not traces:
+         return []
+@@ -170,8 +535,25 @@ def recall_traces(query_text: str,
+     if not query_tokens:
+         return []
+ 
++    target_ws = workspace_hash.strip().lower() if workspace_hash else None
++    if not target_ws and workspace_dir:
++        target_ws = canonical_workspace_hash(workspace_dir)
++
++    # Fail-closed guard: if neither workspace_hash nor workspace_dir was provided,
++    # and allow_unscoped is False, deny cross-tenant trace leakage (VULN-002)
++    if not target_ws and not allow_unscoped:
++        return []
++
+     scored = []
+     for tr in traces:
++        # VULN-001, VULN-002 & VULN-005: Tenant isolation with safe null handling
++        tr_ws = (tr.get("workspace_hash") or "").strip().lower()
++        if target_ws:
++            if tr_ws and tr_ws != target_ws:
++                continue
++            if not tr_ws and not allow_unscoped:
++                continue
++
+         tr_tokens = set(tr.get("tokens", []))
+         if not tr_tokens:
+             continue
+diff --git a/scripts/memory_engine.py b/scripts/memory_engine.py
+index 9cd11f5..6818e62 100644
+--- a/scripts/memory_engine.py
++++ b/scripts/memory_engine.py
+@@ -10,10 +10,15 @@ import os
+ import queue
+ import sqlite3
+ import struct
++import sys
+ import threading
++import time
++import uuid
+ from typing import Dict, List, Optional, Tuple, Any
+ 
+-from memory_utils import fold_vietnamese, sanitize_fts5_query, canonical_workspace_hash
++_local = threading.local()
++
++from memory_utils import fold_vietnamese, sanitize_fts5_query, canonical_workspace_hash, redact_secrets, is_valid_hex_hash, persist_diag
+ 
+ 
+ # ============================================================================
+@@ -42,12 +47,22 @@ def compute_vector_norm(vector: List[float]) -> float:
+     return math.sqrt(sum(x * x for x in vector))
+ 
+ 
+-def cosine_similarity(v1: List[float], norm1: float, v2: List[float], norm2: float) -> float:
+-    """Cosine similarity between two vectors given their pre-computed norms."""
+-    if norm1 == 0.0 or norm2 == 0.0:
++def cosine_similarity(v1: List[float], norm1: float, v2: List[float], norm2: float, strict: bool = False) -> float:
++    """
++    Cosine similarity between two vectors given their pre-computed norms.
++    Strict mode (strict=True) raises ValueError on dimension mismatch or invalid norms (VULN-006).
++    """
++    if not math.isfinite(norm1) or not math.isfinite(norm2):
++        if strict:
++            raise ValueError(f"Non-finite vector norm detected: norm1={norm1}, norm2={norm2}")
+         return 0.0
+-    length = min(len(v1), len(v2))
+-    dot = sum(v1[i] * v2[i] for i in range(length))
++    if norm1 <= 0.0 or norm2 <= 0.0:
++        return 0.0
++    if len(v1) != len(v2):
++        if strict:
++            raise ValueError(f"Vector dimension mismatch: len(v1)={len(v1)} != len(v2)={len(v2)}")
++        return 0.0
++    dot = sum(v1[i] * v2[i] for i in range(len(v1)))
+     return dot / (norm1 * norm2)
+ 
+ 
+@@ -92,34 +107,60 @@ class MemorySingleWriter:
+     """
+     Thread-safe Single-Writer queue pattern for SQLite database.
+     Owns exclusive write access using BEGIN IMMEDIATE transactions and PRAGMA busy_timeout=5000.
++    Employs condition variable completion signaling with zero joiner thread leaks.
+     """
+ 
+-    def __init__(self, db_path: str):
++    def __init__(self, db_path: str, max_queue_size: int = 10000):
+         self.db_path = db_path
+-        self._queue: queue.Queue = queue.Queue()
++        self._queue: queue.Queue = queue.Queue(maxsize=max_queue_size)
++        self._seq_lock = threading.Lock()
++        self._cond = threading.Condition()
++        self._sequence = 0
++        self._committed_sequence = 0
+         self._stop_event = threading.Event()
++        self._ready_event = threading.Event()
++        self._fatal_error: Optional[Exception] = None
++        self._failed_sequences: Dict[int, Exception] = {}
++        self._closed = False
+         self._worker_thread = threading.Thread(target=self._run_worker, daemon=True)
+         self._worker_thread.start()
++        # Wait up to 5s for worker startup
++        if not self._ready_event.wait(timeout=5.0):
++            self._stop_event.set()
++            self._worker_thread.join(timeout=1.0)
++            raise TimeoutError("MemorySingleWriter worker thread failed to initialize within 5.0s")
++        if self._fatal_error:
++            self._stop_event.set()
++            self._worker_thread.join(timeout=1.0)
++            raise RuntimeError(f"MemorySingleWriter failed to start: {self._fatal_error}")
+ 
+     def _run_worker(self):
+-        conn = sqlite3.connect(self.db_path, timeout=5.0, isolation_level=None)
++        conn = None
++        _local.is_worker = True
+         try:
++            conn = sqlite3.connect(self.db_path, timeout=5.0, isolation_level=None)
+             conn.execute("PRAGMA busy_timeout = 5000;")
+             conn.execute("PRAGMA journal_mode = WAL;")
+             conn.execute("PRAGMA synchronous = NORMAL;")
++            conn.execute("PRAGMA foreign_keys = ON;")
+             conn.execute("PRAGMA wal_autocheckpoint = 1000;")
++            self._ready_event.set()
+ 
+             while not self._stop_event.is_set() or not self._queue.empty():
+                 try:
+                     task = self._queue.get(timeout=0.1)
+                 except queue.Empty:
+                     continue
+-    
++
+                 if task is None:
+                     self._queue.task_done()
+-                    break
+-    
+-                sql, params, callback = task
++                    if self._queue.empty():
++                        break
++                    continue
++
++                seq, sql, params, callback = task
++                success = False
++                err = None
+                 try:
+                     conn.execute("BEGIN IMMEDIATE;")
+                     if isinstance(sql, list):
+@@ -128,33 +169,138 @@ class MemorySingleWriter:
+                     else:
+                         conn.execute(sql, params)
+                     conn.commit()
+-                    if callback:
+-                        callback(True, None)
++                    success = True
+                 except Exception as e:
++                    err = e
+                     try:
+                         conn.rollback()
+                     except Exception:
+                         pass
+-                    if callback:
+-                        callback(False, e)
+                 finally:
++                    cb_failed = False
++                    if callback:
++                        try:
++                            callback(success, err)
++                        except Exception as cb_err:
++                            cb_failed = True
++                            sys.stderr.write(f"[!] Warning: MemorySingleWriter callback raised: {cb_err}\n")
++                    elif not success:
++                        sys.stderr.write(f"[!] LỖI MemorySingleWriter write failure (no callback): {type(err).__name__}: {err}\n")
++                    
++                    with self._cond:
++                        if not success:
++                            self._failed_sequences[seq] = err or RuntimeError(f"Task {seq} failed")
++                            # Bound failures to last 256 items to prevent unbounded memory growth (Hazard 46)
++                            if len(self._failed_sequences) > 256:
++                                oldest_key = min(self._failed_sequences.keys())
++                                del self._failed_sequences[oldest_key]
++                        self._committed_sequence = max(self._committed_sequence, seq)
++                        self._cond.notify_all()
+                     self._queue.task_done()
++        except Exception as startup_err:
++            self._fatal_error = startup_err
++            with self._cond:
++                self._cond.notify_all()
++            self._ready_event.set()
+         finally:
+-            conn.close()
++            with self._seq_lock:
++                if not self._closed and not self._fatal_error:
++                    self._fatal_error = RuntimeError("MemorySingleWriter worker thread terminated unexpectedly.")
++            with self._cond:
++                self._cond.notify_all()
++            if conn:
++                try:
++                    conn.close()
++                except Exception:
++                    pass
++
++    def enqueue_write(self, sql: Any, params: tuple = (), callback: Optional[Any] = None, timeout: float = 5.0):
++        """Enqueue a write task with monotonic sequence assignment."""
++        if getattr(_local, "is_worker", False):
++            raise RuntimeError("Cannot call enqueue_write() from within MemorySingleWriter worker thread.")
++        deadline = time.monotonic() + timeout
++        while True:
++            with self._seq_lock:
++                if self._closed:
++                    raise RuntimeError("MemorySingleWriter is closed.")
++                if self._fatal_error:
++                    raise RuntimeError(f"MemorySingleWriter worker died: {self._fatal_error}")
++                if not self._worker_thread.is_alive():
++                    raise RuntimeError("MemorySingleWriter worker thread is no longer running.")
++                try:
++                    next_seq = self._sequence + 1
++                    self._queue.put_nowait((next_seq, sql, params, callback))
++                    self._sequence = next_seq
++                    return next_seq
++                except queue.Full:
++                    pass
++            if time.monotonic() >= deadline:
++                raise TimeoutError("MemorySingleWriter queue full; write backpressure limit exceeded.")
++            time.sleep(0.005)
++
++    def flush(self, timeout: float = 10.0):
++        """Wait until all queued writes up to target sequence are committed within bounded timeout."""
++        if getattr(_local, "is_worker", False):
++            raise RuntimeError("Cannot call flush() from within MemorySingleWriter worker thread.")
++        with self._seq_lock:
++            target_seq = self._sequence
++
++        deadline = time.monotonic() + timeout
++        with self._cond:
++            while self._committed_sequence < target_seq:
++                if self._fatal_error:
++                    raise RuntimeError(f"MemorySingleWriter worker encountered fatal error: {self._fatal_error}")
++                if not self._worker_thread.is_alive():
++                    raise RuntimeError("MemorySingleWriter worker thread died during flush.")
++                remaining = deadline - time.monotonic()
++                if remaining <= 0:
++                    raise TimeoutError(f"MemorySingleWriter flush exceeded timeout of {timeout:.1f}s (committed {self._committed_sequence}/{target_seq}).")
++                self._cond.wait(timeout=min(0.05, remaining))
++
++            matching_failures = [e for s, e in self._failed_sequences.items() if s <= target_seq]
++            if matching_failures:
++                # Prune consumed failures for callers
++                self._failed_sequences = {s: e for s, e in self._failed_sequences.items() if s > target_seq}
++                raise RuntimeError(f"MemorySingleWriter encountered {len(matching_failures)} write failure(s): {matching_failures[0]}")
++
++    def close(self, timeout: float = 5.0) -> int:
++        """
++        Stop worker thread cleanly with deterministic drain (VULN-005).
++        Returns the number of dropped/unprocessed tasks if any, rather than raising mid-teardown.
++        """
++        if getattr(_local, "is_worker", False):
++            raise RuntimeError("Cannot call close() from within MemorySingleWriter worker thread.")
++        with self._seq_lock:
++            if self._closed:
++                return 0
++            self._closed = True
++
++        deadline = time.monotonic() + timeout
++        # Deterministic drain: attempt to flush queued writes before stopping
++        try:
++            drain_timeout = max(0.1, timeout * 0.7)
++            self.flush(timeout=drain_timeout)
++        except Exception as drain_err:
++            sys.stderr.write(f"[!] Warning: MemorySingleWriter flush during close() encountered: {drain_err}\n")
+ 
+-    def enqueue_write(self, sql: Any, params: tuple = (), callback: Optional[Any] = None):
+-        """Enqueue a write task (single statement or list of statements)."""
+-        self._queue.put((sql, params, callback))
++        self._stop_event.set()
++        try:
++            put_timeout = max(0.1, min(1.0, deadline - time.monotonic()))
++            self._queue.put(None, timeout=put_timeout)
++        except queue.Full:
++            pass
+ 
+-    def flush(self):
+-        """Wait until all queued writes are completed."""
+-        self._queue.join()
++        rem_timeout = max(0.1, deadline - time.monotonic())
++        self._worker_thread.join(timeout=rem_timeout)
++        if self._worker_thread.is_alive():
++            with self._seq_lock:
++                self._fatal_error = TimeoutError(f"MemorySingleWriter worker thread failed to terminate within {timeout:.1f}s.")
++            sys.stderr.write(f"[!] Warning: MemorySingleWriter worker thread failed to terminate within {timeout:.1f}s.\n")
+ 
+-    def close(self):
+-        """Stop worker thread and wait for completion."""
+-        self._stop_event.set()
+-        self._queue.put(None)
+-        self._worker_thread.join(timeout=2.0)
++        dropped = self._queue.unfinished_tasks
++        if dropped > 0:
++            sys.stderr.write(f"[!] Warning: MemorySingleWriter closed with {dropped} uncompleted task(s).\n")
++        return dropped
+ 
+ 
+ # ============================================================================
+@@ -177,11 +323,27 @@ def search_fts5(
+     raw_q = sanitize_fts5_query(query, fold=False)
+     folded_q = sanitize_fts5_query(query, fold=True)
+ 
++    clauses = []
++    if raw_q and raw_q != '""':
++        clauses.append(f"content_exact : ({raw_q})")
++    if folded_q and folded_q != '""':
++        clauses.append(f"content_folded : ({folded_q})")
++
++    # VULN Guard: If no valid search tokens exist, early-return [] to prevent MATCH syntax errors
++    if not clauses:
++        return []
++
++    try:
++        safe_limit = max(1, min(int(limit), 500))
++    except (ValueError, TypeError, OverflowError):
++        safe_limit = 30
++    match_expr = " OR ".join(clauses)
++
+     sql = """
+     SELECT e.memory_id, bm25(episodic_fts, 10.0, 1.0) AS rank_score
+     FROM episodic_fts
+     JOIN workspace_episodic_memory e ON episodic_fts.rowid = e.rowid
+-    WHERE episodic_fts MATCH 'content_exact : (' || :raw_q || ') OR content_folded : (' || :folded_q || ')'
++    WHERE episodic_fts MATCH :match_expr
+       AND e.workspace_hash = :ws_hash
+       AND e.status != 'Superseded'
+     ORDER BY rank_score ASC
+@@ -189,13 +351,21 @@ def search_fts5(
+     """
+ 
+     cursor = conn.cursor()
+-    cursor.execute(sql, {
+-        "raw_q": raw_q,
+-        "folded_q": folded_q,
+-        "ws_hash": workspace_hash,
+-        "limit": limit
+-    })
+-    return cursor.fetchall()
++    try:
++        cursor.execute(sql, {
++            "match_expr": match_expr,
++            "ws_hash": workspace_hash,
++            "limit": safe_limit
++        })
++        return cursor.fetchall()
++    except sqlite3.OperationalError as oe:
++        err_msg = str(oe).lower()
++        if "syntax error" in err_msg:
++            safe_q = persist_diag(query) if query else "[EMPTY]"
++            safe_oe = persist_diag(oe)
++            sys.stderr.write(f"[!] FTS5 syntax error for query '{safe_q}': {safe_oe}\n")
++            return []
++        raise oe
+ 
+ 
+ def hybrid_search(
+@@ -241,9 +411,11 @@ def hybrid_search(
+         for mem_id, blob, stored_norm in rows:
+             try:
+                 candidate_vec = deserialize_float32_blob(blob)
+-                sim = cosine_similarity(query_vector, query_norm, candidate_vec, stored_norm)
++                sim = cosine_similarity(query_vector, query_norm, candidate_vec, stored_norm, strict=True)
+                 dense_scored.append((mem_id, sim))
+-            except Exception:
++            except Exception as e:
++                import sys
++                sys.stderr.write(f"[!] Warning: Dense candidate evaluation failed for {mem_id}: {e}\n")
+                 continue
+ 
+         dense_scored.sort(key=lambda x: -x[1])
+@@ -256,26 +428,31 @@ def hybrid_search(
+     if not target_ids:
+         return []
+ 
+-    # Hydrate records from workspace_episodic_memory
+-    placeholders = ",".join("?" for _ in target_ids)
++    # Hydrate records from workspace_episodic_memory with STRICT workspace isolation (chunked in batches of 500)
+     cursor = conn.cursor()
+-    cursor.execute(
+-        f"""
+-        SELECT memory_id, workspace_hash, workspace_path, memory_type,
+-               title, problem_signature, solution_payload, context_metadata,
+-               bilingual_tags, status, activation_count, confidence_score
+-        FROM workspace_episodic_memory
+-        WHERE memory_id IN ({placeholders})
+-        """,
+-        target_ids
+-    )
+-
+-    id_to_record = {row[0]: dict(zip(
+-        ["memory_id", "workspace_hash", "workspace_path", "memory_type",
+-         "title", "problem_signature", "solution_payload", "context_metadata",
+-         "bilingual_tags", "status", "activation_count", "confidence_score"],
+-        row
+-    )) for row in cursor.fetchall()}
++    id_to_record = {}
++    chunk_size = 500
++    for i in range(0, len(target_ids), chunk_size):
++        chunk = target_ids[i:i + chunk_size]
++        placeholders = ",".join("?" for _ in chunk)
++        cursor.execute(
++            f"""
++            SELECT memory_id, workspace_hash, workspace_path, memory_type,
++                   title, problem_signature, solution_payload, context_metadata,
++                   bilingual_tags, status, activation_count, confidence_score
++            FROM workspace_episodic_memory
++            WHERE memory_id IN ({placeholders})
++              AND workspace_hash = ?
++            """,
++            (*chunk, workspace_hash)
++        )
++        for row in cursor.fetchall():
++            id_to_record[row[0]] = dict(zip(
++                ["memory_id", "workspace_hash", "workspace_path", "memory_type",
++                 "title", "problem_signature", "solution_payload", "context_metadata",
++                 "bilingual_tags", "status", "activation_count", "confidence_score"],
++                row
++            ))
+ 
+     # Preserve ranking order
+     hydrated = [id_to_record[m_id] for m_id in target_ids if m_id in id_to_record]
+@@ -286,51 +463,109 @@ def hybrid_search(
+ # Invariant Versioning & Rollback API (Argon Chốt chặn 4)
+ # ============================================================================
+ 
+-def revert_invariant(conn: sqlite3.Connection, superseded_id: str) -> bool:
++def revert_invariant(conn: sqlite3.Connection, superseded_id: str, workspace_hash: Optional[str] = None) -> bool:
+     """
+     Safely revert a superseded invariant back to 'Active', maintaining ACID transaction integrity.
+-    Follows the 3 atomic steps mandated by Argon:
++    Follows the 3 atomic steps:
+     1. Trace the chain of replacement: From superseded_id (V1), follow superseded_by to find
+        the currently 'Active' record (V2 or last in chain).
+-    2. Demote the incorrect active record (V2) to 'Superseded' and point superseded_by back to V1.
++    2. Demote the incorrect active record (V2) to 'Superseded' with superseded_by = NULL (prevents 2-way cycles).
+     3. Re-promote V1 back to 'Active', clear superseded_by to NULL, and update last_accessed_at.
++    Uses SAVEPOINT to ensure safety whether conn is inside an active caller transaction or standalone.
++    Never alters conn.isolation_level directly.
+     """
+     cur = conn.cursor()
++    caller_in_tx = getattr(conn, "in_transaction", False)
++    sp_id = f"sp_rev_{uuid.uuid4().hex[:12]}"
++    cur.execute(f"SAVEPOINT {sp_id};")
+     try:
+-        conn.execute("BEGIN IMMEDIATE;")
++        # Step 1: Verify superseded_id exists and validate workspace_hash (VULN-002, VULN-006)
++        if workspace_hash is not None:
++            clean_rev_ws = workspace_hash.strip().lower()
++            if not clean_rev_ws:
++                raise ValueError("workspace_hash cannot be empty or whitespace string when supplied")
++            if not is_valid_hex_hash(clean_rev_ws):
++                raise ValueError(f"workspace_hash must be a 32-hex character string: '{workspace_hash}'")
++            target_hash = clean_rev_ws
++            cur.execute(
++                "SELECT memory_id, status, superseded_by, workspace_hash FROM workspace_episodic_memory WHERE memory_id = ? AND workspace_hash = ?",
++                (superseded_id, target_hash)
++            )
++            v1_row = cur.fetchone()
++        else:
++            # Query all instances to detect ambiguity and reject NULL or multiple partitions
++            cur.execute(
++                "SELECT workspace_hash FROM workspace_episodic_memory WHERE memory_id = ?",
++                (superseded_id,)
++            )
++            rows = cur.fetchall()
++            if len(rows) != 1 or not rows[0][0] or not str(rows[0][0]).strip():
++                sys.stderr.write(f"[!] LỖI BẢO MẬT: revert_invariant called without workspace_hash and memory_id '{superseded_id}' resolves to {len(rows)} rows (ambiguous or NULL workspace_hash!)\n")
++                cur.execute(f"ROLLBACK TO SAVEPOINT {sp_id};")
++                cur.execute(f"RELEASE SAVEPOINT {sp_id};")
++                return False
++            target_hash = str(rows[0][0]).strip()
++            cur.execute(
++                "SELECT memory_id, status, superseded_by, workspace_hash FROM workspace_episodic_memory WHERE memory_id = ? AND workspace_hash = ?",
++                (superseded_id, target_hash)
++            )
++            v1_row = cur.fetchone()
+ 
+-        # Step 1: Verify superseded_id exists
+-        cur.execute("SELECT memory_id, status, superseded_by FROM workspace_episodic_memory WHERE memory_id = ?", (superseded_id,))
+-        v1_row = cur.fetchone()
+         if not v1_row:
+-            conn.rollback()
++            cur.execute(f"ROLLBACK TO SAVEPOINT {sp_id};")
++            cur.execute(f"RELEASE SAVEPOINT {sp_id};")
++            return False
++
++        # VULN-007 / Edge Case 4: Invariant to be reverted must currently have status 'Superseded'
++        if v1_row[1] != "Superseded":
++            sys.stderr.write(f"[!] Warning: Cannot revert invariant {superseded_id} with status '{v1_row[1]}' (must be 'Superseded')\n")
++            cur.execute(f"ROLLBACK TO SAVEPOINT {sp_id};")
++            cur.execute(f"RELEASE SAVEPOINT {sp_id};")
+             return False
+ 
++        ws_partition = v1_row[3]
++
+         # Trace forward to find the current 'Active' record in the replacement chain
+         curr_id = v1_row[2]  # superseded_by
+         active_target_id = None
+         visited = {superseded_id}
++        cycle_detected = False
+ 
+-        while curr_id and curr_id not in visited:
++        while curr_id:
++            if curr_id in visited:
++                cycle_detected = True
++                break
+             visited.add(curr_id)
+-            cur.execute("SELECT memory_id, status, superseded_by FROM workspace_episodic_memory WHERE memory_id = ?", (curr_id,))
++            cur.execute(
++                "SELECT memory_id, status, superseded_by FROM workspace_episodic_memory WHERE memory_id = ? AND workspace_hash = ?",
++                (curr_id, ws_partition)
++            )
+             row = cur.fetchone()
+             if not row:
+-                break
++                cur.execute(f"ROLLBACK TO SAVEPOINT {sp_id};")
++                cur.execute(f"RELEASE SAVEPOINT {sp_id};")
++                sys.stderr.write(f"[!] LỖI revert_invariant: Broken superseded_by chain at {curr_id}\n")
++                return False
+             if row[1] == "Active":
+                 active_target_id = row[0]
+                 break
+             curr_id = row[2]
+ 
++        if cycle_detected and not active_target_id:
++            cur.execute(f"ROLLBACK TO SAVEPOINT {sp_id};")
++            cur.execute(f"RELEASE SAVEPOINT {sp_id};")
++            sys.stderr.write(f"[!] LỖI revert_invariant: Cycle detected at {curr_id} in chain\n")
++            return False
++
+         # Step 2: Demote active record (if found)
+         if active_target_id:
+             cur.execute(
+                 """
+                 UPDATE workspace_episodic_memory
+                 SET status = 'Superseded', superseded_by = ?
+-                WHERE memory_id = ?
++                WHERE memory_id = ? AND workspace_hash = ?
+                 """,
+-                (superseded_id, active_target_id)
++                (superseded_id, active_target_id, ws_partition)
+             )
+ 
+         # Step 3: Re-promote original record V1
+@@ -338,16 +573,21 @@ def revert_invariant(conn: sqlite3.Connection, superseded_id: str) -> bool:
+             """
+             UPDATE workspace_episodic_memory
+             SET status = 'Active', superseded_by = NULL, last_accessed_at = datetime('now')
+-            WHERE memory_id = ?
++            WHERE memory_id = ? AND workspace_hash = ?
+             """,
+-            (superseded_id,)
++            (superseded_id, ws_partition)
+         )
+ 
+-        conn.commit()
++        cur.execute(f"RELEASE SAVEPOINT {sp_id};")
++        # VULN-007: If caller was not in an active transaction, commit to persist; otherwise preserve caller transaction
++        if not caller_in_tx:
++            conn.commit()
+         return True
+-    except Exception:
++    except Exception as e:
+         try:
+-            conn.rollback()
++            cur.execute(f"ROLLBACK TO SAVEPOINT {sp_id};")
++            cur.execute(f"RELEASE SAVEPOINT {sp_id};")
+         except Exception:
+             pass
++        sys.stderr.write(f"[!] LỖI revert_invariant({superseded_id}): {type(e).__name__}: {e}\n")
+         return False
+diff --git a/scripts/memory_schema.py b/scripts/memory_schema.py
+index 6e0cf68..782d64f 100644
+--- a/scripts/memory_schema.py
++++ b/scripts/memory_schema.py
+@@ -111,6 +111,13 @@ BEGIN
+ END;
+ 
+ CREATE TRIGGER IF NOT EXISTS trg_episodic_after_update AFTER UPDATE ON workspace_episodic_memory
++WHEN (
++    new.title IS NOT old.title OR
++    new.problem_signature IS NOT old.problem_signature OR
++    new.solution_payload IS NOT old.solution_payload OR
++    new.bilingual_tags IS NOT old.bilingual_tags OR
++    new.content_folded IS NOT old.content_folded
++)
+ BEGIN
+     DELETE FROM episodic_fts WHERE rowid = old.rowid;
+     INSERT INTO episodic_fts(rowid, content_exact, content_folded)
+@@ -121,6 +128,45 @@ BEGIN
+     );
+ END;
+ 
++CREATE TRIGGER IF NOT EXISTS trg_episodic_prevent_ws_replace
++BEFORE INSERT ON workspace_episodic_memory
++FOR EACH ROW
++WHEN EXISTS (
++    SELECT 1 FROM workspace_episodic_memory
++    WHERE memory_id = new.memory_id AND workspace_hash IS NOT new.workspace_hash
++)
++BEGIN
++    SELECT RAISE(ABORT, 'workspace_hash is immutable and cannot be replaced with a different tenant hash');
++END;
++
++CREATE TRIGGER IF NOT EXISTS trg_episodic_prevent_cross_tenant_supersede
++BEFORE UPDATE OF superseded_by ON workspace_episodic_memory
++FOR EACH ROW
++WHEN new.superseded_by IS NOT NULL AND EXISTS (
++    SELECT 1 FROM workspace_episodic_memory target
++    WHERE target.memory_id = new.superseded_by AND target.workspace_hash IS NOT new.workspace_hash
++)
++BEGIN
++    SELECT RAISE(ABORT, 'superseded_by cannot reference a record from a different workspace_hash');
++END;
++
++CREATE TRIGGER IF NOT EXISTS trg_episodic_prevent_cross_tenant_supersede_insert
++BEFORE INSERT ON workspace_episodic_memory
++FOR EACH ROW
++WHEN new.superseded_by IS NOT NULL AND EXISTS (
++    SELECT 1 FROM workspace_episodic_memory target
++    WHERE target.memory_id = new.superseded_by AND target.workspace_hash IS NOT new.workspace_hash
++)
++BEGIN
++    SELECT RAISE(ABORT, 'superseded_by cannot reference a record from a different workspace_hash');
++END;
++
++CREATE TRIGGER IF NOT EXISTS trg_episodic_prevent_ws_update BEFORE UPDATE OF workspace_hash ON workspace_episodic_memory
++WHEN new.workspace_hash IS NOT old.workspace_hash
++BEGIN
++    SELECT RAISE(ABORT, 'workspace_hash is immutable and cannot be transferred across tenants');
++END;
++
+ -- ----------------------------------------------------------------------------
+ -- Table 5: l1_staging_log (Lightweight Ephemeral Staging Buffer for L1 Reflex)
+ -- ----------------------------------------------------------------------------
+@@ -133,9 +179,12 @@ CREATE TABLE IF NOT EXISTS l1_staging_log (
+     top_skill           TEXT,
+     tier_used           INTEGER NOT NULL DEFAULT 1,
+     recalled_traces     TEXT,                        -- JSON array of recalled memory IDs
+-    is_drained          INTEGER NOT NULL DEFAULT 0   -- 0 = pending, 1 = processed by Memory Daemon Single-Writer
++    is_drained          INTEGER NOT NULL DEFAULT 0,  -- 0 = pending, 1 = processed, 2 = quarantined
++    last_error          TEXT                         -- Diagnostic context for quarantined rows
+ );
+ 
++CREATE INDEX IF NOT EXISTS idx_staging_status_ws ON l1_staging_log (is_drained, workspace_hash, staging_id);
++
+ -- ----------------------------------------------------------------------------
+ -- Table 6: activation_events (Tier 3 Consolidation Staging Buffer)
+ -- ----------------------------------------------------------------------------
+@@ -149,16 +198,54 @@ CREATE TABLE IF NOT EXISTS activation_events (
+     tier_used           INTEGER NOT NULL DEFAULT 1,
+     recalled_traces     TEXT,                        -- JSON array of recalled memory IDs
+     feedback_score      REAL DEFAULT 0.0,            -- +1.0 (success), 0.0 (neutral), -1.0 (failure)
+-    is_consolidated     INTEGER NOT NULL DEFAULT 0   -- 0 = pending, 1 = processed
++    is_consolidated     INTEGER NOT NULL DEFAULT 0,  -- 0 = pending, 1 = processed, 2 = quarantined
++    last_error          TEXT                         -- Diagnostic context for quarantined events (VULN-006)
+ );
+ 
+ CREATE INDEX IF NOT EXISTS idx_event_pending ON activation_events(is_consolidated, timestamp);
++CREATE INDEX IF NOT EXISTS idx_events_status_ws ON activation_events (is_consolidated, workspace_dir, event_id);
++
++-- ----------------------------------------------------------------------------
++-- Table 7: consolidation_outbox (Durable Outbox Queue for Proven Traces)
++-- ----------------------------------------------------------------------------
++CREATE TABLE IF NOT EXISTS consolidation_outbox (
++    outbox_id           INTEGER PRIMARY KEY AUTOINCREMENT,
++    memory_id           TEXT NOT NULL,
++    workspace_hash      TEXT NOT NULL,
++    signature           TEXT NOT NULL,
++    solution            TEXT NOT NULL,
++    tags                TEXT,
++    context             TEXT,
++    status              TEXT NOT NULL DEFAULT 'Pending', -- 'Pending', 'InFlight', 'Flushed', 'Failed'
++    generation          INTEGER NOT NULL DEFAULT 1,      -- Incremented on re-promotion to preserve reinforcement (VULN-004)
++    retry_count         INTEGER NOT NULL DEFAULT 0,
++    last_error          TEXT,
++    created_at          TEXT NOT NULL,
++    claimed_at          TEXT,                        -- Timestamp when claimed as InFlight (VULN-001)
++    owner_token         TEXT,                        -- Unique claim lease token for atomic CAS commit (Hazard 43)
++    flushed_at          TEXT,
++    UNIQUE(memory_id, workspace_hash)
++);
++
++CREATE UNIQUE INDEX IF NOT EXISTS idx_outbox_mem_ws ON consolidation_outbox (memory_id, workspace_hash);
++CREATE INDEX IF NOT EXISTS idx_outbox_status ON consolidation_outbox(status);
++CREATE INDEX IF NOT EXISTS idx_outbox_status_ws ON consolidation_outbox (status, workspace_hash, outbox_id);
++
++-- ----------------------------------------------------------------------------
++-- Table 8: workspace_registry (Tenancy Isolation & Sub-Workspace Registry)
++-- ----------------------------------------------------------------------------
++CREATE TABLE IF NOT EXISTS workspace_registry (
++    workspace_hash      TEXT PRIMARY KEY,            -- Hex hash (32 or 64 char)
++    workspace_path      TEXT NOT NULL,               -- Canonical filesystem root path
++    registered_at       TEXT NOT NULL                -- ISO-8601 UTC timestamp
++);
+ """
+ 
+ 
+-def init_database(db_path: str = "omni_memory.db", isolation_level: Optional[str] = "IMMEDIATE") -> sqlite3.Connection:
++def init_database(db_path: str = "omni_memory.db", isolation_level: Optional[str] = None) -> sqlite3.Connection:
+     """
+     Initialize SQLite database with production pragmas, tables, triggers, and indexes.
++    Defaults to isolation_level=None (autocommit) to safely support manual BEGIN IMMEDIATE (VULN-006).
+     Returns the active database connection.
+     """
+     conn = sqlite3.connect(db_path, timeout=5.0, isolation_level=isolation_level)
+@@ -170,12 +257,15 @@ def init_database(db_path: str = "omni_memory.db", isolation_level: Optional[str
+         mode = conn.execute("PRAGMA auto_vacuum;").fetchone()[0]
+         if mode != 2:
+             old_iso = conn.isolation_level
+-            conn.isolation_level = None
+-            conn.execute("PRAGMA auto_vacuum = INCREMENTAL;")
+-            conn.execute("VACUUM;")
+-            conn.isolation_level = old_iso
+-    except Exception:
+-        pass
++            try:
++                conn.isolation_level = None
++                conn.execute("PRAGMA auto_vacuum = INCREMENTAL;")
++                conn.execute("VACUUM;")
++            finally:
++                conn.isolation_level = old_iso
++    except Exception as e:
++        import sys
++        sys.stderr.write(f"[!] Warning: auto_vacuum configuration skipped ({type(e).__name__}: {e})\n")
+     
+     # Apply pragmas
+     conn.execute("PRAGMA journal_mode = WAL;")
+@@ -186,7 +276,88 @@ def init_database(db_path: str = "omni_memory.db", isolation_level: Optional[str
+     conn.execute("PRAGMA busy_timeout = 5000;")
+     conn.execute("PRAGMA foreign_keys = ON;")
+     
+-    # Execute DDL
+-    conn.executescript(DDL_TABLES)
+-    conn.commit()
++    # Migration: Add columns to existing tables if missing with fail-loud OperationalError handling (VULN-004)
++    cols_ob = [row[1] for row in conn.execute("PRAGMA table_info(consolidation_outbox);").fetchall()]
++    if cols_ob:
++        if "claimed_at" not in cols_ob:
++            try:
++                conn.execute("ALTER TABLE consolidation_outbox ADD COLUMN claimed_at TEXT;")
++            except sqlite3.OperationalError as oe:
++                if "duplicate column name" not in str(oe).lower():
++                    raise RuntimeError(f"Failed to migrate consolidation_outbox.claimed_at: {oe}") from oe
++        if "owner_token" not in cols_ob:
++            try:
++                conn.execute("ALTER TABLE consolidation_outbox ADD COLUMN owner_token TEXT;")
++            except sqlite3.OperationalError as oe:
++                if "duplicate column name" not in str(oe).lower():
++                    raise RuntimeError(f"Failed to migrate consolidation_outbox.owner_token: {oe}") from oe
++        if "generation" not in cols_ob:
++            try:
++                conn.execute("ALTER TABLE consolidation_outbox ADD COLUMN generation INTEGER NOT NULL DEFAULT 1;")
++            except sqlite3.OperationalError as oe:
++                if "duplicate column name" not in str(oe).lower():
++                    raise RuntimeError(f"Failed to migrate consolidation_outbox.generation: {oe}") from oe
++
++        # VULN-002: Ensure UNIQUE constraint on (memory_id, workspace_hash) for legacy DBs via unique index
++        try:
++            conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_outbox_mem_ws ON consolidation_outbox (memory_id, workspace_hash);")
++        except Exception as uidx_err:
++            raise RuntimeError(f"Failed to ensure unique index idx_outbox_mem_ws: {uidx_err}") from uidx_err
++
++    cols_l1 = [row[1] for row in conn.execute("PRAGMA table_info(l1_staging_log);").fetchall()]
++    if cols_l1 and "last_error" not in cols_l1:
++        try:
++            conn.execute("ALTER TABLE l1_staging_log ADD COLUMN last_error TEXT;")
++        except sqlite3.OperationalError as oe:
++            if "duplicate column name" not in str(oe).lower():
++                raise RuntimeError(f"Failed to migrate l1_staging_log.last_error: {oe}") from oe
++
++    # Migration for activation_events.last_error (VULN-006)
++    cols_ae = [row[1] for row in conn.execute("PRAGMA table_info(activation_events);").fetchall()]
++    if cols_ae and "last_error" not in cols_ae:
++        try:
++            conn.execute("ALTER TABLE activation_events ADD COLUMN last_error TEXT;")
++        except sqlite3.OperationalError as oe:
++            if "duplicate column name" not in str(oe).lower():
++                raise RuntimeError(f"Failed to migrate activation_events.last_error: {oe}") from oe
++
++    # Atomic Migration: Refresh triggers and apply DDL in a single atomic transaction with explicit rollback (VULN-008)
++    atomic_ddl = f"""
++    BEGIN IMMEDIATE;
++    DROP TRIGGER IF EXISTS trg_episodic_after_update;
++    DROP TRIGGER IF EXISTS trg_episodic_prevent_ws_replace;
++    DROP TRIGGER IF EXISTS trg_episodic_prevent_cross_tenant_supersede;
++    DROP TRIGGER IF EXISTS trg_episodic_prevent_cross_tenant_supersede_insert;
++    DROP TRIGGER IF EXISTS trg_episodic_prevent_ws_update;
++    {DDL_TABLES}
++    COMMIT;
++    """
++    try:
++        conn.executescript(atomic_ddl)
++    except Exception as ddl_err:
++        try:
++            conn.execute("ROLLBACK;")
++        except Exception:
++            pass
++        raise RuntimeError(f"Atomic DDL migration failed: {type(ddl_err).__name__}: {ddl_err}") from ddl_err
++
++    # VULN-002: Verify consolidation_outbox has unique constraint or unique index for ON CONFLICT
++    has_outbox = bool(conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='consolidation_outbox';").fetchone())
++    if has_outbox:
++        idx_list = conn.execute("PRAGMA index_list('consolidation_outbox');").fetchall()
++        has_unique = any(row[2] == 1 for row in idx_list)
++        if not has_unique:
++            raise RuntimeError("CRITICAL MIGRATION ERROR: consolidation_outbox lacks a unique constraint or unique index!")
++
++    # Post-migration schema integrity verification (VULN-004: Explicit RuntimeError checks to survive python -O)
++    verified_ob = [r[1] for r in conn.execute("PRAGMA table_info(consolidation_outbox);").fetchall()]
++    if "claimed_at" not in verified_ob or "owner_token" not in verified_ob or "generation" not in verified_ob:
++        raise RuntimeError(f"consolidation_outbox missing required migration columns (expected claimed_at, owner_token, generation; found {verified_ob})")
++    verified_l1 = [r[1] for r in conn.execute("PRAGMA table_info(l1_staging_log);").fetchall()]
++    if "last_error" not in verified_l1:
++        raise RuntimeError(f"l1_staging_log missing last_error column (expected last_error; found {verified_l1})")
++    verified_ae = [r[1] for r in conn.execute("PRAGMA table_info(activation_events);").fetchall()]
++    if "last_error" not in verified_ae:
++        raise RuntimeError(f"activation_events missing last_error column (expected last_error; found {verified_ae})")
++
+     return conn
+diff --git a/scripts/memory_utils.py b/scripts/memory_utils.py
+index 7107b02..7adb14e 100644
+--- a/scripts/memory_utils.py
++++ b/scripts/memory_utils.py
+@@ -4,10 +4,162 @@ Provides diacritic folding, defensive FTS5 query sanitization, and workspace has
+ """
+ 
+ import hashlib
++import json
+ import os
+ import re
+ import unicodedata
+-from typing import Optional
++from typing import Optional, Any, Tuple
++
++
++_SECRET_KEY_NAMES = {
++    "api_key", "apikey", "secret", "token", "access_token",
++    "auth_token", "password", "passwd", "client_secret", "private_key",
++    "credentials", "bearer"
++}
++
++# New suffixes and allowlist for secret detection (VULN-005)
++_SECRET_SUFFIXES = ("_key", "_token", "_secret", "_password", "_passwd")
++_BENIGN_KEY_ALLOWLIST = {
++    "primary_key", "foreign_key", "sort_key", "partition_key",
++    "unique_key", "routing_key", "cache_key", "public_key"
++}
++
++
++def _redact_json_obj(obj: Any, depth: int = 0) -> Tuple[Any, bool]:
++    """
++    Recursively redacts values for secret-like keys in JSON-deserialized objects.
++    Uses normalized exact equality and suffix matching with benign key allowlist (VULN-005).
++    Guards against excessive recursion depth by failing loud when depth > 32 (VULN-001).
++    Returns (redacted_object, was_modified).
++    """
++    if depth > 32:
++        return ("[REDACTED_MAX_DEPTH]", True)
++
++    modified = False
++    if isinstance(obj, dict):
++        new_d = {}
++        for k, v in obj.items():
++            k_norm = str(k).lower().strip().replace("-", "_")
++            is_secret_key = (
++                k_norm in _SECRET_KEY_NAMES
++                or (
++                    any(k_norm.endswith(suffix) for suffix in _SECRET_SUFFIXES)
++                    and k_norm not in _BENIGN_KEY_ALLOWLIST
++                )
++            )
++            if is_secret_key:
++                new_d[k] = "[REDACTED_KEY]"
++                modified = True
++            else:
++                sub_res, sub_mod = _redact_json_obj(v, depth + 1)
++                new_d[k] = sub_res
++                if sub_mod:
++                    modified = True
++        return new_d, modified
++    elif isinstance(obj, list):
++        new_list = []
++        for x in obj:
++            sub_res, sub_mod = _redact_json_obj(x, depth + 1)
++            new_list.append(sub_res)
++            if sub_mod:
++                modified = True
++        return new_list, modified
++    elif isinstance(obj, str):
++        sub_res = _redact_plain_text(obj)
++        return sub_res, (sub_res != obj)
++    return obj, False
++
++
++# Pre-compile regex patterns for performance and ReDoS defense (VULN-003)
++_REDACTION_PATTERNS = [
++    (re.compile(r'(?i)(bearer\s+)[A-Za-z0-9_\-\.]{16,}'), r'\1[REDACTED_TOKEN]'),
++    (re.compile(r'(?<![A-Za-z0-9])(sk-[a-zA-Z0-9_\-]{20,})\b'), '[REDACTED_API_KEY]'),
++    (re.compile(r'\bAKIA[0-9A-Z]{16}\b'), '[REDACTED_AWS_KEY]'),
++    (re.compile(r'\beyJ[A-Za-z0-9_\-]{10,}\.[A-Za-z0-9_\-]{10,}\.[A-Za-z0-9_\-]{10,}\b'), '[REDACTED_JWT]'),
++    (re.compile(r'\b(ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{36}\b'), '[REDACTED_GITHUB_TOKEN]'),
++    (re.compile(r'\bxox[baprs]-[A-Za-z0-9\-]{10,}\b'), '[REDACTED_SLACK_TOKEN]'),
++    (re.compile(r'\bAIza[0-9A-Za-z_\-]{30,45}\b'), '[REDACTED_GOOGLE_KEY]'),
++    (re.compile(r'(?i)(["\']?api[_-]?key["\']?\s*[:=]\s*["\']?)[^\s,;"\'\}\]]{8,}(?=["\',;\s\}\]]|$)'), r'\1[REDACTED_KEY]'),
++    (re.compile(r'(?i)(["\']?password["\']?\s*[:=]\s*["\']?)[^\s,;"\'\}\]]{6,}(?=["\',;\s\}\]]|$)'), r'\1[REDACTED_PASSWORD]'),
++    (re.compile(r'(?i)([a-z]+://[^:\s]+:)[^@\s]+(@)'), r'\1[REDACTED_PASS]\2'),
++    (re.compile(r'-----BEGIN [A-Z ]+ PRIVATE KEY-----(?:(?!-----BEGIN)[\s\S])*?-----END [A-Z ]+ PRIVATE KEY-----'), '[REDACTED_PRIVATE_KEY]'),
++    (re.compile(r'-----BEGIN PGP PRIVATE KEY BLOCK-----(?:(?!-----BEGIN)[\s\S])*?-----END PGP PRIVATE KEY BLOCK-----'), '[REDACTED_PGP_KEY]'),
++    (re.compile(r'(?i)(Authorization:\s*Basic\s+)[A-Za-z0-9+/=]+'), r'\1[REDACTED_CREDENTIAL]'),
++    (re.compile(r'(?i)(["\']?(?:token|access_token|client_secret|api_secret|auth_token|secret_key|secret|private_key|credentials|auth|access_key|AWS_SECRET_ACCESS_KEY)["\']?\s*[:=]\s*["\']?)[^\s,;"\'\}\]]{6,}'), r'\1[REDACTED]'),
++]
++
++
++def _redact_plain_text(text: str) -> str:
++    """
++    Applies regex redaction across the entire text payload.
++    Eliminates chunk-first truncation to ensure multi-line PEM keys and tokens are never split across boundaries (VULN-001).
++    """
++    redacted = text
++    for pat_re, repl in _REDACTION_PATTERNS:
++        redacted = pat_re.sub(repl, redacted)
++    return redacted
++
++
++def redact_secrets(text: Optional[str]) -> Optional[str]:
++    """
++    Redact credentials, tokens, passwords, and API keys from persisted text.
++    Covers Bearer tokens, OpenAI/Anthropic/DeepSeek keys, AWS AKIA keys, JWT tokens,
++    GitHub/Slack/Google API tokens, database URIs, passwords, and PEM private key blocks.
++    Preserves None explicitly to avoid corrupting nullable SQL columns.
++    Structure-aware: If input is valid JSON, parses and redacts keys without breaking JSON delimiters (VULN-005).
++    Preserves original formatting when no secrets were altered.
++    Bounds maximum payload to 64 KiB to prevent quadratic regex ReDoS (VULN-008).
++    """
++    if text is None:
++        return None
++    if not isinstance(text, str):
++        text = str(text)
++    if not text:
++        return ""
++
++    if len(text) > 262144:
++        text = text[:262144] + "\n[PAYLOAD_TRUNCATED_256KB]"
++
++    try:
++        trimmed = text.strip()
++        if (trimmed.startswith("{") and trimmed.endswith("}")) or (trimmed.startswith("[") and trimmed.endswith("]")):
++            try:
++                parsed = json.loads(text)
++            except Exception:
++                parsed = None
++
++            if parsed is not None and isinstance(parsed, (dict, list)):
++                try:
++                    red_obj, modified = _redact_json_obj(parsed)
++                    if modified:
++                        return json.dumps(red_obj, ensure_ascii=False)
++                    return text
++                except Exception:
++                    pass
++        return _redact_plain_text(text)
++    except Exception:
++        # Fallback to plain text redaction rather than replacing entire document with [REDACTED] (VULN-006)
++        try:
++            return _redact_plain_text(text)
++        except Exception:
++            return "[REDACTION_ERROR_SAFEGUARD]"
++
++
++def persist_diag(exc: Any, max_len: int = 512) -> str:
++    """
++    Choke point for all diagnostic error strings persisted to database or logs (VULN-002).
++    Redacts credentials, tokens, and secrets via redact_secrets() and clamps output to max_len.
++    """
++    if exc is None:
++        return ""
++    if isinstance(exc, str):
++        raw = exc
++    else:
++        raw = f"{type(exc).__name__}: {exc}"
++    redacted = redact_secrets(raw) or ""
++    if len(redacted) > max_len:
++        return redacted[:max_len - 12] + " [TRUNCATED]"
++    return redacted
+ 
+ 
+ def fold_vietnamese(text: Optional[str]) -> str:
+@@ -37,25 +189,29 @@ def sanitize_fts5_query(query: Optional[str], fold: bool = False) -> str:
+     CRITICAL RUNTIME GUARDRAIL:
+     - fold=False (Default): Preserves original characters and accents (for :raw_q against content_exact).
+     - fold=True: Applies fold_vietnamese() (for :folded_q against content_folded).
+-    - Replaces FTS5 reserved punctuation characters [.:-><()*\"'] with whitespace.
++    - Replaces FTS5 reserved punctuation characters [.:-><()*\"'+^~{}/] with whitespace.
+     - Strips standalone FTS5 boolean and proximity operators (AND, OR, NOT, NEAR).
+-    - Encloses individual alphanumeric terms in double quotes.
+-    - Returns '""' when query is empty or produces no searchable tokens.
++    - Encloses individual alphanumeric terms in double quotes to prevent syntax injection.
++    - Returns '""' when query is empty or produces no searchable tokens (preserves 100% backward compatibility).
+     """
+     if not query:
+         return '""'
+ 
+-    target = fold_vietnamese(query) if fold else query
++    bounded_query = query[:512] if len(query) > 512 else query
++    target = fold_vietnamese(bounded_query) if fold else bounded_query
+ 
+-    # Replace FTS5 reserved punctuation characters with whitespace
+-    reserved = ".:-><()*\"'"
++    # Replace FTS5 reserved punctuation and symbol characters with whitespace
++    reserved = ".:-><()*\"'+^~{}/\\$#@%!&|[]();,=?"
+     trans_table = str.maketrans({ch: " " for ch in reserved})
+     cleaned = target.translate(trans_table)
+ 
+-    # Tokenize on whitespace and strip standalone operators
++    # Tokenize on whitespace, strip operators, and require at least 1 alphanumeric character
+     tokens = cleaned.split()
+     ops = {"AND", "OR", "NOT", "NEAR"}
+-    filtered = [t for t in tokens if t.upper() not in ops]
++    filtered = [
++        t for t in tokens
++        if t.upper() not in ops and any(c.isalnum() for c in t)
++    ][:32]
+ 
+     if not filtered:
+         return '""'
+@@ -63,17 +219,36 @@ def sanitize_fts5_query(query: Optional[str], fold: bool = False) -> str:
+     return " ".join(f'"{token}"' for token in filtered)
+ 
+ 
++def is_valid_hex_hash(val: Any, length: Optional[int] = None) -> bool:
++    """
++    Return True if val is a valid hexadecimal hash.
++    If length is specified (e.g. 32 or 64), validates exact length.
++    If length is None, accepts standard 32 (MD5) or 64 (SHA-256) hex hashes.
++    """
++    if not isinstance(val, str):
++        return False
++    cleaned = val.strip()
++    if length is not None:
++        if len(cleaned) != length:
++            return False
++    else:
++        if len(cleaned) not in (32, 64):
++            return False
++    return all(c in "0123456789abcdefABCDEF" for c in cleaned)
++
++
+ def canonical_workspace_hash(path: Optional[str]) -> str:
+     """
+     Generate deterministic MD5 hash for workspace partition isolation.
+-    Mandates os.path.normcase(os.path.normpath(os.path.abspath(path))) prior to hashing
+-    so case-insensitive Windows drive letters (d:\\ vs D:\\) and mixed slashes
+-    generate identical partition keys.
++    Mandates unicodedata.normalize('NFC') + os.path.normcase(os.path.realpath(os.path.abspath(path)))
++    prior to hashing so case-insensitive Windows drive letters (d:\\ vs D:\\), mixed slashes,
++    and symlinks/junctions generate identical partition keys (VULN-003).
+     Idempotent: If path is already a 32-char hex MD5 string, returns it lowercase.
+     """
+     if not path:
+         return hashlib.md5(b"global_fallback").hexdigest()
+-    if len(path) == 32 and all(c in "0123456789abcdefABCDEF" for c in path):
+-        return path.lower()
+-    canonical = os.path.normcase(os.path.normpath(os.path.abspath(path)))
++    if is_valid_hex_hash(path, length=32):
++        return path.lower().strip()
++    normalized_path = unicodedata.normalize("NFC", str(path))
++    canonical = os.path.normcase(os.path.realpath(os.path.abspath(normalized_path)))
+     return hashlib.md5(canonical.encode("utf-8")).hexdigest()

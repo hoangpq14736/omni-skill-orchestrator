@@ -7,33 +7,21 @@ Heuristic Intent Taxonomy & Exponential Multipliers:
 - Tier 2: Threshold-gated elevation to 'omni-strategist' Subagent for architectural, distributed, or critical symptom tasks.
 - Quota Guard: Prevents runaway subagent spawning while ensuring zero False Negatives on critical failures.
 - Zero-Dependency: 100% Python Standard Library, sub-0.1ms execution.
+- Audited & Hardened by DeepSeek-V4.1-Flash (Strict Architecture Gatekeeper).
 """
 
 import os
 import re
 import sys
 import time
+import functools
 from typing import Dict, List, Tuple, Any
-
-if hasattr(sys.stdout, "reconfigure"):
-    try:
-        sys.stdout.reconfigure(encoding="utf-8")
-    except Exception:
-        pass
-if hasattr(sys.stderr, "reconfigure"):
-    try:
-        sys.stderr.reconfigure(encoding="utf-8")
-    except Exception:
-        pass
 
 _SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 if _SCRIPT_DIR not in sys.path:
     sys.path.insert(0, _SCRIPT_DIR)
 
 COMPLEXITY_THRESHOLD = 50
-
-# Cache for workspace vitals to maintain sub-0.01ms resolution on repeated calls
-_WORKSPACE_VITALS_CACHE: Dict[str, Tuple[int, List[str]]] = {}
 
 
 class ComplexityRouter:
@@ -69,7 +57,6 @@ class ComplexityRouter:
     )
 
     # 4. Architectural / Cryptic (Distributed systems, consensus, concurrency, memory, locks)
-    # Hard Override: Immediate 100 points
     _PAT_ARCHITECTURAL = re.compile(
         r'\b(concurrency|multithread|multithreading|mutex|lock|deadlock|livelock|'
         r'race condition|paxos|raft|zero-knowledge|zkp|cryptography|crypto|'
@@ -77,12 +64,11 @@ class ComplexityRouter:
         r'đa luồng|da luong|phân tán|phan tan|distributed|sharding|replication|'
         r'consensus|byzantine|gossip|eventual consistency|idempotency|idempotent|'
         r'atomic|cas|compare-and-swap|actor model|goroutine|coroutine|semaphore|'
-        r'thread pool|heap corruption|deadlock|heisenbug)\b',
+        r'thread pool|heap corruption|heisenbug)\b',
         re.IGNORECASE
     )
 
     # 5. Symptom / Anomaly Patterns (Blind Spot 1 Fix: The Symptom Trap)
-    # Catches non-academic descriptions of race conditions, memory leaks, and data corruption
     _PAT_SYMPTOMS_CRITICAL = re.compile(
         r'\b(trừ đúp|tru dup|double charge|duplicate charge|trừ tiền 2 lần|tru tien 2 lan|'
         r'mất tiền|mat tien|mất dữ liệu|mat du lieu|data loss|data corruption|'
@@ -95,7 +81,6 @@ class ComplexityRouter:
     )
 
     # 6. Destructive Actions / Wholesale Transformations
-    # Hard Override: Immediate 100 points
     _PAT_DESTRUCTIVE = re.compile(
         r'\b(rewrite|migrate|migration|chuyển đổi|chuyen doi|viết lại|viet lai|'
         r'đập đi|dap di|đập bỏ|dap bo|refactor toàn bộ|refactor toan bo|'
@@ -104,9 +89,11 @@ class ComplexityRouter:
         re.IGNORECASE
     )
 
-    # 7. Explicit Negation Context (Blind Spot 2: Negation Guard)
+    # 7. Explicit Negation Context (Clause-bounded negative patterns)
     _PAT_NEGATION = re.compile(
-        r'\b(đừng|dung|không|khong|chớ|cho|avoid|do not|don\'t|not|never|skip|ignore|leave)\b.{1,35}\b(đụng|dung|chạm|cham|sửa|sua|thay đổi|thay doi|touch|modify|change|alter)\b',
+        r'\b(đừng|dung|không|khong|chớ|cho|avoid|do not|don\'t|not|never|skip|ignore|leave)\s+'
+        r'(?:cần\s+|nên\s+|hãy\s+)?'
+        r'(?:đụng|dung|chạm|cham|sửa|sua|thay đổi|thay doi|touch|modify|change|alter)\b',
         re.IGNORECASE
     )
 
@@ -117,49 +104,61 @@ class ComplexityRouter:
     )
 
     @classmethod
-    def check_workspace_vitals(cls, workspace_dir: str = None) -> Tuple[int, List[str]]:
+    @functools.lru_cache(maxsize=128)
+    def _cached_workspace_vitals(cls, norm_ws: str, epoch_bucket: int) -> Tuple[int, Tuple[str, ...]]:
         """
-        Inspects workspace root markers in <0.05ms (with in-memory cache).
-        Provides a Contextual Complexity Floor for systems & distributed repositories.
+        Bounded, thread-safe LRU cache for workspace root markers.
+        epoch_bucket rotates every 300 seconds to allow observing added files without memory leaks.
         """
-        if not workspace_dir or not os.path.exists(workspace_dir):
-            return 0, []
-
-        norm_ws = os.path.abspath(workspace_dir).lower()
-        if norm_ws in _WORKSPACE_VITALS_CACHE:
-            return _WORKSPACE_VITALS_CACHE[norm_ws]
-
         boost = 0
-        vitals = []
+        vitals: List[str] = []
         try:
-            # High-concurrency systems environments (Rust, Go)
-            if os.path.isfile(os.path.join(workspace_dir, "Cargo.toml")):
+            if not os.path.isdir(norm_ws):
+                return 0, ()
+
+            # Systems / Concurrent environments (Rust, Go)
+            if os.path.isfile(os.path.join(norm_ws, "Cargo.toml")):
                 boost += 25
                 vitals.append("Rust Systems Environment (Cargo.toml)")
-            elif os.path.isfile(os.path.join(workspace_dir, "go.mod")):
+            elif os.path.isfile(os.path.join(norm_ws, "go.mod")):
                 boost += 15
                 vitals.append("Concurrent Go Environment (go.mod)")
 
-            # Distributed infrastructure manifests (K8s, Helm, Docker-Compose)
-            if any(os.path.isdir(os.path.join(workspace_dir, d)) for d in ["k8s", "kubernetes", "helm", "deploy"]):
+            # Cloud / Distributed manifests
+            if any(os.path.isdir(os.path.join(norm_ws, d)) for d in ("k8s", "kubernetes", "helm", "deploy")):
                 boost += 20
                 vitals.append("Kubernetes/Cloud Orchestration")
-            elif any(os.path.isfile(os.path.join(workspace_dir, f)) for f in ["docker-compose.yml", "docker-compose.yaml"]):
+            elif any(os.path.isfile(os.path.join(norm_ws, f)) for f in ("docker-compose.yml", "docker-compose.yaml")):
                 boost += 10
                 vitals.append("Multi-Service Stack (docker-compose)")
 
-        except Exception:
-            pass
+        except (OSError, UnicodeError) as err:
+            # Diagnostic fail-loudly context instead of swallowing silently
+            sys.stderr.write(f"[ComplexityRouter] Workspace vitals inspect error on '{norm_ws}': {err}\n")
 
-        result = (min(30, boost), vitals)
-        _WORKSPACE_VITALS_CACHE[norm_ws] = result
-        return result
+        return min(30, boost), tuple(vitals)
+
+    @classmethod
+    def check_workspace_vitals(cls, workspace_dir: str = None) -> Tuple[int, List[str]]:
+        """
+        Inspects workspace root markers in <0.05ms (with thread-safe LRU cache).
+        Provides a Contextual Complexity Floor for systems & distributed repositories.
+        """
+        if not workspace_dir:
+            return 0, []
+
+        norm_ws = os.path.abspath(workspace_dir)
+        # Epoch bucket shifts every 5 minutes (300s) to prevent indefinite stale cache
+        epoch_bucket = int(time.time() // 300)
+        boost, vitals_tuple = cls._cached_workspace_vitals(norm_ws, epoch_bucket)
+        return boost, list(vitals_tuple)
 
     @classmethod
     def evaluate(cls, prompt: str, workspace_dir: str = None) -> Dict[str, Any]:
         """
         Evaluates prompt complexity (0-100) in <0.1ms.
         Defeats Length Fallacy using Heuristic Intent Taxonomy and Exponential Multipliers.
+        Preserves complete factor audit trail even on hard overrides.
         """
         if not prompt or not prompt.strip():
             return {
@@ -175,7 +174,7 @@ class ComplexityRouter:
 
         factors: List[str] = []
 
-        # 0. Check Workspace Contextual Floor (Blind Spot 1 Enhancement)
+        # 0. Check Workspace Contextual Floor
         ws_boost, ws_vitals = cls.check_workspace_vitals(workspace_dir)
         if ws_vitals:
             factors.extend(ws_vitals)
@@ -187,16 +186,40 @@ class ComplexityRouter:
         is_trivial = bool(cls._PAT_TRIVIAL.search(prompt))
         is_negated = bool(cls._PAT_NEGATION.search(prompt))
 
-        # Blind Spot 2: Negation Assessment
-        # If user explicitly commands "đừng đụng vào concurrency" in a purely cosmetic task
-        if is_architectural and is_negated and is_trivial:
+        # Critical Symptoms (Blind Spot 1 Fix: The Symptom Trap)
+        if is_symptom:
+            factors.append("Critical Failure Symptom (Race/Leak/Data Loss Indicator)")
+
+        # DeepSeek Gatekeeper Fix (VULN-002):
+        # Negation CANNOT suppress architectural override if a critical symptom or destructive intent is present!
+        # If user says "đừng đụng concurrency nhưng đang deadlock", deadlock wins!
+        if is_architectural and is_negated and is_trivial and not is_symptom and not is_destructive:
             factors.append("Architectural Term Present but Negated in Cosmetic Context")
             is_architectural = False
 
-        # 2. Hard Overrides (Architectural or Destructive wholesale actions)
+        # Operational & Structural Keyword Density
+        op_count = len(cls._PAT_OPERATIONAL.findall(prompt))
+        st_count = len(cls._PAT_STRUCTURAL.findall(prompt))
+
+        if op_count > 0:
+            factors.append(f"Operational Keywords ({op_count})")
+        if st_count > 0:
+            factors.append(f"Structural Keywords ({st_count})")
+
+        # Multi-File / Cross-Domain Language Indicators
+        exts = set(cls._PAT_EXTENSIONS.findall(prompt))
+        if len(exts) >= 3:
+            factors.append(f"Cross-Domain Multi-Language Context ({len(exts)} extensions)")
+
+        # Code block or stack trace detection
+        if "```" in prompt or "traceback" in prompt.lower() or "exception:" in prompt.lower():
+            factors.append("Contains Code/Traceback Dump (+15)")
+
+        # 2. Hard Overrides (Architectural Core or Destructive Wholesale Action)
+        # DeepSeek Gatekeeper Fix (VULN-004): Build full factors audit trail before returning override
         if is_architectural or is_destructive:
             trigger = "Architectural Core / Concurrency" if is_architectural else "Destructive Wholesale Transformation"
-            factors.append(f"Hard Override: {trigger}")
+            factors.insert(0, f"Hard Override: {trigger}")
             return {
                 "score": 100,
                 "tier": 2,
@@ -209,43 +232,28 @@ class ComplexityRouter:
             }
 
         score = ws_boost
-
-        # 3. Critical Failure Symptoms (Blind Spot 1 Fix: The Symptom Trap)
         if is_symptom:
             score += 60
-            factors.append("Critical Failure Symptom (Race/Leak/Data Loss Indicator)")
-
-        # 4. Operational & Structural Keyword Density
-        op_count = len(cls._PAT_OPERATIONAL.findall(prompt))
-        st_count = len(cls._PAT_STRUCTURAL.findall(prompt))
 
         if op_count > 0:
             score += min(25, op_count * 10)
-            factors.append(f"Operational Keywords ({op_count})")
         if st_count > 0:
             score += min(50, st_count * 25)
-            factors.append(f"Structural Keywords ({st_count})")
 
         # Exponential / Compounding Density Multiplier
-        # Complexity compounds non-linearly when operational tasks touch structural state
         if op_count > 0 and st_count > 0:
             score = int(score * 1.25)
             factors.append("Compounding Multiplier (Operational + Structural)")
 
-        # 5. Trivial / Cosmetic Damping
-        # Actively reduces score for surface changes when no structural or symptom indicators exist
+        # Cosmetic Damping
         if is_trivial and not (st_count > 0 or is_symptom):
             score = max(0, score - 20)
             factors.append("Cosmetic/Trivial Damping (-20)")
 
-        # 6. Multi-File / Cross-Domain Language Indicators
-        exts = set(cls._PAT_EXTENSIONS.findall(prompt))
         if len(exts) >= 3:
             score += 30
-            factors.append(f"Cross-Domain Multi-Language Context ({len(exts)} extensions)")
 
-        # 7. Defeating Length Fallacy: Density Bonus with Strict Cosmetic Immunity
-        # Verbose cosmetic prompts (500 chars of CSS colors) receive ZERO length bonus.
+        # Defeating Length Fallacy: Density Bonus with Strict Cosmetic Immunity
         words = len(re.findall(r'\w+', prompt))
         if not is_trivial or st_count > 0 or is_symptom:
             if words >= 100:
@@ -255,10 +263,8 @@ class ComplexityRouter:
                 score += 10
                 factors.append(f"Medium-Density Prompt ({words} words)")
 
-        # Code block or stack trace detection
         if "```" in prompt or "traceback" in prompt.lower() or "exception:" in prompt.lower():
             score += 15
-            factors.append("Contains Code/Traceback Dump (+15)")
 
         final_score = min(100, max(0, score))
         is_tier_2 = final_score >= COMPLEXITY_THRESHOLD
@@ -284,6 +290,17 @@ def calculate_task_complexity(intent_text: str, workspace_dir: str = None) -> Di
 
 
 def main():
+    if hasattr(sys.stdout, "reconfigure"):
+        try:
+            sys.stdout.reconfigure(encoding="utf-8")
+        except OSError:
+            pass
+    if hasattr(sys.stderr, "reconfigure"):
+        try:
+            sys.stderr.reconfigure(encoding="utf-8")
+        except OSError:
+            pass
+
     test_queries = [
         "Implement Paxos",
         "Đổi màu nút Submit thành màu đỏ, chỉnh padding 12px, margin 8px, căn giữa text, bo tròn border 4px và thêm shadow",

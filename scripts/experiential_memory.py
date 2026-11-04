@@ -12,17 +12,28 @@ import sys
 import json
 import time
 import hashlib
+import errno
+import stat
+import copy
+import threading
+import tempfile
+from typing import Optional, Dict, List, Any
 
 _SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 if _SCRIPT_DIR not in sys.path:
     sys.path.insert(0, _SCRIPT_DIR)
 
+from memory_utils import redact_secrets, canonical_workspace_hash
+
+class TracePersistenceError(IOError):
+    """Raised when writing or persisting proven traces fails due to I/O or serialization error (VULN-004)."""
+    pass
+
 TRACES_FILE = os.path.join(_SCRIPT_DIR, "proven_traces.json")
 MAX_TRACES = 250
 
-_CACHE_DATA = None
-_CACHE_MTIME = 0.0
-_INVERTED_INDEX = {}
+_CACHE = {}  # abs_path -> {"data": dict, "mtime": float}
+_MEM_LOCK = threading.RLock()
 
 
 def tokenize(text: str) -> list:
@@ -35,48 +46,330 @@ def tokenize(text: str) -> list:
 
 
 def load_traces(traces_path: str = None) -> dict:
-    """Loads stored execution traces in <0.02ms using mtime in-memory caching."""
-    global _CACHE_DATA, _CACHE_MTIME, _INVERTED_INDEX
+    """Loads stored execution traces using mtime and path cache guarded by _MEM_LOCK (VULN-003, VULN-004)."""
+    global _CACHE, _MEM_LOCK
     path = traces_path or TRACES_FILE
-    if not os.path.exists(path):
-        return {"version": "3.0.0", "updated_at": "", "traces": []}
-    try:
-        current_mtime = os.path.getmtime(path)
-        if _CACHE_DATA is not None and current_mtime == _CACHE_MTIME and (traces_path is None or traces_path == TRACES_FILE):
-            return _CACHE_DATA
-        with open(path, "r", encoding="utf-8") as f:
-            data = json.load(f)
-            _CACHE_DATA = data
-            _CACHE_MTIME = current_mtime
-            # Rebuild in-memory inverted index
-            _INVERTED_INDEX = {}
-            for idx, tr in enumerate(data.get("traces", [])):
-                for tok in tr.get("tokens", []):
-                    _INVERTED_INDEX.setdefault(tok, set()).add(idx)
-            return data
-    except Exception:
+    abs_path = os.path.abspath(path)
+    if not os.path.exists(abs_path):
         return {"version": "3.0.0", "updated_at": "", "traces": []}
 
+    with _MEM_LOCK:
+        try:
+            current_mtime = os.path.getmtime(abs_path)
+            cache_entry = _CACHE.get(abs_path)
+            if cache_entry is not None and current_mtime == cache_entry["mtime"] and (traces_path is None or traces_path == TRACES_FILE):
+                return copy.deepcopy(cache_entry["data"])
+            with open(abs_path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                scrubbed = []
+                for tr in data.get("traces", []):
+                    try:
+                        scrubbed.append(_redact_trace_dict(tr))
+                    except Exception as red_err:
+                        # VULN-003: Fail-closed: Never append raw unredacted trace on redaction error
+                        sys.stderr.write(f"[!] Warning: Dropping unredactable trace {tr.get('id', 'unknown')}: {red_err}\n")
+                data["traces"] = scrubbed
+                _CACHE[abs_path] = {"data": data, "mtime": current_mtime}
+                return copy.deepcopy(data)
+        except json.JSONDecodeError as jde:
+            # VULN-004: Corrupt JSON must raise, NOT return empty dict, to prevent overwriting prior traces
+            sys.stderr.write(f"[!] LỖI load_traces: Traces file {abs_path} is corrupt JSON: {jde}\n")
+            raise ValueError(f"Traces file {abs_path} contains invalid JSON: {jde}") from jde
+        except (PermissionError, OSError) as oe:
+            sys.stderr.write(f"[!] LỖI load_traces: Cannot read traces file {abs_path}: {oe}\n")
+            raise
 
-def save_traces(data: dict, traces_path: str = None) -> bool:
-    """Persists traces atomically."""
-    path = traces_path or TRACES_FILE
-    data["updated_at"] = time.strftime("%Y-%m-%d %H:%M:%S")
-    tmp_path = path + ".tmp"
+
+# Imports hoisted to top of file
+import tempfile
+
+_lock_local = threading.local()
+_PROCESS_LOCKS: Dict[str, threading.RLock] = {}
+_PROCESS_LOCKS_MUTEX = threading.Lock()
+
+def _get_process_rlock(path: str) -> threading.RLock:
+    with _PROCESS_LOCKS_MUTEX:
+        if path not in _PROCESS_LOCKS:
+            _PROCESS_LOCKS[path] = threading.RLock()
+        return _PROCESS_LOCKS[path]
+
+try:
+    import msvcrt
+    def _lock_fd(fd):
+        msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
+    def _unlock_fd(fd):
+        try:
+            msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
+        except Exception:
+            pass
+except ImportError:
     try:
-        with open(tmp_path, "w", encoding="utf-8") as f:
-            json.dump(data, f, indent=2, ensure_ascii=False)
-        if os.path.exists(path):
-            os.replace(tmp_path, path)
+        import fcntl
+        def _lock_fd(fd):
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        def _unlock_fd(fd):
+            try:
+                fcntl.flock(fd, fcntl.LOCK_UN)
+            except Exception:
+                pass
+    except ImportError:
+        def _lock_fd(fd): pass
+        def _unlock_fd(fd): pass
+
+
+class FileLock:
+    """
+    Advisory OS-level file lock operating on a dedicated lock file descriptor.
+    Includes thread-local reentrancy depth tracking (Hazard 45) and guarantees 1-byte pre-sizing
+    and zero-offset seeking prior to locking on Windows NTFS (VULN-003).
+    """
+    def __init__(self, lock_file: str, timeout: float = 5.0):
+        self.lock_file = os.path.abspath(lock_file)
+        self.timeout = timeout
+        self.fd = None
+        self._rlock = _get_process_rlock(self.lock_file)
+
+    def __enter__(self):
+        # VULN-003: Acquire process-wide RLock first to serialize intra-process threads cleanly
+        acquired = self._rlock.acquire(timeout=self.timeout)
+        if not acquired:
+            raise TimeoutError(f"Could not acquire intra-process thread lock on {self.lock_file} within {self.timeout}s")
+
+        try:
+            held = getattr(_lock_local, "held_locks", None)
+            if held is None:
+                held = _lock_local.held_locks = {}
+            if self.lock_file in held:
+                held[self.lock_file] += 1
+                return self
+
+            deadline = time.monotonic() + self.timeout
+            # Step 1: Open file descriptor safely with 0o600 permissions and defend against symlink attacks (VULN-008)
+            if os.path.islink(self.lock_file) or (hasattr(os.path, "isreparsepoint") and os.path.isreparsepoint(self.lock_file)):
+                raise PermissionError(f"Security violation: lock file cannot be a symbolic link or reparse point: {self.lock_file}")
+
+            open_flags = os.O_CREAT | os.O_RDWR
+            if hasattr(os, "O_NOFOLLOW"):
+                open_flags |= os.O_NOFOLLOW
+
+            while self.fd is None:
+                created_new = False
+                try:
+                    try:
+                        self.fd = os.open(self.lock_file, open_flags | os.O_EXCL, 0o600)
+                        created_new = True
+                    except FileExistsError:
+                        self.fd = os.open(self.lock_file, open_flags, 0o600)
+
+                    st = os.fstat(self.fd)
+                    if not stat.S_ISREG(st.st_mode):
+                        raise PermissionError(f"Security violation: lock file is not a regular file: {self.lock_file}")
+
+                    # VULN-002: Reject reparse points and symlinks on Windows
+                    if sys.platform.startswith("win"):
+                        reparse = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400)
+                        if getattr(st, "st_file_attributes", 0) & reparse:
+                            raise PermissionError(f"Security violation: lock file is a reparse point or symlink: {self.lock_file}")
+
+                    if hasattr(os, "fchmod"):
+                        try:
+                            os.fchmod(self.fd, 0o600)
+                        except Exception:
+                            pass
+
+                    # VULN-002 / Hazard: Always write 1-byte pre-size when lock file is empty to prevent zero-length locking race
+                    if st.st_size == 0:
+                        try:
+                            os.write(self.fd, b"\x00")
+                            os.fsync(self.fd)
+                        except Exception as fsync_err:
+                            sys.stderr.write(f"[!] Warning: FileLock pre-size fsync failed: {fsync_err}\n")
+                except (PermissionError, OSError) as open_err:
+                    if self.fd is not None:
+                        try:
+                            os.close(self.fd)
+                        except Exception:
+                            pass
+                        self.fd = None
+                    winerror = getattr(open_err, "winerror", None)
+                    e_errno = getattr(open_err, "errno", None)
+                    if winerror in (32, 33):
+                        if time.monotonic() >= deadline:
+                            raise TimeoutError(f"Could not open lock file {self.lock_file} within {self.timeout}s: {open_err}") from open_err
+                        time.sleep(0.01)
+                        continue
+                    # Real permission fault on os.open (EACCES / EPERM / winerror 5)
+                    raise PermissionError(f"Permission denied opening lock file {self.lock_file} (errno={e_errno}, winerror={winerror}): {open_err}") from open_err
+
+            # Step 2: Acquire OS-level advisory lock with backoff retry
+            while True:
+                try:
+                    os.lseek(self.fd, 0, os.SEEK_SET)
+                    _lock_fd(self.fd)
+                    held[self.lock_file] = 1
+                    return self
+                except (BlockingIOError, OSError) as lock_err:
+                    winerror = getattr(lock_err, "winerror", None)
+                    e_errno = getattr(lock_err, "errno", None)
+                    # True contention signatures:
+                    # Windows: msvcrt.locking raises OSError with errno 13 (EACCES) and no winerror, or winerror 32/33/36
+                    # POSIX: EAGAIN (11), EWOULDBLOCK (11 or 35), or BlockingIOError
+                    is_contention = (
+                        isinstance(lock_err, BlockingIOError) or
+                        (winerror in (32, 33, 36)) or
+                        (e_errno in (errno.EACCES, errno.EAGAIN, errno.EWOULDBLOCK, 11, 13, 35))
+                    )
+                    if is_contention:
+                        if time.monotonic() >= deadline:
+                            try:
+                                os.close(self.fd)
+                            except Exception:
+                                pass
+                            self.fd = None
+                            raise TimeoutError(f"Could not acquire OS file lock on {self.lock_file} within {self.timeout}s: {lock_err}") from lock_err
+                        time.sleep(0.01)
+                    else:
+                        try:
+                            os.close(self.fd)
+                        except Exception:
+                            pass
+                        self.fd = None
+                        raise
+        except Exception:
+            self._rlock.release()
+            raise
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        try:
+            held = getattr(_lock_local, "held_locks", {})
+            if self.lock_file in held:
+                held[self.lock_file] -= 1
+                if held[self.lock_file] > 0:
+                    return
+                del held[self.lock_file]
+
+            if self.fd is not None:
+                try:
+                    os.lseek(self.fd, 0, os.SEEK_SET)
+                    _unlock_fd(self.fd)
+                except Exception:
+                    pass
+                try:
+                    os.close(self.fd)
+                except Exception:
+                    pass
+                self.fd = None
+        finally:
+            self._rlock.release()
+
+
+def _redact_trace_dict(tr: Any, depth: int = 0) -> Any:
+    """Recursively redacts string values and nested structures with max depth 32 safe truncation (VULN-003, VULN-005)."""
+    if depth > 32:
+        return "[REDACTED_MAX_DEPTH]" 
+    if isinstance(tr, dict):
+        clean = {}
+        for k, v in tr.items():
+            if isinstance(v, str):
+                try:
+                    clean[k] = redact_secrets(v)
+                except Exception:
+                    clean[k] = "[REDACTED]"
+            elif isinstance(v, (dict, list)):
+                clean[k] = _redact_trace_dict(v, depth + 1)
+            else:
+                clean[k] = v
+        return clean
+    elif isinstance(tr, list):
+        return [_redact_trace_dict(item, depth + 1) for item in tr]
+    elif isinstance(tr, str):
+        try:
+            return redact_secrets(tr)
+        except Exception:
+            return "[REDACTED]"
+    return tr
+
+
+def _save_traces_unlocked(data: dict, path: str) -> bool:
+    """Persists traces atomically using unique tempfile, fsync, replace, and chmod 0600."""
+    now_str = time.strftime("%Y-%m-%d %H:%M:%S")
+    
+    # Deep-copy and recursively redact all trace fields for persistence (VULN-002, VULN-003)
+    traces = data.get("traces")
+    if not isinstance(traces, list):
+        raise TracePersistenceError(f"Invalid traces payload: 'traces' must be a list, got {type(traces).__name__} (VULN-002)")
+
+    persist_traces = []
+    for tr in traces:
+        if isinstance(tr, dict):
+            persist_traces.append(_redact_trace_dict(tr))
         else:
-            os.rename(tmp_path, path)
+            raise TracePersistenceError(f"Invalid trace entry: expected dict, got {type(tr).__name__} (VULN-002)")
+
+    if len(traces) > 0 and len(persist_traces) == 0:
+        raise TracePersistenceError("persist_traces became empty while input traces was non-empty; refusing to overwrite with empty data (VULN-002)")
+
+    persist_data = {
+        "version": data.get("version", "3.0.0"),
+        "updated_at": now_str,
+        "traces": persist_traces
+    }
+
+    dir_name = os.path.dirname(os.path.abspath(path))
+    fd, tmp_path = tempfile.mkstemp(dir=dir_name, prefix="traces_", suffix=".tmp")
+    f = None
+    try:
+        f = os.fdopen(fd, "w", encoding="utf-8")
+        json.dump(persist_data, f, indent=2, ensure_ascii=False)
+        f.flush()
+        os.fsync(f.fileno())
+        f.close()
+        f = None
+        os.replace(tmp_path, path)
+        try:
+            os.chmod(path, 0o600)
+        except Exception:
+            pass
+        # Parent directory fsync where supported to ensure directory entry durability (Hazard 63)
+        try:
+            if hasattr(os, "O_DIRECTORY"):
+                dir_fd = os.open(dir_name, os.O_RDONLY | os.O_DIRECTORY)
+                try:
+                    os.fsync(dir_fd)
+                finally:
+                    os.close(dir_fd)
+        except Exception:
+            pass
         return True
-    except Exception:
+    except Exception as e:
+        sys.stderr.write(f"[!] LỖI _save_traces_unlocked({path}): {type(e).__name__}: {e}\n")
+        if f is not None:
+            try:
+                f.close()
+            except Exception:
+                pass
+        else:
+            try:
+                os.close(fd)
+            except Exception:
+                pass
         if os.path.exists(tmp_path):
             try:
                 os.remove(tmp_path)
             except Exception:
                 pass
+        raise TracePersistenceError(f"Failed to persist traces to {path}: {e}") from e
+
+
+def save_traces(data: dict, traces_path: str = None) -> bool:
+    """Persists traces atomically under OS FileLock (Hazard 4)."""
+    path = traces_path or TRACES_FILE
+    lock_path = path + ".lock"
+    try:
+        with FileLock(lock_path, timeout=5.0):
+            return _save_traces_unlocked(data, path)
+    except Exception as e:
+        sys.stderr.write(f"[!] LỖI save_traces({path}): {type(e).__name__}: {e}\n")
         return False
 
 
@@ -85,83 +378,155 @@ def record_trace(problem_signature: str,
                  action_type: str = "command",
                  tags: list = None,
                  workspace_context: str = "",
-                 traces_path: str = None) -> dict:
+                 traces_path: str = None,
+                 outbox_id: Optional[int] = None,
+                 workspace_hash: Optional[str] = None,
+                 outbox_generation: Optional[int] = None) -> dict:
     """
-    Records or updates a proven execution trace.
-    Returns the recorded trace object.
+    Records or updates a proven execution trace inside a single atomic critical section.
+    Supports idempotent deduplication via outbox_id + outbox_generation (VULN-004) and strict tenant isolation
+    via workspace-scoped trace_id (VULN-001).
+    Returns the recorded trace object or empty dict on failure.
     """
     if not problem_signature or not proven_solution:
         return {}
 
-    data = load_traces(traces_path)
-    traces = data.get("traces", [])
-    
-    sig_tokens = tokenize(problem_signature)
-    tag_tokens = []
-    if tags:
-        for t in tags:
-            tag_tokens.extend(tokenize(str(t)))
-    all_tokens = list(set(sig_tokens + tag_tokens))
+    path = traces_path or TRACES_FILE
+    lock_path = path + ".lock"
 
-    trace_id = hashlib.md5(f"{problem_signature.strip().lower()}".encode("utf-8")).hexdigest()[:10]
+    try:
+        with FileLock(lock_path, timeout=5.0):
+            try:
+                data = copy.deepcopy(load_traces(path))
+            except Exception as load_err:
+                sys.stderr.write(f"[!] LỖI record_trace: Aborting write to prevent data loss (load_traces failed): {load_err}\n")
+                return {}
+            traces = data.get("traces", [])
+            
+            clean_sig = redact_secrets(problem_signature) or problem_signature
+            if not clean_sig or not any(c.isalnum() for c in clean_sig):
+                raise ValueError("problem_signature contains no alphanumeric characters after secret redaction (Edge Case 2)")
+            clean_sol = redact_secrets(proven_solution) or proven_solution
+            clean_action = redact_secrets(action_type) or "command"
+            clean_ctx = redact_secrets(workspace_context) or ""
+            clean_tags = [redact_secrets(str(t)) for t in tags] if tags else []
+            sig_tokens = tokenize(clean_sig)
+            tag_tokens = []
+            for t in clean_tags:
+                tag_tokens.extend(tokenize(str(t)))
+            all_tokens = list(set(sig_tokens + tag_tokens))
 
-    # Check for existing trace
-    existing = None
-    for tr in traces:
-        if tr.get("id") == trace_id or tr.get("problem_signature").strip().lower() == problem_signature.strip().lower():
-            existing = tr
-            break
+            # VULN-001: Derive trace_id with SHA-256 and workspace_hash namespace to eliminate cross-tenant collisions
+            clean_ws = workspace_hash.strip().lower() if workspace_hash else ""
+            if clean_ws:
+                id_source = f"{clean_ws}:{clean_action}:{clean_sig.strip().lower()}"
+            else:
+                id_source = f"{clean_action}:{clean_sig.strip().lower()}"
+            trace_id = hashlib.sha256(id_source.encode("utf-8")).hexdigest()[:24]
 
-    now_str = time.strftime("%Y-%m-%d %H:%M:%S")
-    if existing:
-        existing["proven_solution"] = proven_solution.strip()
-        existing["success_count"] = existing.get("success_count", 1) + 1
-        existing["last_recalled"] = now_str
-        existing["tokens"] = list(set(existing.get("tokens", []) + all_tokens))
-        if tags:
-            existing["tags"] = list(set(existing.get("tags", []) + tags))
-        if workspace_context:
-            existing["workspace_context"] = workspace_context
-        result_trace = existing
-    else:
-        new_trace = {
-            "id": trace_id,
-            "problem_signature": problem_signature.strip(),
-            "proven_solution": proven_solution.strip(),
-            "action_type": action_type,
-            "tags": tags or [],
-            "workspace_context": workspace_context,
-            "tokens": all_tokens,
-            "success_count": 1,
-            "created_at": now_str,
-            "last_recalled": now_str
-        }
-        traces.append(new_trace)
-        result_trace = new_trace
+            # Check for existing trace STRICTLY scoped to tenant (VULN-001)
+            existing = None
+            for tr in traces:
+                tr_ws = (tr.get("workspace_hash") or "").strip().lower()
+                if clean_ws:
+                    if tr_ws == clean_ws and (tr.get("id") == trace_id or tr.get("problem_signature", "").strip().lower() == clean_sig.strip().lower()):
+                        existing = tr
+                        break
+                else:
+                    if not tr_ws and (tr.get("id") == trace_id or tr.get("problem_signature", "").strip().lower() == clean_sig.strip().lower()):
+                        existing = tr
+                        break
 
-    # LRU Pruning if exceeds MAX_TRACES
-    if len(traces) > MAX_TRACES:
-        traces.sort(key=lambda x: (x.get("success_count", 1), x.get("last_recalled", "")), reverse=True)
-        data["traces"] = traces[:MAX_TRACES]
-    else:
-        data["traces"] = traces
+            now_str = time.strftime("%Y-%m-%d %H:%M:%S")
+            if existing:
+                # VULN-006: Stale outbox worker and monotonic generation fencing
+                if outbox_id is not None and existing.get("last_outbox_id") == outbox_id:
+                    existing_gen = existing.get("last_outbox_generation", 0)
+                    if outbox_generation is None or existing_gen >= outbox_generation:
+                        # Reject stale worker generation and duplicate replay without mutation
+                        return copy.deepcopy(existing)
 
-    save_traces(data, traces_path)
-    return result_trace
+                existing["proven_solution"] = clean_sol.strip()
+                existing["success_count"] = existing.get("success_count", 1) + 1
+                existing["last_recalled"] = now_str
+                existing["action_type"] = clean_action
+                existing["tokens"] = list(set(existing.get("tokens", []) + all_tokens))
+                if clean_tags:
+                    existing["tags"] = list(set(existing.get("tags", []) + clean_tags))
+                if clean_ctx:
+                    existing["workspace_context"] = clean_ctx
+                if clean_ws:
+                    existing["workspace_hash"] = clean_ws
+                if outbox_id is not None:
+                    existing["last_outbox_id"] = outbox_id
+                if outbox_generation is not None:
+                    existing["last_outbox_generation"] = outbox_generation
+                result_trace = existing
+            else:
+                new_trace = {
+                    "id": trace_id,
+                    "workspace_hash": clean_ws,
+                    "problem_signature": clean_sig.strip(),
+                    "proven_solution": clean_sol.strip(),
+                    "action_type": clean_action,
+                    "tags": clean_tags,
+                    "workspace_context": clean_ctx,
+                    "tokens": all_tokens,
+                    "success_count": 1,
+                    "created_at": now_str,
+                    "last_recalled": now_str
+                }
+                if outbox_id is not None:
+                    new_trace["last_outbox_id"] = outbox_id
+                if outbox_generation is not None:
+                    new_trace["last_outbox_generation"] = outbox_generation
+                traces.append(new_trace)
+                result_trace = new_trace
+
+            # LRU Pruning if exceeds MAX_TRACES
+            if len(traces) > MAX_TRACES:
+                traces.sort(key=lambda x: (x.get("success_count", 1), x.get("last_recalled", "")), reverse=True)
+                data["traces"] = traces[:MAX_TRACES]
+            else:
+                data["traces"] = traces
+
+            ok = _save_traces_unlocked(data, path)
+            if not ok:
+                return {}
+            try:
+                curr_mtime = os.path.getmtime(path)
+                with _MEM_LOCK:
+                    _CACHE[os.path.abspath(path)] = {"data": copy.deepcopy(data), "mtime": curr_mtime}
+            except Exception:
+                pass
+            return copy.deepcopy(_redact_trace_dict(result_trace))
+    except (TimeoutError, OSError, TracePersistenceError) as infra_err:
+        sys.stderr.write(f"[!] LỖI INFRASTRUCTURE record_trace: {type(infra_err).__name__}: {infra_err}\n")
+        raise
+    except Exception as lock_err:
+        sys.stderr.write(f"[!] LỖI record_trace: {type(lock_err).__name__}: {lock_err}\n")
+        return {}
 
 
 def recall_traces(query_text: str,
                   workspace_dir: str = None,
                   top_k: int = 2,
                   threshold: float = 0.25,
-                  traces_path: str = None) -> list:
+                  traces_path: str = None,
+                  workspace_hash: Optional[str] = None,
+                  allow_unscoped: bool = False) -> list:
     """
     Sub-millisecond retrieval of matching proven execution traces (<0.3ms).
+    Enforces strict fail-closed tenant isolation (VULN-002).
     """
     if not query_text:
         return []
 
-    data = load_traces(traces_path)
+    try:
+        data = load_traces(traces_path)
+    except Exception as load_err:
+        sys.stderr.write(f"[!] Warning: recall_traces degraded gracefully on unreadable traces file: {load_err}\n")
+        return []
     traces = data.get("traces", [])
     if not traces:
         return []
@@ -170,8 +535,25 @@ def recall_traces(query_text: str,
     if not query_tokens:
         return []
 
+    target_ws = workspace_hash.strip().lower() if workspace_hash else None
+    if not target_ws and workspace_dir:
+        target_ws = canonical_workspace_hash(workspace_dir)
+
+    # Fail-closed guard: if neither workspace_hash nor workspace_dir was provided,
+    # and allow_unscoped is False, deny cross-tenant trace leakage (VULN-002)
+    if not target_ws and not allow_unscoped:
+        return []
+
     scored = []
     for tr in traces:
+        # VULN-001, VULN-002 & VULN-005: Tenant isolation with safe null handling
+        tr_ws = (tr.get("workspace_hash") or "").strip().lower()
+        if target_ws:
+            if tr_ws and tr_ws != target_ws:
+                continue
+            if not tr_ws and not allow_unscoped:
+                continue
+
         tr_tokens = set(tr.get("tokens", []))
         if not tr_tokens:
             continue

@@ -61,7 +61,7 @@ EXIT_SYSTEM_STRICT = 5         # Schema failure, internal system fault, or stric
 # Protocol constants
 DEFAULT_TIMEOUT = 30.0
 MIN_TIMEOUT = 5.0
-MAX_TIMEOUT = 120.0
+MAX_TIMEOUT = 300.0
 MIN_INFER_WINDOW = 8.0         # FLAW-004: Minimum viable inference window for DeepSeek (seconds)
 MAX_FILE_SIZE = 4.5 * 1024 * 1024  # 4.5 MB context ceiling
 DEFAULT_API_BASE = "https://api.deepseek.com"
@@ -281,6 +281,131 @@ def calculate_sleep_duration(
     return max(0.0, sleep_time)
 
 
+def repair_json_string(s: str) -> Tuple[str, bool]:
+    """
+    Single-pass scanner to repair unescaped quotes, invalid backslashes, and raw newlines
+    inside JSON string values without corrupting valid escapes or delimiters (VULN-009).
+    """
+    result = []
+    in_string = False
+    length = len(s)
+    i = 0
+    repaired = False
+    valid_escapes = {'"', '\\', '/', 'b', 'f', 'n', 'r', 't'}
+
+    while i < length:
+        c = s[i]
+        if not in_string:
+            result.append(c)
+            if c == '"':
+                in_string = True
+            i += 1
+            continue
+
+        # Inside string literal
+        if c == '\\':
+            if i + 1 < length:
+                nxt = s[i + 1]
+                if nxt in valid_escapes:
+                    result.append(c)
+                    result.append(nxt)
+                    i += 2
+                    continue
+                elif nxt == 'u' and i + 5 < length and all(h in "0123456789abcdefABCDEF" for h in s[i + 2:i + 6]):
+                    result.append(s[i:i + 6])
+                    i += 6
+                    continue
+            # Invalid backslash escape -> escape it as \\
+            result.append('\\\\')
+            repaired = True
+            i += 1
+            continue
+
+        if c == '"':
+            j = i + 1
+            while j < length and s[j] in " \t\r\n":
+                j += 1
+            next_char = s[j] if j < length else ""
+            if next_char in {",", "}", "]", ":"}:
+                in_string = False
+                result.append(c)
+            else:
+                result.append('\\"')
+                repaired = True
+            i += 1
+            continue
+
+        if c == '\n':
+            result.append('\\n')
+            repaired = True
+            i += 1
+            continue
+        if c == '\r':
+            result.append('\\r')
+            repaired = True
+            i += 1
+            continue
+        if c == '\t':
+            result.append('\\t')
+            repaired = True
+            i += 1
+            continue
+
+        result.append(c)
+        i += 1
+
+    return "".join(result), repaired
+
+
+def repair_unescaped_json_quotes(s: str) -> str:
+    """Backward compatibility wrapper."""
+    rep, _ = repair_json_string(s)
+    return rep
+
+
+def extract_first_json_object(raw_str: str) -> str:
+    """
+    Extracts the first valid balanced JSON object string from raw_str.
+    Strips markdown code fences and handles trailing non-JSON content.
+    """
+    s = raw_str.strip()
+    if s.startswith("```"):
+        s = re.sub(r"^```(?:json)?\s*", "", s, flags=re.IGNORECASE)
+        s = re.sub(r"\s*```$", "", s)
+        s = s.strip()
+
+    start_idx = s.find('{')
+    if start_idx == -1:
+        return s
+
+    in_string = False
+    escape = False
+    depth = 0
+    end_idx = -1
+    for i in range(start_idx, len(s)):
+        char = s[i]
+        if escape:
+            escape = False
+            continue
+        if char == '\\':
+            escape = True
+            continue
+        if char == '"':
+            in_string = not in_string
+            continue
+        if not in_string:
+            if char == '{':
+                depth += 1
+            elif char == '}':
+                depth -= 1
+                if depth == 0:
+                    end_idx = i + 1
+                    break
+    if end_idx != -1:
+        return s[start_idx:end_idx]
+    return s[start_idx:]
+
+
 def validate_audit_verdict(data: Dict[str, Any]) -> Tuple[bool, str]:
     """
     Enforces Draft-07 semantic schema validation for the DeepSeek audit verdict.
@@ -438,7 +563,7 @@ def execute_critic_request(
             )
             sys.exit(EXIT_TIMEOUT_NETWORK)
 
-        socket_timeout = min(30.0, max(0.1, remaining_budget))
+        socket_timeout = min(180.0, max(0.1, remaining_budget))
 
         payload = {
             "model": current_model,
@@ -476,13 +601,48 @@ def execute_critic_request(
                     sys.stderr.write("[!] LỖI API: DeepSeek trả về choices rỗng!\n")
                     sys.exit(EXIT_SYSTEM_STRICT)
 
-                message = choices[0].get("message", {})
-                content_str = message.get("content", "")
+                message = choices[0].get("message") or {}
+                content_str = message.get("content")
+                if not isinstance(content_str, str) or not content_str.strip():
+                    sys.stderr.write("[!] LỖI MODEL: message content rỗng hoặc không phải chuỗi!\n")
+                    sys.exit(EXIT_SYSTEM_STRICT)
 
+                cleaned_json_str = extract_first_json_object(content_str)
+                # Attempt direct parse first
                 try:
-                    parsed_verdict = json.loads(content_str)
-                except json.JSONDecodeError as jde:
-                    sys.stderr.write(f"[!] LỖI PARSE SCHEMA: Model không trả về JSON hợp lệ: {jde}\n")
+                    parsed_verdict = json.loads(cleaned_json_str, strict=False)
+                except json.JSONDecodeError:
+                    # Single-pass safe repair for quotes, backslashes, and control chars (VULN-009)
+                    repaired_str, was_repaired = repair_json_string(cleaned_json_str)
+                    if was_repaired:
+                        sys.stderr.write("[!] Warning: consult_critic applied single-pass JSON escape/quote repair\n")
+                    try:
+                        parsed_verdict = json.loads(repaired_str, strict=False)
+                    except json.JSONDecodeError as jde:
+                        # Handle failure without dumping unredacted raw content (VULN-007)
+                                if os.environ.get('CRITIC_DEBUG') == '1':
+                                    import tempfile
+                                    from memory_utils import redact_secrets
+                                    with tempfile.NamedTemporaryFile(
+                                        mode='w',
+                                        delete=False,
+                                        encoding='utf-8',
+                                        prefix='critic_debug_',
+                                        suffix='.txt',
+                                    ) as dbg:
+                                        dbg.write(redact_secrets(content_str) or "")
+                                    sys.stderr.write(
+                                        f"[!] LỖI PARSE SCHEMA: Model không trả về JSON hợp lệ: {jde}. "
+                                        f"Redacted dump saved to {dbg.name}\n",
+                                    )
+                                else:
+                                    sys.stderr.write(
+                                        f"[!] LỖI PARSE SCHEMA: Model không trả về JSON hợp lệ: {jde}.\n",
+                                    )
+                                sys.exit(EXIT_SYSTEM_STRICT)
+
+                if not isinstance(parsed_verdict, dict):
+                    sys.stderr.write(f"[!] LỖI SCHEMA AUDIT: Parsed verdict is not a JSON object (got {type(parsed_verdict).__name__})\n")
                     sys.exit(EXIT_SYSTEM_STRICT)
 
                 is_valid, validation_msg = validate_audit_verdict(parsed_verdict)

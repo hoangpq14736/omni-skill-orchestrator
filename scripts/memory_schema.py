@@ -111,6 +111,13 @@ BEGIN
 END;
 
 CREATE TRIGGER IF NOT EXISTS trg_episodic_after_update AFTER UPDATE ON workspace_episodic_memory
+WHEN (
+    new.title IS NOT old.title OR
+    new.problem_signature IS NOT old.problem_signature OR
+    new.solution_payload IS NOT old.solution_payload OR
+    new.bilingual_tags IS NOT old.bilingual_tags OR
+    new.content_folded IS NOT old.content_folded
+)
 BEGIN
     DELETE FROM episodic_fts WHERE rowid = old.rowid;
     INSERT INTO episodic_fts(rowid, content_exact, content_folded)
@@ -119,6 +126,45 @@ BEGIN
         new.title || ' ' || coalesce(new.problem_signature, '') || ' ' || new.solution_payload || ' ' || coalesce(new.bilingual_tags, ''),
         new.content_folded
     );
+END;
+
+CREATE TRIGGER IF NOT EXISTS trg_episodic_prevent_ws_replace
+BEFORE INSERT ON workspace_episodic_memory
+FOR EACH ROW
+WHEN EXISTS (
+    SELECT 1 FROM workspace_episodic_memory
+    WHERE memory_id = new.memory_id AND workspace_hash IS NOT new.workspace_hash
+)
+BEGIN
+    SELECT RAISE(ABORT, 'workspace_hash is immutable and cannot be replaced with a different tenant hash');
+END;
+
+CREATE TRIGGER IF NOT EXISTS trg_episodic_prevent_cross_tenant_supersede
+BEFORE UPDATE OF superseded_by ON workspace_episodic_memory
+FOR EACH ROW
+WHEN new.superseded_by IS NOT NULL AND EXISTS (
+    SELECT 1 FROM workspace_episodic_memory target
+    WHERE target.memory_id = new.superseded_by AND target.workspace_hash IS NOT new.workspace_hash
+)
+BEGIN
+    SELECT RAISE(ABORT, 'superseded_by cannot reference a record from a different workspace_hash');
+END;
+
+CREATE TRIGGER IF NOT EXISTS trg_episodic_prevent_cross_tenant_supersede_insert
+BEFORE INSERT ON workspace_episodic_memory
+FOR EACH ROW
+WHEN new.superseded_by IS NOT NULL AND EXISTS (
+    SELECT 1 FROM workspace_episodic_memory target
+    WHERE target.memory_id = new.superseded_by AND target.workspace_hash IS NOT new.workspace_hash
+)
+BEGIN
+    SELECT RAISE(ABORT, 'superseded_by cannot reference a record from a different workspace_hash');
+END;
+
+CREATE TRIGGER IF NOT EXISTS trg_episodic_prevent_ws_update BEFORE UPDATE OF workspace_hash ON workspace_episodic_memory
+WHEN new.workspace_hash IS NOT old.workspace_hash
+BEGIN
+    SELECT RAISE(ABORT, 'workspace_hash is immutable and cannot be transferred across tenants');
 END;
 
 -- ----------------------------------------------------------------------------
@@ -133,8 +179,11 @@ CREATE TABLE IF NOT EXISTS l1_staging_log (
     top_skill           TEXT,
     tier_used           INTEGER NOT NULL DEFAULT 1,
     recalled_traces     TEXT,                        -- JSON array of recalled memory IDs
-    is_drained          INTEGER NOT NULL DEFAULT 0   -- 0 = pending, 1 = processed by Memory Daemon Single-Writer
+    is_drained          INTEGER NOT NULL DEFAULT 0,  -- 0 = pending, 1 = processed, 2 = quarantined
+    last_error          TEXT                         -- Diagnostic context for quarantined rows
 );
+
+CREATE INDEX IF NOT EXISTS idx_staging_status_ws ON l1_staging_log (is_drained, workspace_hash, staging_id);
 
 -- ----------------------------------------------------------------------------
 -- Table 6: activation_events (Tier 3 Consolidation Staging Buffer)
@@ -149,16 +198,54 @@ CREATE TABLE IF NOT EXISTS activation_events (
     tier_used           INTEGER NOT NULL DEFAULT 1,
     recalled_traces     TEXT,                        -- JSON array of recalled memory IDs
     feedback_score      REAL DEFAULT 0.0,            -- +1.0 (success), 0.0 (neutral), -1.0 (failure)
-    is_consolidated     INTEGER NOT NULL DEFAULT 0   -- 0 = pending, 1 = processed
+    is_consolidated     INTEGER NOT NULL DEFAULT 0,  -- 0 = pending, 1 = processed, 2 = quarantined
+    last_error          TEXT                         -- Diagnostic context for quarantined events (VULN-006)
 );
 
 CREATE INDEX IF NOT EXISTS idx_event_pending ON activation_events(is_consolidated, timestamp);
+CREATE INDEX IF NOT EXISTS idx_events_status_ws ON activation_events (is_consolidated, workspace_dir, event_id);
+
+-- ----------------------------------------------------------------------------
+-- Table 7: consolidation_outbox (Durable Outbox Queue for Proven Traces)
+-- ----------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS consolidation_outbox (
+    outbox_id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    memory_id           TEXT NOT NULL,
+    workspace_hash      TEXT NOT NULL,
+    signature           TEXT NOT NULL,
+    solution            TEXT NOT NULL,
+    tags                TEXT,
+    context             TEXT,
+    status              TEXT NOT NULL DEFAULT 'Pending', -- 'Pending', 'InFlight', 'Flushed', 'Failed'
+    generation          INTEGER NOT NULL DEFAULT 1,      -- Incremented on re-promotion to preserve reinforcement (VULN-004)
+    retry_count         INTEGER NOT NULL DEFAULT 0,
+    last_error          TEXT,
+    created_at          TEXT NOT NULL,
+    claimed_at          TEXT,                        -- Timestamp when claimed as InFlight (VULN-001)
+    owner_token         TEXT,                        -- Unique claim lease token for atomic CAS commit (Hazard 43)
+    flushed_at          TEXT,
+    UNIQUE(memory_id, workspace_hash)
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_outbox_mem_ws ON consolidation_outbox (memory_id, workspace_hash);
+CREATE INDEX IF NOT EXISTS idx_outbox_status ON consolidation_outbox(status);
+CREATE INDEX IF NOT EXISTS idx_outbox_status_ws ON consolidation_outbox (status, workspace_hash, outbox_id);
+
+-- ----------------------------------------------------------------------------
+-- Table 8: workspace_registry (Tenancy Isolation & Sub-Workspace Registry)
+-- ----------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS workspace_registry (
+    workspace_hash      TEXT PRIMARY KEY,            -- Hex hash (32 or 64 char)
+    workspace_path      TEXT NOT NULL,               -- Canonical filesystem root path
+    registered_at       TEXT NOT NULL                -- ISO-8601 UTC timestamp
+);
 """
 
 
-def init_database(db_path: str = "omni_memory.db", isolation_level: Optional[str] = "IMMEDIATE") -> sqlite3.Connection:
+def init_database(db_path: str = "omni_memory.db", isolation_level: Optional[str] = None) -> sqlite3.Connection:
     """
     Initialize SQLite database with production pragmas, tables, triggers, and indexes.
+    Defaults to isolation_level=None (autocommit) to safely support manual BEGIN IMMEDIATE (VULN-006).
     Returns the active database connection.
     """
     conn = sqlite3.connect(db_path, timeout=5.0, isolation_level=isolation_level)
@@ -170,12 +257,15 @@ def init_database(db_path: str = "omni_memory.db", isolation_level: Optional[str
         mode = conn.execute("PRAGMA auto_vacuum;").fetchone()[0]
         if mode != 2:
             old_iso = conn.isolation_level
-            conn.isolation_level = None
-            conn.execute("PRAGMA auto_vacuum = INCREMENTAL;")
-            conn.execute("VACUUM;")
-            conn.isolation_level = old_iso
-    except Exception:
-        pass
+            try:
+                conn.isolation_level = None
+                conn.execute("PRAGMA auto_vacuum = INCREMENTAL;")
+                conn.execute("VACUUM;")
+            finally:
+                conn.isolation_level = old_iso
+    except Exception as e:
+        import sys
+        sys.stderr.write(f"[!] Warning: auto_vacuum configuration skipped ({type(e).__name__}: {e})\n")
     
     # Apply pragmas
     conn.execute("PRAGMA journal_mode = WAL;")
@@ -186,7 +276,88 @@ def init_database(db_path: str = "omni_memory.db", isolation_level: Optional[str
     conn.execute("PRAGMA busy_timeout = 5000;")
     conn.execute("PRAGMA foreign_keys = ON;")
     
-    # Execute DDL
-    conn.executescript(DDL_TABLES)
-    conn.commit()
+    # Migration: Add columns to existing tables if missing with fail-loud OperationalError handling (VULN-004)
+    cols_ob = [row[1] for row in conn.execute("PRAGMA table_info(consolidation_outbox);").fetchall()]
+    if cols_ob:
+        if "claimed_at" not in cols_ob:
+            try:
+                conn.execute("ALTER TABLE consolidation_outbox ADD COLUMN claimed_at TEXT;")
+            except sqlite3.OperationalError as oe:
+                if "duplicate column name" not in str(oe).lower():
+                    raise RuntimeError(f"Failed to migrate consolidation_outbox.claimed_at: {oe}") from oe
+        if "owner_token" not in cols_ob:
+            try:
+                conn.execute("ALTER TABLE consolidation_outbox ADD COLUMN owner_token TEXT;")
+            except sqlite3.OperationalError as oe:
+                if "duplicate column name" not in str(oe).lower():
+                    raise RuntimeError(f"Failed to migrate consolidation_outbox.owner_token: {oe}") from oe
+        if "generation" not in cols_ob:
+            try:
+                conn.execute("ALTER TABLE consolidation_outbox ADD COLUMN generation INTEGER NOT NULL DEFAULT 1;")
+            except sqlite3.OperationalError as oe:
+                if "duplicate column name" not in str(oe).lower():
+                    raise RuntimeError(f"Failed to migrate consolidation_outbox.generation: {oe}") from oe
+
+        # VULN-002: Ensure UNIQUE constraint on (memory_id, workspace_hash) for legacy DBs via unique index
+        try:
+            conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_outbox_mem_ws ON consolidation_outbox (memory_id, workspace_hash);")
+        except Exception as uidx_err:
+            raise RuntimeError(f"Failed to ensure unique index idx_outbox_mem_ws: {uidx_err}") from uidx_err
+
+    cols_l1 = [row[1] for row in conn.execute("PRAGMA table_info(l1_staging_log);").fetchall()]
+    if cols_l1 and "last_error" not in cols_l1:
+        try:
+            conn.execute("ALTER TABLE l1_staging_log ADD COLUMN last_error TEXT;")
+        except sqlite3.OperationalError as oe:
+            if "duplicate column name" not in str(oe).lower():
+                raise RuntimeError(f"Failed to migrate l1_staging_log.last_error: {oe}") from oe
+
+    # Migration for activation_events.last_error (VULN-006)
+    cols_ae = [row[1] for row in conn.execute("PRAGMA table_info(activation_events);").fetchall()]
+    if cols_ae and "last_error" not in cols_ae:
+        try:
+            conn.execute("ALTER TABLE activation_events ADD COLUMN last_error TEXT;")
+        except sqlite3.OperationalError as oe:
+            if "duplicate column name" not in str(oe).lower():
+                raise RuntimeError(f"Failed to migrate activation_events.last_error: {oe}") from oe
+
+    # Atomic Migration: Refresh triggers and apply DDL in a single atomic transaction with explicit rollback (VULN-008)
+    atomic_ddl = f"""
+    BEGIN IMMEDIATE;
+    DROP TRIGGER IF EXISTS trg_episodic_after_update;
+    DROP TRIGGER IF EXISTS trg_episodic_prevent_ws_replace;
+    DROP TRIGGER IF EXISTS trg_episodic_prevent_cross_tenant_supersede;
+    DROP TRIGGER IF EXISTS trg_episodic_prevent_cross_tenant_supersede_insert;
+    DROP TRIGGER IF EXISTS trg_episodic_prevent_ws_update;
+    {DDL_TABLES}
+    COMMIT;
+    """
+    try:
+        conn.executescript(atomic_ddl)
+    except Exception as ddl_err:
+        try:
+            conn.execute("ROLLBACK;")
+        except Exception:
+            pass
+        raise RuntimeError(f"Atomic DDL migration failed: {type(ddl_err).__name__}: {ddl_err}") from ddl_err
+
+    # VULN-002: Verify consolidation_outbox has unique constraint or unique index for ON CONFLICT
+    has_outbox = bool(conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='consolidation_outbox';").fetchone())
+    if has_outbox:
+        idx_list = conn.execute("PRAGMA index_list('consolidation_outbox');").fetchall()
+        has_unique = any(row[2] == 1 for row in idx_list)
+        if not has_unique:
+            raise RuntimeError("CRITICAL MIGRATION ERROR: consolidation_outbox lacks a unique constraint or unique index!")
+
+    # Post-migration schema integrity verification (VULN-004: Explicit RuntimeError checks to survive python -O)
+    verified_ob = [r[1] for r in conn.execute("PRAGMA table_info(consolidation_outbox);").fetchall()]
+    if "claimed_at" not in verified_ob or "owner_token" not in verified_ob or "generation" not in verified_ob:
+        raise RuntimeError(f"consolidation_outbox missing required migration columns (expected claimed_at, owner_token, generation; found {verified_ob})")
+    verified_l1 = [r[1] for r in conn.execute("PRAGMA table_info(l1_staging_log);").fetchall()]
+    if "last_error" not in verified_l1:
+        raise RuntimeError(f"l1_staging_log missing last_error column (expected last_error; found {verified_l1})")
+    verified_ae = [r[1] for r in conn.execute("PRAGMA table_info(activation_events);").fetchall()]
+    if "last_error" not in verified_ae:
+        raise RuntimeError(f"activation_events missing last_error column (expected last_error; found {verified_ae})")
+
     return conn
