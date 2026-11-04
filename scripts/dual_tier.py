@@ -89,10 +89,10 @@ class ComplexityRouter:
         re.IGNORECASE
     )
 
-    # 7. Explicit Negation Context (Clause-bounded negative patterns)
+    # 7. Explicit Negation Context (Clause-bounded negative patterns - VULN-105)
     _PAT_NEGATION = re.compile(
         r'\b(đừng|dung|không|khong|chớ|cho|avoid|do not|don\'t|not|never|skip|ignore|leave)\s+'
-        r'(?:cần\s+|nên\s+|hãy\s+)?'
+        r'(?:(?:cần|can|nên|nen|hãy|hay|được|duoc|phải|phai|có|co|mà|ma|ever|really)\s+){0,3}'
         r'(?:đụng|dung|chạm|cham|sửa|sua|thay đổi|thay doi|touch|modify|change|alter)\b',
         re.IGNORECASE
     )

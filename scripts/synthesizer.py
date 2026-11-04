@@ -109,16 +109,20 @@ def run_sandbox_validation(test_code, timeout_sec=5, allow_exec=False):
     except SyntaxError as e:
         return (False, "", f"AST validation failed: SyntaxError: {e}")
 
-    # Check for dangerous system calls if AST-only
-    DANGEROUS_CALLS = {"system", "popen", "spawn"}
+    # Check for dangerous system calls unconditionally across AST (VULN-104)
+    DANGEROUS_CALLS = {"system", "popen", "spawn", "execv", "execve", "fork"}
     for node in ast.walk(parsed):
         if isinstance(node, ast.Call):
+            target_name = None
             if isinstance(node.func, ast.Attribute) and node.func.attr in DANGEROUS_CALLS:
-                if not allow_exec:
-                    return (False, "", f"AST validation blocked dangerous call: {node.func.attr}() requires explicit allow_exec=True")
+                target_name = node.func.attr
+            elif isinstance(node.func, ast.Name) and node.func.id in DANGEROUS_CALLS:
+                target_name = node.func.id
+            if target_name:
+                return (False, "", f"AST validation blocked dangerous call: {target_name}() is prohibited by sandbox security policy")
 
     if not allow_exec:
-        return (True, "AST syntax and structural validation passed (execution gated)", "")
+        return (True, "syntax_ok_not_executed: AST syntax and structural validation passed (execution gated)", "")
 
     # If allow_exec is True, run in subprocess with restricted environment
     os.makedirs(SCRATCH_DIR, exist_ok=True)
@@ -128,9 +132,10 @@ def run_sandbox_validation(test_code, timeout_sec=5, allow_exec=False):
             f.write(test_code)
 
         clean_env = {
-            "SYSTEMROOT": os.environ.get("SYSTEMROOT", ""),
-            "PATH": os.environ.get("PATH", ""),
+            "SYSTEMROOT": os.environ.get("SYSTEMROOT", "C:\\Windows"),
+            "PATH": os.path.dirname(sys.executable),
             "PYTHONPATH": "",
+            "PYTHONDONTWRITEBYTECODE": "1",
         }
         result = subprocess.run(
             [sys.executable, test_file],

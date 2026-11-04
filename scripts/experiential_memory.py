@@ -269,14 +269,22 @@ class FileLock:
             raise
 
     def __exit__(self, exc_type, exc_val, exc_tb):
-        try:
-            held = getattr(_lock_local, "held_locks", {})
-            if self._lock_key in held:
-                held[self._lock_key] -= 1
-                if held[self._lock_key] > 0:
-                    return
-                del held[self._lock_key]
+        held = getattr(_lock_local, "held_locks", {})
+        if self._lock_key in held:
+            held[self._lock_key] -= 1
+            if held[self._lock_key] > 0:
+                # VULN-102: Nested exit decrements depth and releases this nesting level's RLock acquisition,
+                # but preserves self._rlock and does NOT release the OS fd until the outermost exit.
+                if self._rlock is not None:
+                    try:
+                        self._rlock.release()
+                    except Exception:
+                        pass
+                    _exit_process_rlock(self._lock_key)
+                return
+            del held[self._lock_key]
 
+        try:
             if self.fd is not None:
                 try:
                     os.lseek(self.fd, 0, os.SEEK_SET)
@@ -290,7 +298,10 @@ class FileLock:
                 self.fd = None
         finally:
             if self._rlock is not None:
-                self._rlock.release()
+                try:
+                    self._rlock.release()
+                except Exception:
+                    pass
                 _exit_process_rlock(self._lock_key)
                 self._rlock = None
 

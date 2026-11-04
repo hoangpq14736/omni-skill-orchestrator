@@ -341,6 +341,141 @@ class TestRound7Remediation(unittest.TestCase):
         self.assertEqual(hash1, hash2, "JSON prompts with different whitespace/ordering must have identical hash")
         self.assertEqual(hash2, hash3, "JSON prompts with tab indentations must have identical hash")
 
+    def test_file_audit_input_hash_with_secret_does_not_mismatch(self):
+        """
+        VULN-101: Audited target file containing a secret/token line must produce
+        identical input_hash between producer and verifier, preventing STALE_REVIEW false rejection.
+        """
+        from consult_critic import format_markdown_report
+        from hook_runner import verify_critic_artifact
+
+        target_file_path = os.path.join(self.temp_dir.name, "config_with_secret.py")
+        content = 'DATABASE_URL = "postgres://admin:password123456@localhost:5432/mydb"\nAPI_KEY = "sk-ant-api03-abcdef1234567890abcdef"\n'
+        with open(target_file_path, "wb") as f:
+            f.write(content.encode("utf-8"))
+
+        import hashlib
+        raw_hash = f"sha256:{hashlib.sha256(content.encode('utf-8')).hexdigest()}"
+
+        audit_data = {
+            "verdict": "APPROVED",
+            "confidence_score": 0.95,
+            "summary": "Verified secure config",
+            "critical_vulnerabilities": [],
+            "edge_cases": [
+                {"scenario": "A", "consequence": "B", "mitigation": "C"},
+                {"scenario": "D", "consequence": "E", "mitigation": "F"},
+                {"scenario": "G", "consequence": "H", "mitigation": "I"}
+            ]
+        }
+
+        # Format report as consult_critic does for a physical target file (raw_file_v1 domain)
+        report_md = format_markdown_report(
+            data=audit_data,
+            target_file=os.path.basename(target_file_path),
+            input_hash=raw_hash,
+            model="deepseek-flash",
+            workspace_dir=self.temp_dir.name,
+            hash_domain="raw_file_v1"
+        )
+
+        review_path = os.path.join(self.temp_dir.name, "AUDIT_REVIEW.md")
+        with open(review_path, "w", encoding="utf-8") as rf:
+            rf.write(report_md)
+
+        # Verifier runs
+        best_verdict, best_meta = verify_critic_artifact(
+            workspace_dir=self.temp_dir.name,
+            target_file=os.path.basename(target_file_path)
+        )
+
+        self.assertEqual(best_verdict, "APPROVED", f"File with secrets must verify as APPROVED, not STALE_REVIEW (got reason: {best_meta.get('stale_reason') if best_meta else None})")
+
+    def test_filelock_same_instance_nested_reentrancy_no_leak(self):
+        """
+        VULN-102: FileLock nested reentrancy on the SAME instance must not leak
+        underlying RLock or leave orphaned entries in _PROCESS_LOCKS registry.
+        """
+        from experiential_memory import FileLock, _PROCESS_LOCKS, _lock_local
+
+        lock_target = os.path.join(self.temp_dir.name, "test_reentrant.lock")
+        lock = FileLock(lock_target, timeout=2.0)
+
+        with lock:
+            with lock:
+                with lock:
+                    pass
+
+        self.assertIsNone(lock._rlock, "self._rlock must be None after outermost exit")
+        self.assertNotIn(lock._lock_key, _PROCESS_LOCKS, "_PROCESS_LOCKS entry must be pruned after outermost exit")
+        held = getattr(_lock_local, "held_locks", {})
+        self.assertNotIn(lock._lock_key, held, "Thread-local held_locks must be empty for key")
+
+    def test_drain_l1_staging_recovers_orphaned_proc_file(self):
+        """
+        VULN-103: drain_l1_staging must detect and recover any orphaned .proc_* spool files
+        left by a previous hard crash, preventing silent telemetry loss.
+        """
+        conn = init_database(self.db_path)
+        engine = ConsolidatorEngine(conn, workspace_root=self.temp_dir.name)
+
+        spool_path = os.path.join(_SCRIPTS_DIR, "l1_staging_spool.jsonl")
+        spool_dir = os.path.dirname(spool_path)
+        orphaned_proc = os.path.join(spool_dir, f"l1_staging_spool.jsonl.proc_crash_test_{os.getpid()}")
+
+        entry1 = {
+            "session_id": "sess_recovery_1",
+            "timestamp": "2026-11-05 01:00:00",
+            "user_input": "Crash recovery telemetry item 1",
+            "workspace_hash": engine.workspace_hash,
+            "top_skill": "skill_rec",
+            "tier_used": 1,
+            "recalled_traces": []
+        }
+        with open(orphaned_proc, "w", encoding="utf-8") as f:
+            f.write(json.dumps(entry1) + "\n")
+
+        try:
+            # Drain should sweep and recover the orphaned file
+            engine.drain_l1_staging(chunk_size=100)
+
+            # Assert the orphaned file was cleaned up
+            self.assertFalse(os.path.exists(orphaned_proc), "Orphaned .proc_* file must be removed after recovery")
+
+            # Assert the record made it to activation_events
+            row = conn.execute(
+                "SELECT count(*) FROM activation_events WHERE session_id = 'sess_recovery_1';"
+            ).fetchone()
+            self.assertEqual(row[0], 1, "Orphaned telemetry entry must be recovered into activation_events")
+        finally:
+            if os.path.exists(orphaned_proc):
+                try:
+                    os.remove(orphaned_proc)
+                except Exception:
+                    pass
+            conn.close()
+
+    def test_dual_tier_multi_word_negation_invariance(self):
+        """
+        VULN-105: _PAT_NEGATION must tolerate multi-word auxiliaries in both English and Vietnamese,
+        preventing cosmetic prompts from unnecessary Tier 2 over-escalation.
+        """
+        from dual_tier import ComplexityRouter
+
+        test_phrases = [
+            "Đừng có mà đụng vào logic concurrency nha",
+            "Không được đụng vào memory engine",
+            "Chớ có mà sửa phần database",
+            "Do not ever touch the migration files",
+            "Never really change the underlying schema"
+        ]
+
+        for phrase in test_phrases:
+            self.assertTrue(
+                bool(ComplexityRouter._PAT_NEGATION.search(phrase)),
+                f"Multi-word negation pattern must match: {phrase!r}"
+            )
+
 
 if __name__ == "__main__":
     unittest.main()

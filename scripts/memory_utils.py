@@ -583,7 +583,7 @@ def verify_audit_meta(meta: dict) -> bool:
         return False
     if not meta.get("verdict") or not meta.get("target_file") or not meta.get("input_hash"):
         return False
-    if meta.get("hash_domain") and meta.get("hash_domain") != "redacted_prompt_v1":
+    if meta.get("hash_domain") and meta.get("hash_domain") not in ("redacted_prompt_v1", "raw_file_v1"):
         return False
     if meta.get("hash_algo") and meta.get("hash_algo") != "sha256-v2":
         return False

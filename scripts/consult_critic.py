@@ -475,7 +475,8 @@ def format_markdown_report(
     target_file: str,
     input_hash: str,
     model: str,
-    workspace_dir: Optional[str] = None
+    workspace_dir: Optional[str] = None,
+    hash_domain: str = "raw_file_v1"
 ) -> str:
     """
     Formats the JSON critique into a structured Markdown document with the cryptographic
@@ -498,6 +499,8 @@ def format_markdown_report(
     target_file = (target_file or "inline_prompt").strip()
     if any(c in str(target_file) for c in ("\r", "\n", "\0")) or "-->" in str(target_file):
         raise ValueError(f"Malicious or invalid characters in target_file: {target_file!r}")
+    if target_file == "inline_prompt":
+        hash_domain = "redacted_prompt_v1"
     from memory_utils import sign_audit_meta, canonical_workspace_hash
     ws_target = workspace_dir or os.getcwd()
     meta = {
@@ -505,7 +508,7 @@ def format_markdown_report(
         "target_file": target_file,
         "input_hash": input_hash,
         "model": model,
-        "hash_domain": "redacted_prompt_v1",
+        "hash_domain": hash_domain,
         "hash_algo": "sha256-v2",
         "timestamp_utc": timestamp_utc,
         "workspace_hash": canonical_workspace_hash(ws_target)
@@ -895,12 +898,16 @@ def main() -> None:
     # Zero-Trust Credential Redaction Pass (Principle II.2)
     sanitized_content = redact_credentials(raw_content)
 
-    # Compute SHA-256 hash for cryptographic binding (VULN-005)
+    # Compute SHA-256 hash for cryptographic binding (VULN-101)
     if target_file == "inline_prompt":
         from memory_utils import hash_prompt
         input_hash = f"sha256:{hash_prompt(raw_content)}"
+        hash_domain = "redacted_prompt_v1"
     else:
-        input_hash = f"sha256:{hashlib.sha256(sanitized_content.encode('utf-8')).hexdigest()}"
+        # Physical target file: hash the raw file bytes on disk to match hook_runner verifier exactly
+        with open(target_file_path, "rb") as tf:
+            input_hash = f"sha256:{hashlib.sha256(tf.read()).hexdigest()}"
+        hash_domain = "raw_file_v1"
 
     # Build system prompt with conditional contract (FLAW-001)
     system_prompt = build_system_prompt(args.mode)
@@ -936,7 +943,8 @@ def main() -> None:
             target_file=target_file,
             input_hash=input_hash,
             model=final_model,
-            workspace_dir=target_ws
+            workspace_dir=target_ws,
+            hash_domain=hash_domain
         )
 
     # Write output artifact or print

@@ -313,9 +313,9 @@ def flush_outbox(conn: sqlite3.Connection, limit: int = 50, workspace_hash: Opti
                 conn.execute(f"RELEASE SAVEPOINT {sp_claim};")
             else:
                 conn.rollback()
-        except Exception as reg_err:
-            persist_diag(reg_err, 256)
-            sys.stderr.write(f"[!] Warning: Failed to sync authorized_hashes from workspace_registry: {reg_err}\n")
+        except Exception as rb_err:
+            persist_diag(rb_err, 256)
+            sys.stderr.write(f"[!] Warning: flush_outbox claim rollback failed: {rb_err}\n")
         sys.stderr.write(f"[!] Warning: flush_outbox claim failed: {type(claim_err).__name__}: {claim_err}\n")
         # VULN-005: Never silently swallow claim failure as 0 flushed
         raise RuntimeError(f"flush_outbox claim phase failed: {claim_err}") from claim_err
@@ -536,6 +536,26 @@ class ConsolidatorEngine:
         # Phase 1: Read and parse offline spool OUTSIDE of SQLite write transaction (VULN-005)
         spool_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "l1_staging_spool.jsonl")
         spool_lock = spool_path + ".lock"
+
+        # VULN-103: Crash-recovery sweep for orphaned .proc_* files left by previous crashed drains
+        spool_dir = os.path.dirname(spool_path)
+        base_name = os.path.basename(spool_path)
+        try:
+            for fname in os.listdir(spool_dir):
+                if fname.startswith(base_name + ".proc_"):
+                    stale_proc = os.path.join(spool_dir, fname)
+                    try:
+                        if os.path.isfile(stale_proc) and os.path.getsize(stale_proc) > 0:
+                            with TrustFileLock(spool_lock, timeout=2.0):
+                                with open(stale_proc, "r", encoding="utf-8") as rf, open(spool_path, "a", encoding="utf-8") as wf:
+                                    wf.write(rf.read())
+                            os.remove(stale_proc)
+                            persist_diag(f"Recovered orphaned spool file {fname} into live spool", 256)
+                    except Exception as rec_err:
+                        persist_diag(rec_err, 256)
+        except Exception as scan_err:
+            persist_diag(scan_err, 256)
+
         proc_path = spool_path + f".proc_{os.getpid()}_{uuid.uuid4().hex[:6]}"
         spool_staged = False
 
