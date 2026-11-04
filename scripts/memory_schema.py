@@ -322,18 +322,18 @@ def init_database(db_path: str = "omni_memory.db", isolation_level: Optional[str
             if "duplicate column name" not in str(oe).lower():
                 raise RuntimeError(f"Failed to migrate activation_events.last_error: {oe}") from oe
 
-    # VULN-003: Drop triggers before running legacy MD5->SHA-256 migration to avoid RAISE(ABORT)
-    conn.execute("DROP TRIGGER IF EXISTS trg_episodic_prevent_ws_update;")
-    conn.execute("DROP TRIGGER IF EXISTS trg_episodic_prevent_ws_replace;")
-    conn.execute("DROP TRIGGER IF EXISTS trg_episodic_after_update;")
-    conn.execute("DROP TRIGGER IF EXISTS trg_episodic_prevent_cross_tenant_supersede;")
-    conn.execute("DROP TRIGGER IF EXISTS trg_episodic_prevent_cross_tenant_supersede_insert;")
-
-    # VULN-002 & VULN-001: Dual-key migration for legacy MD5 (32-hex) to canonical SHA-256 (64-hex)
+    # VULN-002, VULN-001 & VULN-104: Dual-key migration for legacy MD5 (32-hex) to canonical SHA-256 (64-hex)
+    # Wrap trigger-drop, duplicate-collapse, key-update, and DDL in a single rollback-safe savepoint
     tables_exist = [r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table';").fetchall()]
     sp_mig = f"sp_mig_{uuid.uuid4().hex[:8]}"
     conn.execute(f"SAVEPOINT {sp_mig};")
     try:
+        conn.execute("DROP TRIGGER IF EXISTS trg_episodic_prevent_ws_update;")
+        conn.execute("DROP TRIGGER IF EXISTS trg_episodic_prevent_ws_replace;")
+        conn.execute("DROP TRIGGER IF EXISTS trg_episodic_after_update;")
+        conn.execute("DROP TRIGGER IF EXISTS trg_episodic_prevent_cross_tenant_supersede;")
+        conn.execute("DROP TRIGGER IF EXISTS trg_episodic_prevent_cross_tenant_supersede_insert;")
+
         from memory_utils import canonical_workspace_hash
         hash_to_path = {}
         if "workspace_registry" in tables_exist:
@@ -354,12 +354,34 @@ def init_database(db_path: str = "omni_memory.db", isolation_level: Optional[str
                 new_hash = canonical_workspace_hash(known_path)
                 if new_hash and len(new_hash) == 64 and new_hash != old_hash:
                     if "workspace_episodic_memory" in tables_exist:
+                        # VULN-104: Pre-collapse duplicate (memory_id, workspace_hash) pairs to avoid UNIQUE constraint aborts
+                        conn.execute("""
+                            DELETE FROM workspace_episodic_memory
+                            WHERE workspace_hash = ?
+                              AND memory_id IN (
+                                  SELECT memory_id FROM workspace_episodic_memory WHERE workspace_hash = ?
+                              );
+                        """, (old_hash, new_hash))
                         conn.execute("UPDATE workspace_episodic_memory SET workspace_hash = ? WHERE workspace_hash = ?;", (new_hash, old_hash))
                     if "dense_embeddings" in tables_exist:
+                        conn.execute("""
+                            DELETE FROM dense_embeddings
+                            WHERE workspace_hash = ?
+                              AND memory_id IN (
+                                  SELECT memory_id FROM dense_embeddings WHERE workspace_hash = ?
+                              );
+                        """, (old_hash, new_hash))
                         conn.execute("UPDATE dense_embeddings SET workspace_hash = ? WHERE workspace_hash = ?;", (new_hash, old_hash))
                     if "activation_events" in tables_exist:
                         conn.execute("UPDATE activation_events SET workspace_dir = ? WHERE workspace_dir = ?;", (new_hash, old_hash))
                     if "consolidation_outbox" in tables_exist:
+                        conn.execute("""
+                            DELETE FROM consolidation_outbox
+                            WHERE workspace_hash = ?
+                              AND memory_id IN (
+                                  SELECT memory_id FROM consolidation_outbox WHERE workspace_hash = ?
+                              );
+                        """, (old_hash, new_hash))
                         conn.execute("UPDATE consolidation_outbox SET workspace_hash = ? WHERE workspace_hash = ?;", (new_hash, old_hash))
                     if "workspace_registry" in tables_exist:
                         conn.execute("INSERT OR IGNORE INTO workspace_registry (workspace_hash, workspace_path, registered_at) VALUES (?, ?, datetime('now'));", (new_hash, known_path))

@@ -579,15 +579,15 @@ def process_hook(payload: dict) -> dict:
 
     skills = resolution.get("skills", [])
     
-    # VULN-008, VULN-107 & VULN-002: Low-latency SQLite staging insert with resilient spooling under write contention
+    # VULN-008, VULN-101 & VULN-107: Fast <10ms SQLite staging insert with immediate spool fallback under contention
     staging_spooled = False
     try:
         db_path = os.path.join(_SCRIPT_DIR, "..", "omni_memory.db")
         if os.path.exists(db_path):
-            conn = sqlite3.connect(db_path, timeout=0.25, isolation_level="IMMEDIATE")
+            conn = sqlite3.connect(db_path, timeout=0.01, isolation_level="IMMEDIATE")
             last_id = None
             try:
-                conn.execute("PRAGMA busy_timeout = 250;")
+                conn.execute("PRAGMA busy_timeout = 10;")
                 conn.execute("PRAGMA synchronous = NORMAL;")
                 with conn:
                     cursor = conn.cursor()
@@ -708,7 +708,7 @@ def process_hook(payload: dict) -> dict:
             "traces_count": len(record.get("proven_traces", []))
         }
         try:
-            with TrustFileLock(ACTIVATIONS_HISTORY_PATH, timeout=0.2):
+            with TrustFileLock(ACTIVATIONS_HISTORY_PATH, timeout=0.02):
                 if os.path.exists(ACTIVATIONS_HISTORY_PATH):
                     try:
                         if os.path.getsize(ACTIVATIONS_HISTORY_PATH) > MAX_HISTORY_BYTES:

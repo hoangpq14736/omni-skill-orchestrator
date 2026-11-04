@@ -904,9 +904,24 @@ def main() -> None:
         input_hash = f"sha256:{hash_prompt(raw_content)}"
         hash_domain = "redacted_prompt_v1"
     else:
-        # Physical target file: hash the raw file bytes on disk to match hook_runner verifier exactly
+        # Physical target file: hash the raw file bytes on disk incrementally with MAX_FILE_SIZE ceiling (VULN-103)
+        st = os.stat(validated_file)
+        if st.st_size > MAX_FILE_SIZE:
+            sys.stderr.write(f"[!] LỖI FILE: File '{args.file}' vượt quá giới hạn tối đa {MAX_FILE_SIZE} bytes ({st.st_size} bytes)!\n")
+            sys.exit(EXIT_CONFIG_USAGE)
+        hasher = hashlib.sha256()
         with open(validated_file, "rb") as tf:
-            input_hash = f"sha256:{hashlib.sha256(tf.read()).hexdigest()}"
+            total_read = 0
+            while True:
+                chunk = tf.read(65536)
+                if not chunk:
+                    break
+                total_read += len(chunk)
+                if total_read > MAX_FILE_SIZE:
+                    sys.stderr.write(f"[!] LỖI FILE: File '{args.file}' vượt quá giới hạn tối đa {MAX_FILE_SIZE} bytes!\n")
+                    sys.exit(EXIT_CONFIG_USAGE)
+                hasher.update(chunk)
+        input_hash = f"sha256:{hasher.hexdigest()}"
         hash_domain = "raw_file_v1"
 
     # Build system prompt with conditional contract (FLAW-001)

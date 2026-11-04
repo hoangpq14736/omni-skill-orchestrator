@@ -92,12 +92,11 @@ assert True, "Verification passed"
     return clean_name, skill_content
 
 
-def run_sandbox_validation(test_code, timeout_sec=5, allow_exec=False):
+def run_syntax_validation(test_code, timeout_sec=5, allow_exec=False):
     """
-    Validates synthesized test code.
-    By default (allow_exec=False), performs AST static analysis to ensure valid Python syntax
-    and blocks dangerous execution primitives without executing arbitrary code (VULN-001).
-    If allow_exec=True is explicitly set, executes in a restricted subprocess with a hard timeout.
+    Validates synthesized test code using static AST analysis and restricted execution (VULN-106).
+    NOTE: This provides static AST structural validation and clean-environment execution,
+    not OS-level containerization/seccomp sandbox isolation.
     Returns (success: bool, stdout: str, stderr: str).
     """
     if not test_code or not str(test_code).strip():
@@ -109,11 +108,19 @@ def run_sandbox_validation(test_code, timeout_sec=5, allow_exec=False):
     except SyntaxError as e:
         return (False, "", f"AST validation failed: SyntaxError: {e}")
 
-    # Check for dangerous system calls unconditionally across AST (VULN-104)
-    DANGEROUS_CALLS = {"system", "popen", "spawn", "execv", "execve", "fork"}
+    # Check for dangerous system calls, dynamic code evaluation, and unsafe modules (VULN-104, VULN-106)
+    PROHIBITED_MODULES = {"subprocess", "socket", "pty", "ctypes"}
     for node in ast.walk(parsed):
-        if isinstance(node, ast.Call):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                if alias.name in PROHIBITED_MODULES:
+                    return (False, "", f"AST validation blocked prohibited module import: '{alias.name}'")
+        elif isinstance(node, ast.ImportFrom):
+            if node.module and node.module.split(".")[0] in PROHIBITED_MODULES:
+                return (False, "", f"AST validation blocked prohibited module import: '{node.module}'")
+        elif isinstance(node, ast.Call):
             target_name = None
+            DANGEROUS_CALLS = {"system", "popen", "spawn", "execv", "execve", "fork", "eval", "exec", "__import__"}
             if isinstance(node.func, ast.Attribute) and node.func.attr in DANGEROUS_CALLS:
                 target_name = node.func.attr
             elif isinstance(node.func, ast.Name) and node.func.id in DANGEROUS_CALLS:
@@ -124,7 +131,7 @@ def run_sandbox_validation(test_code, timeout_sec=5, allow_exec=False):
     if not allow_exec:
         return (True, "syntax_ok_not_executed: AST syntax and structural validation passed (execution gated)", "")
 
-    # If allow_exec is True, run in subprocess with restricted environment
+    # If allow_exec is True, run in subprocess with restricted environment and cwd scoped to scratch
     os.makedirs(SCRATCH_DIR, exist_ok=True)
     test_file = os.path.join(SCRATCH_DIR, f"sandbox_test_{os.getpid()}_{uuid.uuid4().hex[:8]}.py")
     try:
@@ -142,6 +149,7 @@ def run_sandbox_validation(test_code, timeout_sec=5, allow_exec=False):
             capture_output=True,
             text=True,
             env=clean_env,
+            cwd=SCRATCH_DIR,
             timeout=timeout_sec
         )
         return (result.returncode == 0, result.stdout, result.stderr)
@@ -155,6 +163,10 @@ def run_sandbox_validation(test_code, timeout_sec=5, allow_exec=False):
                 os.remove(test_file)
             except Exception:
                 pass
+
+
+# Backward-compatible alias
+run_sandbox_validation = run_syntax_validation
 
 
 def synthesize_and_promote_skill(name, description, domain="general", test_code=None, library_dir=DEFAULT_LIBRARY_DIR, allow_exec=False):

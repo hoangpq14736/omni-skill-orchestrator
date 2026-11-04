@@ -476,6 +476,115 @@ class TestRound7Remediation(unittest.TestCase):
                 f"Multi-word negation pattern must match: {phrase!r}"
             )
 
+    def test_migration_with_preexisting_duplicate_memory_id_does_not_abort(self):
+        """
+        VULN-104: If a memory_id already exists under both 32-hex and 64-hex hashes
+        (partial earlier migration), init_database must pre-collapse duplicates and NOT abort.
+        """
+        raw_conn = sqlite3.connect(self.db_path)
+        raw_conn.execute("PRAGMA journal_mode=WAL;")
+        raw_conn.execute("""
+            CREATE TABLE workspace_episodic_memory (
+                memory_id TEXT NOT NULL,
+                workspace_hash TEXT NOT NULL,
+                workspace_path TEXT,
+                memory_type TEXT DEFAULT 'proven_trace',
+                title TEXT,
+                problem_signature TEXT,
+                solution_payload TEXT,
+                bilingual_tags TEXT,
+                content_folded TEXT,
+                status TEXT DEFAULT 'Active',
+                activation_count INTEGER DEFAULT 1,
+                confidence_score REAL DEFAULT 1.0,
+                decay_rate REAL DEFAULT 0.08,
+                last_accessed_at TEXT,
+                created_at TEXT,
+                PRIMARY KEY (memory_id, workspace_hash)
+            );
+        """)
+        raw_conn.execute("""
+            CREATE TABLE consolidation_outbox (
+                outbox_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                memory_id TEXT NOT NULL,
+                workspace_hash TEXT NOT NULL,
+                signature TEXT NOT NULL,
+                solution TEXT NOT NULL,
+                tags TEXT,
+                context TEXT,
+                status TEXT DEFAULT 'Pending',
+                generation INTEGER DEFAULT 1,
+                retry_count INTEGER DEFAULT 0,
+                last_error TEXT,
+                created_at TEXT NOT NULL,
+                claimed_at TEXT,
+                owner_token TEXT,
+                flushed_at TEXT,
+                UNIQUE(memory_id, workspace_hash)
+            );
+        """)
+        raw_conn.execute("""
+            CREATE TABLE workspace_registry (
+                workspace_hash TEXT PRIMARY KEY,
+                workspace_path TEXT NOT NULL,
+                registered_at TEXT NOT NULL
+            );
+        """)
+
+        legacy_hash = "cccccccccccccccccccccccccccccccc"
+        ws_path = os.path.join(self.temp_dir.name, "workspace_dup")
+        os.makedirs(ws_path, exist_ok=True)
+        canonical_hash = canonical_workspace_hash(ws_path)
+
+        # Register legacy hash to path
+        raw_conn.execute("INSERT INTO workspace_registry VALUES (?, ?, datetime('now'));", (legacy_hash, ws_path))
+
+        # Insert SAME memory_id under BOTH legacy_hash and canonical_hash
+        raw_conn.execute(
+            "INSERT INTO workspace_episodic_memory (memory_id, workspace_hash, title) VALUES (?, ?, ?);",
+            ("mem-collision", legacy_hash, "Old Legacy Row")
+        )
+        raw_conn.execute(
+            "INSERT INTO workspace_episodic_memory (memory_id, workspace_hash, title) VALUES (?, ?, ?);",
+            ("mem-collision", canonical_hash, "New Canonical Row")
+        )
+
+        raw_conn.execute(
+            "INSERT INTO consolidation_outbox (memory_id, workspace_hash, signature, solution, created_at) VALUES (?, ?, ?, ?, datetime('now'));",
+            ("mem-collision", legacy_hash, "sig", "sol")
+        )
+        raw_conn.execute(
+            "INSERT INTO consolidation_outbox (memory_id, workspace_hash, signature, solution, created_at) VALUES (?, ?, ?, ?, datetime('now'));",
+            ("mem-collision", canonical_hash, "sig", "sol")
+        )
+        raw_conn.commit()
+        raw_conn.close()
+
+        # init_database must migrate cleanly without raising IntegrityError
+        conn = init_database(self.db_path)
+
+        # Exactly 1 row for mem-collision must exist, under canonical_hash
+        rows = conn.execute("SELECT workspace_hash, title FROM workspace_episodic_memory WHERE memory_id = 'mem-collision';").fetchall()
+        self.assertEqual(len(rows), 1, "Duplicate memory_id must be collapsed to exactly 1 row")
+        self.assertEqual(rows[0][0], canonical_hash, "Remaining row must be partitioned under canonical SHA-256 hash")
+        conn.close()
+
+    def test_recall_traces_unscoped_emits_diagnostic(self):
+        """
+        VULN-102: Calling recall_traces without workspace_hash or workspace_dir
+        when allow_unscoped=False must emit a diagnostic warning to stderr, not fail silently.
+        """
+        from experiential_memory import recall_traces
+        import io
+
+        captured_stderr = io.StringIO()
+        with patch.object(sys, "stderr", captured_stderr):
+            result = recall_traces("some query", workspace_dir=None, workspace_hash=None, allow_unscoped=False)
+
+        self.assertEqual(result, [])
+        stderr_output = captured_stderr.getvalue()
+        self.assertIn("recall_traces called without workspace_hash or workspace_dir", stderr_output)
+
 
 if __name__ == "__main__":
     unittest.main()
