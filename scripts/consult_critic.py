@@ -905,7 +905,7 @@ def main() -> None:
         hash_domain = "redacted_prompt_v1"
     else:
         # Physical target file: hash the raw file bytes on disk to match hook_runner verifier exactly
-        with open(target_file_path, "rb") as tf:
+        with open(validated_file, "rb") as tf:
             input_hash = f"sha256:{hashlib.sha256(tf.read()).hexdigest()}"
         hash_domain = "raw_file_v1"
 
