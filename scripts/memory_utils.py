@@ -27,6 +27,7 @@ __all__ = [
     "sign_audit_meta",
     "verify_audit_meta",
     "find_workspace_root",
+    "hash_prompt",
 ]
 
 
@@ -544,6 +545,14 @@ def find_workspace_root(start_path: str) -> str:
             break
         curr = parent
     return os.path.realpath(os.getcwd())
+
+
+def hash_prompt(prompt: Optional[str]) -> str:
+    """Deterministic, secret-redacted SHA-256 hash for inline prompt Council Gate binding (VULN-005)."""
+    if not prompt or not isinstance(prompt, str):
+        return ""
+    safe_text = (redact_secrets(prompt.strip()[:2048]) or prompt.strip()[:2048])
+    return hashlib.sha256(safe_text.encode("utf-8")).hexdigest()
 
 
 def verify_audit_meta(meta: dict) -> bool:

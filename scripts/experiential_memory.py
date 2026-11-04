@@ -162,8 +162,8 @@ class FileLock:
             held = getattr(_lock_local, "held_locks", None)
             if held is None:
                 held = _lock_local.held_locks = {}
-            if self.lock_file in held:
-                held[self.lock_file] += 1
+            if self._lock_key in held:
+                held[self._lock_key] += 1
                 return self
 
             deadline = time.monotonic() + self.timeout
@@ -229,7 +229,7 @@ class FileLock:
                 try:
                     os.lseek(self.fd, 0, os.SEEK_SET)
                     _lock_fd(self.fd)
-                    held[self.lock_file] = 1
+                    held[self._lock_key] = 1
                     return self
                 except (BlockingIOError, OSError) as lock_err:
                     winerror = getattr(lock_err, "winerror", None)
@@ -268,11 +268,11 @@ class FileLock:
     def __exit__(self, exc_type, exc_val, exc_tb):
         try:
             held = getattr(_lock_local, "held_locks", {})
-            if self.lock_file in held:
-                held[self.lock_file] -= 1
-                if held[self.lock_file] > 0:
+            if self._lock_key in held:
+                held[self._lock_key] -= 1
+                if held[self._lock_key] > 0:
                     return
-                del held[self.lock_file]
+                del held[self._lock_key]
 
             if self.fd is not None:
                 try:

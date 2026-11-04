@@ -27,6 +27,7 @@ if _SCRIPT_DIR not in sys.path:
 from memory_utils import fold_vietnamese, canonical_workspace_hash, redact_secrets, is_valid_hex_hash, persist_diag
 from memory_schema import init_database
 from experiential_memory import record_trace, TRACES_FILE, TracePersistenceError
+from workspace_sanitizer import TrustFileLock
 
 # is_valid_hex_hash imported directly from memory_utils (Directive 8)
 
@@ -312,8 +313,9 @@ def flush_outbox(conn: sqlite3.Connection, limit: int = 50, workspace_hash: Opti
                 conn.execute(f"RELEASE SAVEPOINT {sp_claim};")
             else:
                 conn.rollback()
-        except Exception:
-            pass
+        except Exception as reg_err:
+            persist_diag(reg_err, 256)
+            sys.stderr.write(f"[!] Warning: Failed to sync authorized_hashes from workspace_registry: {reg_err}\n")
         sys.stderr.write(f"[!] Warning: flush_outbox claim failed: {type(claim_err).__name__}: {claim_err}\n")
         # VULN-005: Never silently swallow claim failure as 0 flushed
         raise RuntimeError(f"flush_outbox claim phase failed: {claim_err}") from claim_err
@@ -470,8 +472,9 @@ class ConsolidatorEngine:
                             pass
                     else:
                         self.authorized_hashes.add(r_hash.lower())
-        except Exception:
-            pass
+        except Exception as reg_err:
+            persist_diag(reg_err, 256)
+            sys.stderr.write(f"[!] Warning: Failed to sync authorized_hashes from workspace_registry: {reg_err}\n")
 
         if workspace_hash is not None:
             if not is_valid_hex_hash(workspace_hash):
@@ -538,20 +541,36 @@ class ConsolidatorEngine:
         else:
             self.conn.execute(f"SAVEPOINT {sp_drain};")
 
+        spool_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "l1_staging_spool.jsonl")
+        spool_lock = spool_path + ".lock"
+        proc_path = spool_path + f".proc_{os.getpid()}_{uuid.uuid4().hex[:6]}"
+        spool_staged = False
+
+        if os.path.exists(spool_path):
+            try:
+                with TrustFileLock(spool_lock, timeout=2.0):
+                    if os.path.exists(spool_path) and os.path.getsize(spool_path) > 0:
+                        os.replace(spool_path, proc_path)
+                        spool_staged = True
+            except Exception as lk_err:
+                persist_diag(lk_err, 256)
+
         try:
-            # Ingest spooled L1 rows from offline contention buffer (VULN-002)
-            spool_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "l1_staging_spool.jsonl")
-            if os.path.exists(spool_path):
+            # Ingest spooled L1 rows from offline contention buffer (VULN-001, VULN-002)
+            if spool_staged and os.path.exists(proc_path):
+                bad_lines = []
+                lines_read = 0
                 try:
-                    with open(spool_path, "r", encoding="utf-8") as sf:
-                        spool_lines = sf.readlines()
-                    if spool_lines:
-                        for line in spool_lines:
-                            line = line.strip()
-                            if not line:
+                    with open(proc_path, "r", encoding="utf-8") as sf:
+                        for line in sf:
+                            lines_read += 1
+                            if lines_read > 5000:
+                                break
+                            line_s = line.strip()
+                            if not line_s:
                                 continue
                             try:
-                                s_data = json.loads(line)
+                                s_data = json.loads(line_s)
                                 cur.execute(
                                     """
                                     INSERT INTO l1_staging_log (session_id, timestamp, user_input, workspace_hash, top_skill, tier_used, recalled_traces)
@@ -567,12 +586,15 @@ class ConsolidatorEngine:
                                         json.dumps(s_data.get("recalled_traces", []))
                                     )
                                 )
-                            except Exception:
-                                pass
-                        try:
-                            os.remove(spool_path)
-                        except Exception:
-                            pass
+                            except Exception as parse_err:
+                                persist_diag(parse_err, 256)
+                                bad_lines.append((line_s, str(parse_err)))
+
+                    if bad_lines:
+                        bad_path = spool_path + ".bad.jsonl"
+                        with open(bad_path, "a", encoding="utf-8") as bf:
+                            for b_line, b_err in bad_lines:
+                                bf.write(json.dumps({"line": b_line, "error": b_err}, ensure_ascii=False) + "\n")
                 except Exception as spool_drain_err:
                     persist_diag(spool_drain_err, 256)
 
@@ -639,6 +661,13 @@ class ConsolidatorEngine:
                 self.conn.commit()
             else:
                 self.conn.execute(f"RELEASE SAVEPOINT {sp_drain};")
+
+            # Remove processed spool file only after successful transaction commit (VULN-001)
+            if spool_staged and os.path.exists(proc_path):
+                try:
+                    os.remove(proc_path)
+                except Exception:
+                    pass
             return len(drained_ids)
         except Exception:
             if own_tx:
@@ -650,6 +679,15 @@ class ConsolidatorEngine:
                 try:
                     self.conn.execute(f"ROLLBACK TO SAVEPOINT {sp_drain};")
                     self.conn.execute(f"RELEASE SAVEPOINT {sp_drain};")
+                except Exception:
+                    pass
+            # Restore unprocessed spool file on rollback so no telemetry is lost (VULN-001)
+            if spool_staged and os.path.exists(proc_path):
+                try:
+                    with TrustFileLock(spool_lock, timeout=2.0):
+                        with open(proc_path, "r", encoding="utf-8") as src, open(spool_path, "a", encoding="utf-8") as dst:
+                            dst.write(src.read())
+                    os.remove(proc_path)
                 except Exception:
                     pass
             raise

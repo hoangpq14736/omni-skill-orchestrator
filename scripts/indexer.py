@@ -46,7 +46,13 @@ def _normalize_meta_val(val_str: str) -> str:
     return val_str.strip("'\"")
 
 
+_ALLOWED_FRONTMATTER_KEYS = {"name", "description", "version", "domain", "metadata", "author", "tags", "triggers"}
+
 def parse_frontmatter(content):
+    """
+    Safely parses YAML-like frontmatter with strict level-0 indentation and key allowlist (VULN-004).
+    Prevents prompt-injection and key pollution from indented description continuations.
+    """
     meta = {}
     body = content
     if not content or not isinstance(content, str):
@@ -63,25 +69,27 @@ def parse_frontmatter(content):
                 stripped = line.strip()
                 if not stripped:
                     continue
-                # If unindented key
+                # VULN-004: Only parse keys at indentation level 0 (not indented)
                 if not line.startswith(" ") and not line.startswith("\t") and ":" in line:
-                    if current_key:
+                    if current_key and current_key in _ALLOWED_FRONTMATTER_KEYS:
                         meta[current_key] = _normalize_meta_val(" ".join(current_val).strip())
                     k, v = line.split(":", 1)
-                    current_key = k.strip()
-                    v_str = v.strip().strip("\"'")
-                    if v_str in [">-", "|", ">", "|-", ""]:
-                        current_val = []
+                    raw_k = k.strip().lower()
+                    if raw_k in _ALLOWED_FRONTMATTER_KEYS:
+                        current_key = raw_k
+                        v_str = v.strip().strip("\"'")
+                        if v_str in [">-", "|", ">", "|-", ""]:
+                            current_val = []
+                        else:
+                            current_val = [v.strip()]
                     else:
-                        current_val = [v.strip()]
+                        current_key = None
+                        current_val = []
                 elif current_key and (line.startswith(" ") or line.startswith("\t")):
-                    if ":" in stripped and not stripped.startswith("-"):
-                        nk, nv = stripped.split(":", 1)
-                        if nk.strip() not in meta:
-                            meta[nk.strip()] = _normalize_meta_val(nv.strip())
+                    # Pure continuation line for the current allowlisted key
                     current_val.append(stripped)
             
-            if current_key:
+            if current_key and current_key in _ALLOWED_FRONTMATTER_KEYS:
                 meta[current_key] = _normalize_meta_val(" ".join(current_val).strip())
                 
     return meta, body

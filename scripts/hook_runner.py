@@ -38,6 +38,7 @@ from memory_utils import (
     redact_secrets,
     persist_diag,
     verify_audit_meta,
+    hash_prompt,
 )
 from workspace_sanitizer import AssimilatorGuard, TrustFileLock
 
@@ -252,11 +253,10 @@ def verify_critic_artifact(workspace_dir: str, target_file: str = None, user_pro
                         best_verdict = "STALE_REVIEW"
                         best_meta = meta
                     continue
-                redacted_prompt = redact_secrets(user_prompt) or user_prompt
-                calc_prompt_hash_redacted = hashlib.sha256(redacted_prompt.encode("utf-8")).hexdigest().lower()
-                calc_prompt_hash_raw = hashlib.sha256(user_prompt.encode("utf-8")).hexdigest().lower()
+                calc_prompt_hash = hash_prompt(user_prompt).lower()
+                calc_raw_hash = hashlib.sha256(user_prompt.encode("utf-8")).hexdigest().lower()
                 expected_hash = meta_hash.replace("sha256:", "").strip().lower()
-                if expected_hash not in (calc_prompt_hash_redacted, calc_prompt_hash_raw):
+                if expected_hash not in (calc_prompt_hash, calc_raw_hash):
                     meta["stale_reason"] = "user prompt hash mismatch with inline review"
                     if best_verdict == "UNREVIEWED":
                         best_verdict = "STALE_REVIEW"
@@ -624,6 +624,7 @@ def process_hook(payload: dict) -> dict:
         # VULN-002: Fallback to local append-only spool to prevent data loss under SQLite contention
         try:
             spool_path = os.path.join(_SCRIPT_DIR, "l1_staging_spool.jsonl")
+            spool_lock = spool_path + ".lock"
             spool_entry = {
                 "session_id": redact_secrets(str(payload.get("sessionId", "session_default")))[:64],
                 "timestamp": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
@@ -633,8 +634,14 @@ def process_hook(payload: dict) -> dict:
                 "tier_used": resolution.get("tier_assessment", {}).get("tier", 1),
                 "recalled_traces": [t.get("trace", {}).get("id") for t in resolution.get("proven_traces", [])]
             }
-            with open(spool_path, "a", encoding="utf-8") as sf:
-                sf.write(json.dumps(spool_entry, ensure_ascii=False) + "\n")
+            with TrustFileLock(spool_lock, timeout=1.0):
+                if os.path.exists(spool_path) and os.path.getsize(spool_path) > 10 * 1024 * 1024:
+                    try:
+                        os.replace(spool_path, spool_path + ".1.bak")
+                    except Exception:
+                        pass
+                with open(spool_path, "a", encoding="utf-8") as sf:
+                    sf.write(json.dumps(spool_entry, ensure_ascii=False) + "\n")
             staging_spooled = True
         except Exception as spool_err:
             persist_diag(spool_err, 256)
@@ -664,7 +671,6 @@ def process_hook(payload: dict) -> dict:
             "tier_assessment": redact_secrets(resolution.get("tier_assessment", {})),
             "proven_traces": redact_secrets(resolution.get("proven_traces", []))
         }
-        record = redact_secrets(record)
         
         # Atomic replace for last_activation.json
         tmp_act = f"{LAST_ACTIVATION_PATH}.{uuid.uuid4().hex}.tmp"

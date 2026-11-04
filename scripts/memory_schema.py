@@ -350,22 +350,27 @@ def init_database(db_path: str = "omni_memory.db", isolation_level: Optional[str
 
         for old_hash in legacy_hashes:
             known_path = hash_to_path.get(old_hash)
+            if not known_path and "activation_events" in tables_exist:
+                row_ae = conn.execute("SELECT workspace_dir FROM activation_events WHERE workspace_dir LIKE '%/%' OR workspace_dir LIKE '%\\\\%' LIMIT 1;").fetchone()
+                if row_ae and row_ae[0]:
+                    known_path = row_ae[0]
+
             if known_path:
                 new_hash = canonical_workspace_hash(known_path)
+                if new_hash and len(new_hash) == 64 and new_hash != old_hash:
+                    if "workspace_episodic_memory" in tables_exist:
+                        conn.execute("UPDATE workspace_episodic_memory SET workspace_hash = ? WHERE workspace_hash = ?;", (new_hash, old_hash))
+                    if "dense_embeddings" in tables_exist:
+                        conn.execute("UPDATE dense_embeddings SET workspace_hash = ? WHERE workspace_hash = ?;", (new_hash, old_hash))
+                    if "activation_events" in tables_exist:
+                        conn.execute("UPDATE activation_events SET workspace_dir = ? WHERE workspace_dir = ?;", (new_hash, old_hash))
+                    if "consolidation_outbox" in tables_exist:
+                        conn.execute("UPDATE consolidation_outbox SET workspace_hash = ? WHERE workspace_hash = ?;", (new_hash, old_hash))
+                    if "workspace_registry" in tables_exist:
+                        conn.execute("INSERT OR IGNORE INTO workspace_registry (workspace_hash, workspace_path, registered_at) VALUES (?, ?, datetime('now'));", (new_hash, known_path))
             else:
-                new_hash = canonical_workspace_hash(f"legacy_partition:{old_hash}")
-            
-            if new_hash and len(new_hash) == 64 and new_hash != old_hash:
-                if "workspace_episodic_memory" in tables_exist:
-                    conn.execute("UPDATE workspace_episodic_memory SET workspace_hash = ? WHERE workspace_hash = ?;", (new_hash, old_hash))
-                if "dense_embeddings" in tables_exist:
-                    conn.execute("UPDATE dense_embeddings SET workspace_hash = ? WHERE workspace_hash = ?;", (new_hash, old_hash))
-                if "activation_events" in tables_exist:
-                    conn.execute("UPDATE activation_events SET workspace_dir = ? WHERE workspace_dir = ?;", (new_hash, old_hash))
-                if "consolidation_outbox" in tables_exist:
-                    conn.execute("UPDATE consolidation_outbox SET workspace_hash = ? WHERE workspace_hash = ?;", (new_hash, old_hash))
-                if "workspace_registry" in tables_exist and known_path:
-                    conn.execute("INSERT OR IGNORE INTO workspace_registry (workspace_hash, workspace_path, registered_at) VALUES (?, ?, datetime('now'));", (new_hash, known_path))
+                # VULN-003: Retain 32-hex legacy partition key when workspace_path is unresolvable; never synthesize artificial hash
+                pass
         conn.execute(f"RELEASE SAVEPOINT {sp_mig};")
     except Exception as mig_err:
         try:

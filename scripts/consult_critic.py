@@ -895,8 +895,12 @@ def main() -> None:
     # Zero-Trust Credential Redaction Pass (Principle II.2)
     sanitized_content = redact_credentials(raw_content)
 
-    # Compute SHA-256 hash for cryptographic binding
-    input_hash = f"sha256:{hashlib.sha256(sanitized_content.encode('utf-8')).hexdigest()}"
+    # Compute SHA-256 hash for cryptographic binding (VULN-005)
+    if target_file == "inline_prompt":
+        from memory_utils import hash_prompt
+        input_hash = f"sha256:{hash_prompt(raw_content)}"
+    else:
+        input_hash = f"sha256:{hashlib.sha256(sanitized_content.encode('utf-8')).hexdigest()}"
 
     # Build system prompt with conditional contract (FLAW-001)
     system_prompt = build_system_prompt(args.mode)
