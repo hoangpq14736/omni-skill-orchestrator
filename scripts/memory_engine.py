@@ -121,6 +121,7 @@ class MemorySingleWriter:
         self._ready_event = threading.Event()
         self._fatal_error: Optional[Exception] = None
         self._failed_sequences: Dict[int, Exception] = {}
+        self._evicted_failures_count = 0
         self._closed = False
         self._worker_thread = threading.Thread(target=self._run_worker, daemon=True)
         self._worker_thread.start()
@@ -194,6 +195,7 @@ class MemorySingleWriter:
                             if len(self._failed_sequences) > 256:
                                 oldest_key = min(self._failed_sequences.keys())
                                 del self._failed_sequences[oldest_key]
+                                self._evicted_failures_count += 1
                         self._committed_sequence = max(self._committed_sequence, seq)
                         self._cond.notify_all()
                     self._queue.task_done()
@@ -256,6 +258,11 @@ class MemorySingleWriter:
                 if remaining <= 0:
                     raise TimeoutError(f"MemorySingleWriter flush exceeded timeout of {timeout:.1f}s (committed {self._committed_sequence}/{target_seq}).")
                 self._cond.wait(timeout=min(0.05, remaining))
+
+            if self._evicted_failures_count > 0:
+                evicted = self._evicted_failures_count
+                self._evicted_failures_count = 0
+                raise RuntimeError(f"MemorySingleWriter encountered {evicted} evicted write failure(s) prior to flush.")
 
             matching_failures = [e for s, e in self._failed_sequences.items() if s <= target_seq]
             if matching_failures:

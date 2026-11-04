@@ -9,6 +9,7 @@ scripts/activations_history.jsonl
 reports/
 *.tmp
 *.log
+*.lock
 
 # Runtime database and WAL files
 omni_memory.db*

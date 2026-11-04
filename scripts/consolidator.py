@@ -44,23 +44,23 @@ def resolve_workspace_hash(ws_dir: Any, approved_root: Optional[str] = None, all
     if "\x00" in cleaned:
         raise ValueError("Workspace path contains invalid null byte")
 
-    # If already a valid 32-character hexadecimal MD5 hash (VULN-006)
-    if is_valid_hex_hash(cleaned, length=32):
+    # If already a valid hexadecimal hash (supports both 64-hex SHA-256 and legacy 32-hex MD5) (VULN-001)
+    if is_valid_hex_hash(cleaned, length=None):
         cleaned_lower = cleaned.lower()
         if authorized_hashes is not None and cleaned_lower in {str(h).lower() for h in authorized_hashes if h}:
             return cleaned_lower
         if approved_root is not None:
             if not isinstance(approved_root, str) or not approved_root.strip():
                 raise ValueError("approved_root is configured but empty or invalid")
-            canon_root_hash = canonical_workspace_hash(approved_root)
-            if cleaned_lower == canon_root_hash:
+            canon_root_sha = canonical_workspace_hash(approved_root).lower()
+            canon_root_md5 = hashlib.md5(os.path.normcase(os.path.realpath(os.path.abspath(unicodedata.normalize("NFC", str(approved_root))))).encode("utf-8")).hexdigest().lower()
+            if cleaned_lower in (canon_root_sha, canon_root_md5):
                 return cleaned_lower
             if allow_unscoped:
                 return cleaned_lower
             raise ValueError(f"Workspace hash {cleaned_lower} is not authorized under approved root")
         if not allow_unscoped:
             raise ValueError("approved_root is required for workspace isolation; pass allow_unscoped=True to bypass intentionally")
-        sys.stderr.write("[!] Warning: resolve_workspace_hash operating in unscoped mode with 32-hex input\n")
         return cleaned_lower
 
     if approved_root is None:
@@ -163,17 +163,24 @@ def safe_err(exc: Any) -> str:
     return persist_diag(exc, max_len=512)
 
 
-def is_transient_io_error(err: Any) -> bool:
+def is_transient_io_error(err: Any, visited: Optional[set] = None, depth: int = 0) -> bool:
     """
     Classify whether an I/O error is transient (lock contention, busy, timeout)
     versus permanent (PermissionError, FileNotFoundError, ENOSPC, EROFS, etc.) (VULN-006).
-    Recursively inspects __cause__ chain if wrapped in higher-level exception (VULN-004).
+    Recursively inspects __cause__ chain with cycle protection and bounded depth (VULN-002).
     """
-    if err is None:
+    if err is None or depth > 16:
         return False
 
+    if visited is None:
+        visited = set()
+    err_id = id(err)
+    if err_id in visited:
+        return False
+    visited.add(err_id)
+
     if hasattr(err, "__cause__") and err.__cause__ is not None:
-        if is_transient_io_error(err.__cause__):
+        if is_transient_io_error(err.__cause__, visited=visited, depth=depth + 1):
             return True
 
     if isinstance(err, TimeoutError):

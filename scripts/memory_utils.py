@@ -268,9 +268,12 @@ def canonical_workspace_hash(path: Optional[str]) -> str:
     Mandates unicodedata.normalize('NFC') + os.path.normcase(os.path.realpath(os.path.abspath(path)))
     prior to hashing so case-insensitive Windows drive letters (d:\\ vs D:\\), mixed slashes,
     and symlinks/junctions generate identical partition keys (VULN-003).
+    Idempotent: If path is already a valid 64-hex SHA-256 hash, returns it normalized.
     """
     if not path:
         return hashlib.sha256(b"global_fallback").hexdigest()
+    if is_valid_hex_hash(path, length=64):
+        return path.lower()
     normalized_path = unicodedata.normalize("NFC", str(path))
     canonical = os.path.normcase(os.path.realpath(os.path.abspath(normalized_path)))
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
@@ -315,15 +318,24 @@ def _verify_key_file_security(fd: int, path: str) -> bool:
             if st.st_uid != os.getuid():
                 persist_diag(f"HMAC key file {path} owned by uid {st.st_uid} != {os.getuid()}", 256)
                 return False
-            if (st.st_mode & 0o077) != 0:
-                persist_diag(f"HMAC key file {path} has unsafe permissions: {oct(st.st_mode)}", 256)
-                return False
+            # Check group/other write permissions (0o022); self-heal to 0o600 if owner
+            if (st.st_mode & 0o022) != 0:
+                try:
+                    os.chmod(path, 0o600)
+                except OSError:
+                    persist_diag(f"HMAC key file {path} has unsafe writable permissions: {oct(st.st_mode)}", 256)
+                    return False
         if os.name == "nt":
             key_real = os.path.normcase(os.path.realpath(path))
             home_real = os.path.normcase(os.path.realpath(os.path.expanduser("~")))
             temp_real = os.path.normcase(os.path.realpath(tempfile.gettempdir()))
-            if not (key_real.startswith(home_real) or key_real.startswith(temp_real)):
-                persist_diag(f"HMAC key file {path} outside user profile tree", 256)
+            try:
+                is_in_home = (os.path.commonpath([key_real, home_real]) == home_real)
+                is_in_temp = (os.path.commonpath([key_real, temp_real]) == temp_real)
+                if not (is_in_home or is_in_temp):
+                    persist_diag(f"HMAC key file {path} outside user profile tree", 256)
+                    return False
+            except (ValueError, OSError):
                 return False
             try:
                 import ctypes

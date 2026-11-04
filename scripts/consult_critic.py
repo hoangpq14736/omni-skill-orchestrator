@@ -60,7 +60,7 @@ EXIT_SYSTEM_STRICT = 5         # Schema failure, internal system fault, or stric
 
 # Protocol constants
 DEFAULT_TIMEOUT = 30.0
-MIN_TIMEOUT = 5.0
+MIN_TIMEOUT = 10.0             # Must be > MIN_INFER_WINDOW (8.0s) to allow at least one viable inference attempt
 MAX_TIMEOUT = 300.0
 MIN_INFER_WINDOW = 8.0         # FLAW-004: Minimum viable inference window for DeepSeek (seconds)
 MAX_FILE_SIZE = 4.5 * 1024 * 1024  # 4.5 MB context ceiling
@@ -187,18 +187,20 @@ def build_system_prompt(mode: str) -> str:
         return (
             "You are the Omni-Kernel Code Security & Reliability Auditor, powered by DeepSeek-V4.1-Flash.\n"
             "Your mandate is strictly RED-TEAMING code diffs and implementations before merging.\n\n"
-            "OPERATIONAL INVARIANTS & CONDITIONAL CRITIQUE CONTRACT:\n"
-            "1. ZERO SYCOPHANCY: Praise, flattery, compliments, or polite fillers are STRICTLY PROHIBITED.\n"
-            "2. CONDITIONAL VULNERABILITY FLOOR:\n"
-            "   - If audit findings identify security defects, race conditions, memory leaks, or unparameterized SQL queries, "
+            "PROJECT CONTEXT & EVALUATION FOCUS:\n"
+            "1. SINGLE-DEVELOPER PERSONAL ENVIRONMENT: This is a personal CLI developer tool & agent harness.\n"
+            "   Do NOT demand multi-tenant enterprise isolation, separate OS user accounts, or hardware TPM modules for local scripts.\n"
+            "2. PRIMARY OPERATIONAL AXES:\n"
+            "   - Operational Reliability: No hung processes, clean stale lockfile recovery, deadlock prevention, no unhandled crashes.\n"
+            "   - Reliable Error Handling: Fail loudly with diagnostic context; never silently swallow unexpected exceptions with bare 'except: pass'.\n"
+            "   - Efficiency & Performance: Low latency (<25ms pre-flight hook turnaround, sub-millisecond regex, fast cache lookups, WAL concurrency).\n"
+            "   - Functional Completeness: Clean API contracts, correct parameter parsing, proper Unicode handling, no unvalidated trust boundaries.\n"
+            "   - Ponytail Simplicity: Smallest complete working diff, zero unrequested abstractions or bloat.\n\n"
+            "3. CONDITIONAL VULNERABILITY FLOOR:\n"
+            "   - If audit findings identify operational bugs, race conditions, memory leaks, unparameterized SQL, or silent exception swallowing, "
             "you MUST issue verdict REJECTED or CONDITIONAL_PASS, and you MUST populate AT LEAST 3 distinct items in `critical_vulnerabilities` (minItems: 3).\n"
             "   - You are strictly FORBIDDEN from issuing verdict APPROVED with 0 critical vulnerabilities unless the code is verified 100% sound "
-            "AND you prove AT LEAST 3 rigorous defensive failure scenarios with concrete mitigations in `edge_cases` (minItems: 3).\n"
-            "3. EVALUATION CRITERIA:\n"
-            "   - Zero-Trust Security: Parameterized SQL (?) only, regex credential redaction, no hardcoded secrets.\n"
-            "   - Concurrency Safety: SQLite WAL locking, mutex boundaries, file lock stale recovery.\n"
-            "   - Ponytail Simplicity: Smallest complete diff, zero unrequested abstractions or bloat.\n"
-            "   - Reliable Engineering: No silently swallowed exceptions (fail loudly with diagnostic context).\n\n"
+            "AND you prove AT LEAST 3 rigorous defensive failure scenarios with concrete mitigations in `edge_cases` (minItems: 3).\n\n"
             "4. RESPONSE SCHEMA (JSON object):\n"
             "{\n"
             '  "verdict": "APPROVED" | "CONDITIONAL_PASS" | "REJECTED",\n'
@@ -413,17 +415,42 @@ def validate_audit_verdict(data: Dict[str, Any]) -> Tuple[bool, str]:
       - If verdict != 'APPROVED', critical_vulnerabilities must have >= 3 items.
       - If verdict == 'APPROVED', critical_vulnerabilities must have 0 items AND edge_cases must have >= 3 items.
     """
+    if not isinstance(data, dict):
+        return False, f"Audit verdict payload must be a dict, got {type(data).__name__}."
+
     verdict = data.get("verdict")
     if verdict not in ("APPROVED", "CONDITIONAL_PASS", "REJECTED"):
         return False, f"Invalid verdict value: '{verdict}'. Must be APPROVED, CONDITIONAL_PASS, or REJECTED."
 
+    confidence = data.get("confidence_score")
+    if confidence is not None and not isinstance(confidence, (int, float)):
+        return False, f"Field 'confidence_score' must be a numeric float/int, got {type(confidence).__name__}."
+
     vulns = data.get("critical_vulnerabilities")
     if not isinstance(vulns, list):
         return False, "Field 'critical_vulnerabilities' must be a list."
+    for idx, v in enumerate(vulns):
+        if not isinstance(v, dict):
+            return False, f"Item {idx} in 'critical_vulnerabilities' must be a dict, got {type(v).__name__}."
 
     edge_cases = data.get("edge_cases")
     if not isinstance(edge_cases, list):
         return False, "Field 'edge_cases' must be a list."
+    for idx, ec in enumerate(edge_cases):
+        if not isinstance(ec, dict):
+            return False, f"Item {idx} in 'edge_cases' must be a dict, got {type(ec).__name__}."
+
+    concurrency = data.get("concurrency_hazards")
+    if concurrency is not None and not isinstance(concurrency, list):
+        return False, "Field 'concurrency_hazards' must be a list."
+    if isinstance(concurrency, list):
+        for idx, ch in enumerate(concurrency):
+            if not isinstance(ch, dict):
+                return False, f"Item {idx} in 'concurrency_hazards' must be a dict, got {type(ch).__name__}."
+
+    directives = data.get("prescriptive_directives")
+    if directives is not None and not isinstance(directives, list):
+        return False, "Field 'prescriptive_directives' must be a list."
 
     if verdict != "APPROVED":
         if len(vulns) < 3:
@@ -464,12 +491,16 @@ def format_markdown_report(
     line 1 metadata comment (FLAW-002 Anti-Collision Header).
     """
     verdict = data.get("verdict", "REJECTED")
-    confidence = data.get("confidence_score", 0.0)
+    raw_confidence = data.get("confidence_score", 0.0)
+    try:
+        confidence = float(raw_confidence)
+    except (TypeError, ValueError):
+        confidence = 0.0
     summary = data.get("summary", "No summary provided.")
-    vulns = data.get("critical_vulnerabilities", [])
-    concurrency = data.get("concurrency_hazards", [])
-    edge_cases = data.get("edge_cases", [])
-    directives = data.get("prescriptive_directives", [])
+    vulns = data.get("critical_vulnerabilities") if isinstance(data.get("critical_vulnerabilities"), list) else []
+    concurrency = data.get("concurrency_hazards") if isinstance(data.get("concurrency_hazards"), list) else []
+    edge_cases = data.get("edge_cases") if isinstance(data.get("edge_cases"), list) else []
+    directives = data.get("prescriptive_directives") if isinstance(data.get("prescriptive_directives"), list) else []
     timestamp_utc = datetime.datetime.now(datetime.timezone.utc).isoformat()
 
     # Cryptographic line 1 metadata header for verify_critic_artifact (<0.1ms parse)
@@ -513,11 +544,18 @@ def format_markdown_report(
     lines.append(f"## 2. Top Critical Architectural Vulnerabilities ({len(vulns)} identified)")
     if vulns:
         for idx, v in enumerate(vulns, 1):
-            v_id = v.get("id", f"VULN-{idx:03d}")
-            sev = v.get("severity", "HIGH")
-            title = v.get("title", "Untitled Vulnerability")
-            desc = v.get("description", "No description.")
-            rem = v.get("remediation", "No remediation specified.")
+            if isinstance(v, dict):
+                v_id = v.get("id", f"VULN-{idx:03d}")
+                sev = v.get("severity", "HIGH")
+                title = v.get("title", "Untitled Vulnerability")
+                desc = v.get("description", "No description.")
+                rem = v.get("remediation", "No remediation specified.")
+            else:
+                v_id = f"VULN-{idx:03d}"
+                sev = "HIGH"
+                title = str(v)
+                desc = str(v)
+                rem = "No remediation specified."
             lines.append(f"### {idx}. [{sev}] {v_id}: {title}")
             lines.append(f"**Description**: {desc}")
             lines.append(f"**Remediation**: `{rem}`\n")
@@ -527,9 +565,14 @@ def format_markdown_report(
     lines.append(f"## 3. Concurrency, Race Condition & Mutex Hazards ({len(concurrency)} identified)")
     if concurrency:
         for c in concurrency:
-            res = c.get("resource", "Unknown")
-            hz = c.get("hazard_type", "Race Condition")
-            mit = c.get("mitigation", "N/A")
+            if isinstance(c, dict):
+                res = c.get("resource", "Unknown")
+                hz = c.get("hazard_type", "Race Condition")
+                mit = c.get("mitigation", "N/A")
+            else:
+                res = "Unknown"
+                hz = "Race Condition"
+                mit = str(c)
             lines.append(f"- **Resource**: `{res}` | **Hazard**: {hz} | **Mitigation**: {mit}")
         lines.append("")
     else:
@@ -538,9 +581,14 @@ def format_markdown_report(
     lines.append(f"## 4. Defensive Failure Scenarios & Edge Cases ({len(edge_cases)} verified)")
     if edge_cases:
         for idx, ec in enumerate(edge_cases, 1):
-            scen = ec.get("scenario", "Scenario")
-            conseq = ec.get("consequence", "Consequence")
-            mit = ec.get("mitigation", "Mitigation")
+            if isinstance(ec, dict):
+                scen = ec.get("scenario", f"Scenario {idx}")
+                conseq = ec.get("consequence", "Consequence")
+                mit = ec.get("mitigation", "Mitigation")
+            else:
+                scen = f"Scenario {idx}"
+                conseq = str(ec)
+                mit = "N/A"
             lines.append(f"### {idx}. {scen}")
             lines.append(f"- **Consequence**: {conseq}")
             lines.append(f"- **Mitigation**: {mit}\n")

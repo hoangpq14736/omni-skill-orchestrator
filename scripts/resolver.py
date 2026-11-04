@@ -631,9 +631,18 @@ def _parse_version_tuple(v):
 
 def _candidate_sort_key(c):
     s = c.get("skill", {})
-    score = round(float(c.get("raw_score", 0.0)), 3)
-    spec = int(c.get("specificity", 0))
-    q_score = int(s.get("quality_score", 50))
+    try:
+        score = round(float(c.get("raw_score", 0.0) or 0.0), 3)
+    except (ValueError, TypeError):
+        score = 0.0
+    try:
+        spec = int(c.get("specificity", 0) or 0)
+    except (ValueError, TypeError):
+        spec = 0
+    try:
+        q_score = int(s.get("quality_score", 50) or 50)
+    except (ValueError, TypeError):
+        q_score = 50
     scope_prio = SCOPE_PRIORITY.get(s.get("source_type"), 5)
     v_tuple = _parse_version_tuple(s.get("version"))
     s_type = str(s.get("source_type", ""))

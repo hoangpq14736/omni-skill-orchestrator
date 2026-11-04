@@ -301,6 +301,7 @@ class LifecycleGuard:
         VULN-LG-002 & VULN-005: Strict CAS under ProcessMutex and stop-ack event.
         """
         def _beat():
+            consecutive_failures = 0
             try:
                 while not self._stop_event.wait(self.heartbeat_interval):
                     if self._stop_event.is_set():
@@ -318,6 +319,10 @@ class LifecycleGuard:
                                 with open(self.lock_file, "r", encoding="utf-8") as f:
                                     data = json.load(f)
                             except Exception:
+                                consecutive_failures += 1
+                                if consecutive_failures >= 5:
+                                    sys.stderr.write(f"[!] LifecycleGuard: {self.name} read error; aborting heartbeat\n")
+                                    self._stop_event.set()
                                 continue
 
                             # Strict CAS: Token must exist and match exactly
@@ -329,9 +334,16 @@ class LifecycleGuard:
                                 break
 
                             data["heartbeat"] = time.time()
-                            self._atomic_write_payload(data)
-                    except Exception:
-                        pass
+                            if self._atomic_write_payload(data):
+                                consecutive_failures = 0
+                            else:
+                                consecutive_failures += 1
+                                if consecutive_failures >= 5:
+                                    sys.stderr.write(f"[!] LifecycleGuard: {self.name} failed 5 consecutive heartbeat writes\n")
+                    except Exception as err:
+                        consecutive_failures += 1
+                        if consecutive_failures >= 5:
+                            sys.stderr.write(f"[!] LifecycleGuard: {self.name} heartbeat error: {err}\n")
             finally:
                 self._stop_ack.set()
 

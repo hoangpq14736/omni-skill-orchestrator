@@ -561,11 +561,10 @@ def process_hook(payload: dict) -> dict:
     try:
         db_path = os.path.join(_SCRIPT_DIR, "..", "omni_memory.db")
         if os.path.exists(db_path):
-            conn = sqlite3.connect(db_path, timeout=1.0, isolation_level="IMMEDIATE")
+            conn = sqlite3.connect(db_path, timeout=0.05, isolation_level="IMMEDIATE")
             last_id = None
             try:
-                conn.execute("PRAGMA journal_mode = WAL;")
-                conn.execute("PRAGMA busy_timeout = 1000;")
+                conn.execute("PRAGMA busy_timeout = 50;")
                 conn.execute("PRAGMA synchronous = NORMAL;")
                 with conn:
                     cursor = conn.cursor()
