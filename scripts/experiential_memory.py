@@ -438,6 +438,17 @@ def record_trace(problem_signature: str,
                         existing = tr
                         break
 
+            # Upgrade-in-place: If no tenant-scoped match, adopt un-scoped legacy trace with identical signature (VULN-003)
+            if not existing and clean_ws:
+                legacy_candidates = [
+                    tr for tr in traces
+                    if not (tr.get("workspace_hash") or "").strip()
+                    and tr.get("problem_signature", "").strip().lower() == clean_sig.strip().lower()
+                ]
+                if len(legacy_candidates) == 1:
+                    existing = legacy_candidates[0]
+                    existing["workspace_hash"] = clean_ws
+
             now_str = time.strftime("%Y-%m-%d %H:%M:%S")
             if existing:
                 # VULN-006: Stale outbox worker and monotonic generation fencing
@@ -548,13 +559,20 @@ def recall_traces(query_text: str,
 
     scored = []
     for tr in traces:
-        # VULN-001, VULN-002 & VULN-005: Tenant isolation with safe null handling
+        # VULN-001, VULN-002 & VULN-003: Tenant isolation with safe null and legacy migration handling
         tr_ws = (tr.get("workspace_hash") or "").strip().lower()
         if target_ws:
-            if tr_ws and tr_ws != target_ws:
-                continue
-            if not tr_ws and not allow_unscoped:
-                continue
+            from memory_utils import legacy_workspace_hash
+            leg_ws = legacy_workspace_hash(workspace_dir) if workspace_dir else None
+            matches_ws = (tr_ws == target_ws) or (leg_ws and tr_ws == leg_ws)
+            if not matches_ws:
+                if tr_ws:
+                    continue
+                # If trace has no workspace_hash, permit recall if allow_unscoped or workspace_context matches
+                ctx = (tr.get("workspace_context") or "").strip().lower()
+                ctx_match = bool(workspace_dir and ctx and (ctx in workspace_dir.lower() or workspace_dir.lower() in ctx))
+                if not (allow_unscoped or ctx_match):
+                    continue
 
         tr_tokens = set(tr.get("tokens", []))
         if not tr_tokens:

@@ -574,9 +574,10 @@ class ConsolidatorEngine:
             for row in rows:
                 s_id, session_id, ts, u_input, ws_hash, top_skill, tier, recalled = row
                 try:
-                    safe_input = redact_secrets(u_input) or ""
-                    safe_skill = redact_secrets(top_skill) if top_skill else None
-                    safe_recalled = redact_secrets(recalled) if recalled else None
+                    safe_input = str(redact_secrets(u_input) or "")
+                    safe_skill = str(redact_secrets(top_skill)) if top_skill else None
+                    raw_recalled = redact_secrets(recalled) if recalled else None
+                    safe_recalled = json.dumps(raw_recalled, ensure_ascii=False) if isinstance(raw_recalled, (dict, list)) else (str(raw_recalled) if raw_recalled is not None else None)
                     cur.execute(
                         """
                         INSERT INTO activation_events (session_id, timestamp, user_input, workspace_dir, top_skill, tier_used, recalled_traces, feedback_score, is_consolidated)
@@ -648,15 +649,17 @@ class ConsolidatorEngine:
         # Strictly Zero-Mutation Preview for dry_run - executed without write locks (VULN-004)
         if dry_run:
             if self.workspace_hash:
+                from memory_utils import legacy_workspace_hash
+                leg_h = legacy_workspace_hash(self.workspace_root or self.workspace_hash)
                 cur.execute(
                     """
                     SELECT event_id, session_id, timestamp, user_input, workspace_dir, feedback_score
                     FROM activation_events
-                    WHERE is_consolidated = 0 AND (workspace_dir = ? OR workspace_dir = ?)
+                    WHERE is_consolidated = 0 AND (workspace_dir = ? OR workspace_dir = ? OR workspace_dir = ?)
                     ORDER BY event_id ASC
                     LIMIT ?;
                     """,
-                    (self.workspace_hash, self.workspace_root or self.workspace_hash, batch_size)
+                    (self.workspace_hash, self.workspace_root or self.workspace_hash, leg_h, batch_size)
                 )
             else:
                 cur.execute(
@@ -731,15 +734,17 @@ class ConsolidatorEngine:
         try:
             # Step 2: Ingest unprocessed activation events under active write lock
             if self.workspace_hash:
+                from memory_utils import legacy_workspace_hash
+                leg_h = legacy_workspace_hash(self.workspace_root or self.workspace_hash)
                 cur.execute(
                     """
                     SELECT event_id, session_id, timestamp, user_input, workspace_dir, feedback_score
                     FROM activation_events
-                    WHERE is_consolidated = 0 AND (workspace_dir = ? OR workspace_dir = ?)
+                    WHERE is_consolidated = 0 AND (workspace_dir = ? OR workspace_dir = ? OR workspace_dir = ?)
                     ORDER BY event_id ASC
                     LIMIT ?;
                     """,
-                    (self.workspace_hash, self.workspace_root or self.workspace_hash, batch_size)
+                    (self.workspace_hash, self.workspace_root or self.workspace_hash, leg_h, batch_size)
                 )
             else:
                 cur.execute(

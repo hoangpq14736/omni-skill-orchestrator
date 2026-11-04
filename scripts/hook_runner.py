@@ -580,7 +580,7 @@ def process_hook(payload: dict) -> dict:
                             canonical_workspace_hash(workspace_dir),
                             safe_field(skills[0]["skill"]["name"], 64, single_line=True) if skills else "none",
                             resolution.get("tier_assessment", {}).get("tier", 1),
-                            redact_secrets(json.dumps([t.get("trace", {}).get("id") for t in resolution.get("proven_traces", [])]))
+                            str(redact_secrets(json.dumps([t.get("trace", {}).get("id") for t in resolution.get("proven_traces", [])])))
                         )
                     )
                     last_id = cursor.lastrowid

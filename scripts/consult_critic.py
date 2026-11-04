@@ -504,9 +504,9 @@ def format_markdown_report(
     timestamp_utc = datetime.datetime.now(datetime.timezone.utc).isoformat()
 
     # Cryptographic line 1 metadata header for verify_critic_artifact (<0.1ms parse)
-    if target_file:
-        if any(c in str(target_file) for c in ("\r", "\n", "\0")) or "-->" in str(target_file):
-            raise ValueError(f"Malicious or invalid characters in target_file: {target_file!r}")
+    target_file = (target_file or "inline_prompt").strip()
+    if any(c in str(target_file) for c in ("\r", "\n", "\0")) or "-->" in str(target_file):
+        raise ValueError(f"Malicious or invalid characters in target_file: {target_file!r}")
     from memory_utils import sign_audit_meta, canonical_workspace_hash
     ws_target = workspace_dir or os.getcwd()
     meta = {

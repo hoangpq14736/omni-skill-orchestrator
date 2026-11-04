@@ -182,8 +182,9 @@ def run_all_audits():
                 "data": verdict_data
             })
 
-        except Exception as e:
-            print(f"  [!] LỖI AUDIT: {e}")
+        except (Exception, SystemExit) as e:
+            err_msg = f"SystemExit({getattr(e, 'code', e)})" if isinstance(e, SystemExit) else str(e)
+            print(f"  [!] LỖI AUDIT: {err_msg}")
             results.append({
                 "cluster": cluster,
                 "verdict": "ERROR",

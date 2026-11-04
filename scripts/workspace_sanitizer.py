@@ -100,7 +100,10 @@ class TrustFileLock:
     """Context manager for cross-process advisory lock on companion .lock file (canonical realpath - VULN-012)."""
     def __init__(self, target_path: str, timeout: float = 5.0):
         clean_target = os.path.normcase(os.path.realpath(os.path.abspath(target_path)))
-        self.lock_path = f"{clean_target}.lock"
+        if clean_target.endswith(".lock"):
+            self.lock_path = clean_target
+        else:
+            self.lock_path = f"{clean_target}.lock"
         self.timeout = timeout
         self._fh = None
 
@@ -108,6 +111,11 @@ class TrustFileLock:
         os.makedirs(os.path.dirname(os.path.abspath(self.lock_path)), exist_ok=True)
         start = time.time()
         self._fh = open(self.lock_path, "a+b")
+        if os.name == "nt":
+            self._fh.seek(0, os.SEEK_END)
+            if self._fh.tell() == 0:
+                self._fh.write(b"\x00")
+                self._fh.flush()
         while True:
             try:
                 if os.name == "nt":
@@ -119,7 +127,7 @@ class TrustFileLock:
                     fcntl.flock(self._fh.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
                 break
             except (OSError, IOError) as exc:
-                if ((os.name == "nt" and getattr(exc, "winerror", None) == 33) or
+                if ((os.name == "nt" and getattr(exc, "winerror", None) in (32, 33, 36)) or
                     (getattr(exc, "errno", None) in (errno.EACCES, errno.EAGAIN))):
                     if time.time() - start >= self.timeout:
                         self._fh.close()

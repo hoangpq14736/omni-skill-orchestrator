@@ -195,6 +195,7 @@ def find_workspace_rules(workspace_dir: str, is_trusted: bool = False, blocked_l
             if norm in seen_paths:
                 continue
             seen_paths.add(norm)
+            rel_name = os.path.basename(r_file)
             try:
                 rel_name = os.path.relpath(r_file, workspace_dir).replace("\\", "/")
                 with open(r_file, "r", encoding="utf-8", errors="ignore") as f:
@@ -217,9 +218,9 @@ def find_workspace_rules(workspace_dir: str, is_trusted: bool = False, blocked_l
                     "content_preview": content[:400]
                 })
             except Exception as e:
-                sys.stderr.write(f"[!] Warning [Assimilator] Failed to read/parse skill '{norm_path}': {e}\n")
+                sys.stderr.write(f"[!] Warning [Assimilator] Failed to read/parse rule '{norm}': {e}\n")
                 if blocked_list is not None:
-                    blocked_list.append({"file": norm_path, "type": "skill_error", "name": os.path.basename(os.path.dirname(norm_path)), "error": str(e)})
+                    blocked_list.append({"file": norm, "type": "rule_error", "source": rel_name, "error": str(e)})
 
     return rules
 

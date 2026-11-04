@@ -46,6 +46,11 @@ class ProcessMutex:
         os.makedirs(os.path.dirname(os.path.abspath(self.path)), exist_ok=True)
         start = time.time()
         self._fh = open(self.path, "a+b")
+        if os.name == "nt":
+            self._fh.seek(0, os.SEEK_END)
+            if self._fh.tell() == 0:
+                self._fh.write(b"\x00")
+                self._fh.flush()
         while True:
             try:
                 if os.name == "nt":
@@ -57,7 +62,7 @@ class ProcessMutex:
                     fcntl.flock(self._fh.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
                 return self
             except (OSError, IOError) as exc:
-                if ((os.name == "nt" and getattr(exc, "winerror", None) == 33) or
+                if ((os.name == "nt" and getattr(exc, "winerror", None) in (32, 33, 36)) or
                     (getattr(exc, "errno", None) in (errno.EACCES, errno.EAGAIN))):
                     if time.time() - start >= self.timeout:
                         self._fh.close()

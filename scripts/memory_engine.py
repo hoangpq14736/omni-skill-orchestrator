@@ -122,6 +122,8 @@ class MemorySingleWriter:
         self._fatal_error: Optional[Exception] = None
         self._failed_sequences: Dict[int, Exception] = {}
         self._evicted_failures_count = 0
+        self._tasks_enqueued = 0
+        self._processed_tasks = 0
         self._closed = False
         self._worker_thread = threading.Thread(target=self._run_worker, daemon=True)
         self._worker_thread.start()
@@ -197,8 +199,10 @@ class MemorySingleWriter:
                                 del self._failed_sequences[oldest_key]
                                 self._evicted_failures_count += 1
                         self._committed_sequence = max(self._committed_sequence, seq)
-                        self._cond.notify_all()
+                        self._processed_tasks += 1
                     self._queue.task_done()
+                    with self._cond:
+                        self._cond.notify_all()
         except Exception as startup_err:
             self._fatal_error = startup_err
             with self._cond:
@@ -233,6 +237,7 @@ class MemorySingleWriter:
                     next_seq = self._sequence + 1
                     self._queue.put_nowait((next_seq, sql, params, callback))
                     self._sequence = next_seq
+                    self._tasks_enqueued += 1
                     return next_seq
                 except queue.Full:
                     pass
@@ -305,8 +310,8 @@ class MemorySingleWriter:
                 self._fatal_error = TimeoutError(f"MemorySingleWriter worker thread failed to terminate within {timeout:.1f}s.")
             sys.stderr.write(f"[!] Warning: MemorySingleWriter worker thread failed to terminate within {timeout:.1f}s.\n")
 
-        raw_unfinished = self._queue.unfinished_tasks
-        dropped = max(0, raw_unfinished - (1 if self._stop_event.is_set() else 0))
+        with self._seq_lock:
+            dropped = max(0, self._tasks_enqueued - self._processed_tasks)
         if dropped > 0 or timed_out:
             sys.stderr.write(f"[!] Warning: MemorySingleWriter closed with {dropped} uncompleted task(s) (timed_out={timed_out}).\n")
         return dropped
@@ -348,24 +353,40 @@ def search_fts5(
         safe_limit = 30
     match_expr = " OR ".join(clauses)
 
-    sql = """
+    ws_hashes = [workspace_hash]
+    try:
+        if len(workspace_hash) == 64:
+            row = conn.execute("SELECT workspace_path FROM workspace_registry WHERE workspace_hash = ? LIMIT 1;", (workspace_hash,)).fetchone()
+            if row and row[0]:
+                from memory_utils import legacy_workspace_hash
+                leg_h = legacy_workspace_hash(row[0])
+                if leg_h and leg_h != workspace_hash:
+                    ws_hashes.append(leg_h)
+        elif len(workspace_hash) == 32:
+            row = conn.execute("SELECT workspace_path FROM workspace_registry WHERE workspace_hash = ? LIMIT 1;", (workspace_hash,)).fetchone()
+            if row and row[0]:
+                from memory_utils import canonical_workspace_hash
+                can_h = canonical_workspace_hash(row[0])
+                if can_h and can_h != workspace_hash:
+                    ws_hashes.append(can_h)
+    except Exception:
+        pass
+
+    placeholders = ",".join("?" for _ in ws_hashes)
+    sql = f"""
     SELECT e.memory_id, bm25(episodic_fts, 10.0, 1.0) AS rank_score
     FROM episodic_fts
     JOIN workspace_episodic_memory e ON episodic_fts.rowid = e.rowid
-    WHERE episodic_fts MATCH :match_expr
-      AND e.workspace_hash = :ws_hash
+    WHERE episodic_fts MATCH ?
+      AND e.workspace_hash IN ({placeholders})
       AND e.status != 'Superseded'
     ORDER BY rank_score ASC
-    LIMIT :limit;
+    LIMIT ?;
     """
 
     cursor = conn.cursor()
     try:
-        cursor.execute(sql, {
-            "match_expr": match_expr,
-            "ws_hash": workspace_hash,
-            "limit": safe_limit
-        })
+        cursor.execute(sql, [match_expr, *ws_hashes, safe_limit])
         return cursor.fetchall()
     except sqlite3.OperationalError as oe:
         err_msg = str(oe).lower()
