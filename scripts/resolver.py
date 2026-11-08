@@ -52,7 +52,9 @@ VI_EN_SYNONYMS = {
     "bảo mật": ["security", "auth", "vulnerability", "audit"],
     "lỗi": ["error", "bug", "debug", "fix", "troubleshooting"],
     "gỡ lỗi": ["debug", "troubleshooting", "trace"],
-    "triển khai": ["deploy", "deployment", "ci", "cd", "docker"],
+    "triển khai": ["implement", "execute", "rollout"],
+    "triển khai hạ tầng": ["deploy", "deployment", "ci", "cd", "docker"],
+    "triển khai server": ["deploy", "deployment", "server", "vps"],
     "cơ sở dữ liệu": ["database", "sql", "migration", "schema"],
     "tinh giản": ["ponytail", "minimal", "clean", "refactor"],
     "lười": ["ponytail", "minimal", "lazy"],
@@ -826,8 +828,9 @@ def resolve_skill(intent_text="", workspace_dir=None, registry=None, top_k=3, af
     query_tokens = extract_query_tokens(intent_text) if intent_text else set()
     all_target_tokens = query_tokens.union(set(stack_tags))
 
-    # Cognitive Entailment: Infer mandatory rules & MCP drivers
-    inferred_rules, inferred_mcp = infer_domain_rules_and_mcp(all_target_tokens)
+    # Cognitive Entailment: Infer mandatory rules & MCP drivers based on user query intent first
+    rule_inference_tokens = query_tokens if query_tokens else set(stack_tags)
+    inferred_rules, inferred_mcp = infer_domain_rules_and_mcp(rule_inference_tokens)
 
     # Workspace Assimilator: Discover local skills and rules non-destructively
     if workspace_dir and os.path.exists(workspace_dir):

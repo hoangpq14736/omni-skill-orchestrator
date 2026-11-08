@@ -242,6 +242,28 @@ CREATE TABLE IF NOT EXISTS workspace_registry (
     workspace_path      TEXT NOT NULL,               -- Canonical filesystem root path
     registered_at       TEXT NOT NULL                -- ISO-8601 UTC timestamp
 );
+
+-- ----------------------------------------------------------------------------
+-- Table 9: episodic_antipatterns (Structured Failure & Anti-Pattern Memory)
+-- ----------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS episodic_antipatterns (
+    antipattern_id      TEXT PRIMARY KEY,            -- UUID v4
+    workspace_hash      TEXT NOT NULL,               -- Isolated workspace hash
+    tool_name           TEXT NOT NULL,               -- Tool/Engine identifier (e.g. 'run_command', 'powershell', 'python')
+    command_pattern     TEXT NOT NULL,               -- Problematic command substring or regex pattern
+    error_signature     TEXT NOT NULL,               -- Exception name or stderr snippet (e.g. 'CommandNotFoundException')
+    root_cause          TEXT NOT NULL,               -- Explanatory diagnosis of why it fails
+    mitigation_guidance TEXT NOT NULL,               -- Actionable guidance to succeed
+    ttl_days            REAL NOT NULL DEFAULT 14.0,  -- Bounded lifetime in days
+    trigger_count       INTEGER NOT NULL DEFAULT 0,  -- Counter of how many times this guard prevented an error
+    status              TEXT NOT NULL DEFAULT 'Active', -- 'Active', 'Archived'
+    last_triggered_at   TEXT,                        -- ISO-8601 UTC timestamp
+    created_at          TEXT NOT NULL                -- ISO-8601 UTC timestamp
+);
+
+CREATE INDEX IF NOT EXISTS idx_antipattern_tool ON episodic_antipatterns(tool_name, status);
+CREATE INDEX IF NOT EXISTS idx_antipattern_ws ON episodic_antipatterns(workspace_hash, status);
+CREATE INDEX IF NOT EXISTS idx_antipattern_status_created ON episodic_antipatterns(status, created_at DESC);
 """
 
 

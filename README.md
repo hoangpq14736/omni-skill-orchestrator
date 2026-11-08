@@ -24,6 +24,8 @@ Omni is **not** a standalone autonomous coding agent (like Aider, OpenCode, or O
 4. **Universal Polyglot Extractor**: Built for the fluid "vibe coder" with zero external native compilation requirements. Directly maps Python, JavaScript/TypeScript, Go, Rust, SQL, Shell, Markdown docs, and configs.
 5. **Autonomous Skill Synthesis**: When encountering novel technical domains, Omni authors candidate `SKILL.md` documents, runs static AST security analysis, validates them in an isolated sandbox, and atomically promotes them into the local library.
 6. **Decoupled Architecture Gatekeeper**: Inspects architecture intents (RFC, SDD, major diffs) in `< 25ms` in-process logic (`~120ms` full subprocess turnaround on Windows) without blocking the chat loop with synchronous cloud calls.
+7. **Episodic Anti-Patterns Engine & Heuristic Guard**: Traps execution failures (non-zero exits, structural errors, syntax traps) via a 3-tier heuristic filter, indexing recurring anti-patterns into SQLite WAL with TTL-based expiration and proactive consolidation, eliminating repeated failure traps.
+8. **Windows Service & Background Consolidator**: Autonomous daemon running silent 15-minute background cycles via Windows Task Scheduler (`pythonw.exe`), performing out-of-band Ebbinghaus memory decay, pattern promotion, and proactive TTL sweeps without user intervention or terminal locking.
 
 ---
 
@@ -110,6 +112,8 @@ Omni-Graph maintains physical and logical **Zero-Conflict Duality**:
 | **Embedding Service** | `scripts/embedding_service.py` | Local CPU embedding generator using `fastembed` (`intfloat/multilingual-e5-small`, 384 dimensions). |
 | **Memory Consolidator** | `scripts/consolidator.py` | Background daemon consuming staging logs, promoting multi-hit knowledge, and applying Ebbinghaus decay. |
 | **Architecture Auditor** | `scripts/consult_critic.py` | External Red-Teaming critic client connecting to DeepSeek-V4.1-Flash for architecture review. |
+| **Anti-Pattern Guard** | `scripts/antipattern_guard.py` | Autonomous 3-tier post-execution failure interceptor & recurrent anti-pattern filter. |
+| **Windows Service Manager** | `scripts/service_manager.py` | Non-admin Windows Task Scheduler manager running silent background consolidation via `pythonw.exe`. |
 
 ---
 
@@ -129,6 +133,9 @@ python tests/test_omni_graph_live.py
 
 # 4. Scan and visualize any workspace instantly
 python scripts/omni_graph.py --workspace "." --scan --visualize
+
+# 5. Run Episodic Anti-Patterns & Heuristic Guard test suite (7/7 PASS)
+python -m unittest tests/test_antipatterns.py tests/test_antipattern_guard.py tests/test_consolidator_antipatterns.py
 ```
 
 ---

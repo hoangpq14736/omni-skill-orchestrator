@@ -185,7 +185,7 @@ def find_workspace_rules(workspace_dir: str, is_trusted: bool = False, blocked_l
         os.path.normpath(os.path.join(workspace_dir, ".gemini", "rules", "*.md")),
         os.path.normpath(os.path.join(workspace_dir, "rules", "*.md")),
         os.path.normpath(os.path.join(workspace_dir, ".specify", "*.md")),
-        os.path.normpath(os.path.join(workspace_dir, "specs", "*", "*.md")),
+        os.path.normpath(os.path.join(workspace_dir, "specs", "*", "spec.md")),
     ]
     for pattern in dir_patterns:
         for r_file in glob.glob(pattern):

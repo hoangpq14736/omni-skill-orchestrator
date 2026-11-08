@@ -622,3 +622,137 @@ def revert_invariant(conn: sqlite3.Connection, superseded_id: str, workspace_has
             pass
         sys.stderr.write(f"[!] LỖI revert_invariant({superseded_id}): {type(e).__name__}: {e}\n")
         return False
+
+
+# ============================================================================
+# Episodic Anti-Patterns Engine (Phase 2 - Failure & Post-Mortem Recall)
+# ============================================================================
+
+def record_antipattern(
+    conn_or_db: Any,
+    workspace_dir: str,
+    tool_name: str,
+    command_pattern: str,
+    error_signature: str,
+    root_cause: str,
+    mitigation_guidance: str,
+    ttl_days: float = 14.0
+) -> str:
+    """
+    Store an execution failure / antipattern record in SQLite WAL.
+    Enforces strict parameterized SQL and workspace partition hashing (Principle II).
+    """
+    import datetime
+    ws_hash = canonical_workspace_hash(workspace_dir)
+    antipattern_id = str(uuid.uuid4())
+    now_iso = datetime.datetime.now(datetime.timezone.utc).isoformat()
+
+    conn = conn_or_db if isinstance(conn_or_db, sqlite3.Connection) else sqlite3.connect(conn_or_db, timeout=5.0)
+    should_close = not isinstance(conn_or_db, sqlite3.Connection)
+
+    sql = """
+        INSERT INTO episodic_antipatterns (
+            antipattern_id, workspace_hash, tool_name, command_pattern,
+            error_signature, root_cause, mitigation_guidance, ttl_days,
+            trigger_count, status, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, 'Active', ?)
+    """
+    try:
+        with conn:
+            conn.execute(sql, (
+                antipattern_id, ws_hash, tool_name, command_pattern,
+                error_signature, root_cause, mitigation_guidance, float(ttl_days), now_iso
+            ))
+        return antipattern_id
+    finally:
+        if should_close:
+            conn.close()
+
+
+def recall_antipatterns(
+    conn_or_db: Any,
+    workspace_dir: str,
+    tool_name: Optional[str] = None,
+    command_text: Optional[str] = None
+) -> List[Dict[str, Any]]:
+    """
+    Retrieve active antipatterns for workspace in <0.5ms.
+    Evaluates TTL expiration with soft-archiving (Principle V).
+    Increments trigger_count when matching pattern is intercepted.
+    """
+    import datetime
+    ws_hash = canonical_workspace_hash(workspace_dir)
+    now = datetime.datetime.now(datetime.timezone.utc)
+    now_iso = now.isoformat()
+
+    conn = conn_or_db if isinstance(conn_or_db, sqlite3.Connection) else sqlite3.connect(conn_or_db, timeout=5.0)
+    should_close = not isinstance(conn_or_db, sqlite3.Connection)
+    conn.row_factory = sqlite3.Row
+
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            """
+            SELECT antipattern_id, workspace_hash, tool_name, command_pattern,
+                   error_signature, root_cause, mitigation_guidance, ttl_days,
+                   trigger_count, status, last_triggered_at, created_at
+            FROM episodic_antipatterns
+            WHERE status = 'Active' AND workspace_hash = ?
+            """,
+            (ws_hash,)
+        )
+        rows = cur.fetchall()
+        matched = []
+
+        for row in rows:
+            r = dict(row)
+            try:
+                created_dt = datetime.datetime.fromisoformat(r["created_at"])
+                age_days = (now - created_dt).total_seconds() / 86400.0
+                if age_days >= r.get("ttl_days", 14.0):
+                    with conn:
+                        conn.execute(
+                            "UPDATE episodic_antipatterns SET status = 'Archived' WHERE antipattern_id = ?",
+                            (r["antipattern_id"],)
+                        )
+                    continue
+            except Exception:
+                pass
+
+            if tool_name and r["tool_name"].lower() != tool_name.lower():
+                continue
+
+            if command_text:
+                pat = r["command_pattern"].strip()
+                is_match = False
+                if pat:
+                    if pat.lower() in command_text.lower() or command_text.lower() in pat.lower():
+                        is_match = True
+                    else:
+                        try:
+                            import re
+                            if re.search(pat, command_text, re.IGNORECASE):
+                                is_match = True
+                        except Exception:
+                            pass
+                if is_match:
+                    with conn:
+                        conn.execute(
+                            """
+                            UPDATE episodic_antipatterns
+                            SET trigger_count = trigger_count + 1, last_triggered_at = ?
+                            WHERE antipattern_id = ?
+                            """,
+                            (now_iso, r["antipattern_id"])
+                        )
+                    r["trigger_count"] += 1
+                    r["last_triggered_at"] = now_iso
+                    matched.append(r)
+            else:
+                matched.append(r)
+
+        return matched
+    finally:
+        if should_close:
+            conn.close()
+

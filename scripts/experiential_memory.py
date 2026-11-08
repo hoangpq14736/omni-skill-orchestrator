@@ -600,7 +600,7 @@ def record_trace(problem_signature: str,
 def recall_traces(query_text: str,
                   workspace_dir: str = None,
                   top_k: int = 2,
-                  threshold: float = 0.25,
+                  threshold: float = 0.335,
                   traces_path: str = None,
                   workspace_hash: Optional[str] = None,
                   allow_unscoped: bool = False) -> list:
@@ -683,7 +683,10 @@ def recall_traces(query_text: str,
 
         final_score = (overlap_score * 0.6) + (jaccard_score * 0.4) + utility_boost + context_boost
 
-        if final_score >= threshold:
+        # Dynamic Adaptive Threshold: For short queries (<=3 tokens), use 0.28 to preserve recall;
+        # for longer queries (>3 tokens), enforce the strict threshold (default 0.335) to eliminate false positives.
+        effective_threshold = 0.28 if len(query_tokens) <= 3 else threshold
+        if final_score >= effective_threshold:
             scored.append({
                 "trace": copy.deepcopy(tr),
                 "score": round(final_score, 3),

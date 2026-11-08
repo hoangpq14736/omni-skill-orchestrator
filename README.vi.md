@@ -24,6 +24,8 @@ Omni **không phải** là một tác tử lập trình độc lập (như Aider
 4. **Bộ trích xuất đa ngôn ngữ toàn năng (Universal Polyglot Extractor)**: Thiết kế riêng cho "vibe coder" linh hoạt, không yêu cầu cài đặt hay biên dịch C/Rust trên Windows. Tự động nhận diện Python, JavaScript/TypeScript, Go, Rust, SQL, Shell, Markdown docs và Configs.
 5. **Tự tổng hợp kỹ năng mới (Autonomous Skill Synthesis)**: Khi đối mặt với công nghệ lạ chưa có trong thư viện, Omni tự soạn thảo file `SKILL.md`, quét tĩnh AST kiểm tra an toàn, chạy kiểm thử trong sandbox và tự động thăng hạng vào thư viện cục bộ.
 6. **Cổng kiểm duyệt kiến trúc độc lập (Council Gate)**: Phát hiện các yêu cầu thiết kế hệ thống lớn (RFC, SDD, diff lớn) trong `< 25ms` logic nội bộ (`~120ms` toàn tiến trình subprocess trên Windows) mà không làm tắc nghẽn phiên chat bằng các lệnh gọi mạng đồng bộ.
+7. **Động cơ Bẫy Lỗi Thực nghiệm (Episodic Anti-Patterns & Heuristic Guard)**: Tự động phát hiện và ghi nhận các lỗi thực thi dòng lệnh (exit code != 0, lỗi cú pháp quoting, thiếu module) qua bộ lọc 3 tầng, lưu vết với cơ chế TTL 14 ngày và quét dọn chủ động, ngăn chặn tác tử rơi lại vào các bẫy lỗi cũ mà không cần viết prompt thủ công.
+8. **Trình Quản lý Dịch vụ Chạy Nền Windows (Windows Service & Task Scheduler Manager)**: Quản lý tác vụ chạy ngầm định kỳ 15 phút qua `pythonw.exe` và Task Scheduler (`scripts/service_manager.py`), tự động dọn rác, suy giảm Ebbinghaus và quét bản ghi hết hạn mà không hiện cửa sổ terminal hay khóa tiến trình.
 
 ---
 
@@ -82,6 +84,8 @@ Omni-Graph thực thi nguyên tắc **Zero-Conflict Duality**:
 | **Embedding Service** | `scripts/embedding_service.py` | Tạo vector nhúng cục bộ trên CPU bằng `fastembed`. |
 | **Memory Consolidator** | `scripts/consolidator.py` | Tiến trình chạy nền gom dữ liệu staging, thăng hạng tri thức và áp dụng suy giảm Ebbinghaus. |
 | **Architecture Auditor** | `scripts/consult_critic.py` | Client phản biện độc lập kết nối DeepSeek-V4.1-Flash để review kiến trúc. |
+| **Anti-Pattern Guard** | `scripts/antipattern_guard.py` | Bộ đánh chặn lỗi hậu thực thi 3 tầng phân loại & chống bẫy tái diễn. |
+| **Windows Service Manager** | `scripts/service_manager.py` | Bộ quản lý Windows Task Scheduler chạy nền silent consolidator qua `pythonw.exe`. |
 
 ---
 
@@ -101,6 +105,9 @@ python tests/test_omni_graph_live.py
 
 # 4. Quét và trực quan hóa bất kỳ workspace nào
 python scripts/omni_graph.py --workspace "." --scan --visualize
+
+# 5. Chạy bộ kiểm thử Bẫy Lỗi Thực nghiệm & Bộ lọc Đánh chặn (7/7 PASS)
+python -m unittest tests/test_antipatterns.py tests/test_antipattern_guard.py tests/test_consolidator_antipatterns.py
 ```
 
 ---

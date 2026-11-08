@@ -1070,6 +1070,7 @@ class ConsolidatorEngine:
             # Step 5: Bounded Ebbinghaus Decay & Soft-Archiving (Pure SQLite Padé [0/1] Algebraic Bulk Update)
             # VULN-001: Strict workspace_hash scoping to prevent cross-tenant decay, soft-archive, or hard-purge
             soft_archived_count = 0
+            antipatterns_archived_count = 0
             if self.workspace_hash:
                 cur.execute(
                     """
@@ -1120,6 +1121,31 @@ class ConsolidatorEngine:
                     """,
                     (self.workspace_hash,)
                 )
+
+                # 4. Proactive TTL Sweep for episodic_antipatterns (Soft-Archive expired failure patterns)
+                try:
+                    cur.execute(
+                        """
+                        UPDATE episodic_antipatterns
+                        SET status = 'Archived'
+                        WHERE status = 'Active'
+                          AND (julianday('now') - julianday(created_at)) >= ttl_days
+                          AND workspace_hash = ?;
+                        """,
+                        (self.workspace_hash,)
+                    )
+                    antipatterns_archived_count += cur.rowcount
+                    cur.execute(
+                        """
+                        DELETE FROM episodic_antipatterns
+                        WHERE status = 'Archived'
+                          AND (julianday('now') - julianday(created_at)) >= (ttl_days + 30.0)
+                          AND workspace_hash = ?;
+                        """,
+                        (self.workspace_hash,)
+                    )
+                except Exception as ap_err:
+                    persist_diag(f"consolidator.antipatterns_sweep: {type(ap_err).__name__}: {ap_err}", 256)
             elif effective_unscoped:
                 cur.execute(
                     """
@@ -1159,6 +1185,27 @@ class ConsolidatorEngine:
                       AND last_accessed_at < datetime('now', '-30 days');
                     """
                 )
+
+                # 4. Global Proactive TTL Sweep for episodic_antipatterns
+                try:
+                    cur.execute(
+                        """
+                        UPDATE episodic_antipatterns
+                        SET status = 'Archived'
+                        WHERE status = 'Active'
+                          AND (julianday('now') - julianday(created_at)) >= ttl_days;
+                        """
+                    )
+                    antipatterns_archived_count += cur.rowcount
+                    cur.execute(
+                        """
+                        DELETE FROM episodic_antipatterns
+                        WHERE status = 'Archived'
+                          AND (julianday('now') - julianday(created_at)) >= (ttl_days + 30.0);
+                        """
+                    )
+                except Exception as ap_err:
+                    persist_diag(f"consolidator.unscoped_antipatterns_sweep: {type(ap_err).__name__}: {ap_err}", 256)
             else:
                 sys.stderr.write("[!] Notice: Skipping unscoped maintenance phase in consolidate_batch (pass allow_unscoped=True to run globally)\n")
 
@@ -1306,7 +1353,8 @@ class ConsolidatorEngine:
         batch_res = {
             "events_processed": len(processed_ids),
             "promoted_traces": promoted_count,
-            "soft_archived": soft_archived_count
+            "soft_archived": soft_archived_count,
+            "antipatterns_archived": antipatterns_archived_count
         }
         if deferred_flushes:
             batch_res["pending_flushes"] = deferred_flushes
