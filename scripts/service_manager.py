@@ -79,7 +79,7 @@ def get_task_status() -> dict:
     if os.name != "nt":
         return {"status": "unsupported_os"}
 
-    rc, out, err = _run_cmd(["schtasks", "/Query", "/TN", TASK_NAME, "/FO", "LIST"])
+    rc, out, err = _run_cmd(["schtasks", "/Query", "/TN", TASK_NAME, "/V", "/FO", "LIST"])
     if rc != 0:
         return {"status": "not_installed", "error": err or out}
 
@@ -130,6 +130,17 @@ def run_now() -> bool:
         return False
 
 
+def check_or_heal_task(interval_minutes: int = 15) -> dict:
+    """Verify task exists and is Ready. If missing or broken, auto-reinstalls."""
+    status = get_task_status()
+    if status.get("status") != "Ready":
+        print(f"[*] Task '{TASK_NAME}' status is '{status.get('status')}'. Auto-healing...")
+        install_task(interval_minutes=interval_minutes)
+        return get_task_status()
+    print(f"✔ Task '{TASK_NAME}' is healthy (Status: Ready).")
+    return status
+
+
 def main():
     parser = argparse.ArgumentParser(description="Omni-Kernel Windows Service & Task Scheduler Manager")
     group = parser.add_mutually_exclusive_group(required=True)
@@ -137,6 +148,7 @@ def main():
     group.add_argument("--status", action="store_true", help="Query task scheduler status")
     group.add_argument("--uninstall", action="store_true", help="Uninstall scheduled task")
     group.add_argument("--run-now", action="store_true", help="Trigger immediate consolidation run")
+    group.add_argument("--self-heal", action="store_true", help="Verify task health and auto-reinstall if missing/broken")
     parser.add_argument("--interval", type=int, default=15, help="Schedule interval in minutes (default: 15)")
 
     args = parser.parse_args()
@@ -151,6 +163,10 @@ def main():
         uninstall_task()
     elif args.run_now:
         run_now()
+    elif args.self_heal:
+        import json
+        st = check_or_heal_task(interval_minutes=args.interval)
+        print(json.dumps(st, indent=2))
 
 
 if __name__ == "__main__":
