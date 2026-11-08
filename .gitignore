@@ -35,3 +35,5 @@ scratch/
 .env
 *.env
 
+# Omni-Kernel workspace artifacts
+.omni/

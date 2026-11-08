@@ -10,7 +10,7 @@
 [English](README.md) • [Tiếng Việt](README.vi.md)
 
 > **Lớp điều phối (harness) siêu nhẹ, vận hành cục bộ (local-first) dành cho Google Antigravity, Claude Code, Cursor và các AI coding agent.**  
-> *Trang bị cơ chế định tuyến kỹ năng JIT tốc độ dưới mili-giây, kiến trúc trí nhớ đa tầng Tri-Tier (SQLite WAL + Dual-Column FTS5 BM25 + CPU ONNX Embeddings 384 chiều), tự động tổng hợp kỹ năng mới, và cổng kiểm duyệt kiến trúc độc lập — với 0 token tĩnh lãng phí.*
+> *Trang bị cơ chế định tuyến kỹ năng JIT tốc độ dưới mili-giây, kiến trúc trí nhớ đa tầng Tri-Tier (SQLite WAL + Dual-Column FTS5 BM25 + CPU ONNX Embeddings 384 chiều), tự động tổng hợp kỹ năng mới, đồ thị cấu trúc codebase chuẩn Graphify (Omni-Graph), và cổng kiểm duyệt kiến trúc độc lập — với 0 token tĩnh lãng phí.*
 
 ---
 
@@ -20,8 +20,10 @@ Omni **không phải** là một tác tử lập trình độc lập (như Aider
 
 1. **Chống phình to ngữ cảnh (Context Bloat)**: Thay vì nhồi 50–120 kỹ năng và quy tắc tĩnh vào System Prompt (ngốn 15.000–25.000 token mỗi lượt chat), Omni quét hơn 500 kỹ năng trong **0.12s** và chỉ tiêm 1–3 kỹ năng/quy tắc phù hợp nhất **Đúng Lúc (Just-In-Time, < 300 token)**.
 2. **Trí nhớ phản xạ đa phiên (Cross-Session Memory)**: Tự động ghi nhận các giải pháp sửa lỗi thành công, đánh chỉ mục vào SQLite WAL với FTS5 BM25 và vector đặc ONNX CPU 384 chiều (`intfloat/multilingual-e5-small`), gợi ý lại giải pháp đã kiểm chứng trong **< 0.3ms**.
-3. **Tự tổng hợp kỹ năng mới (Autonomous Skill Synthesis)**: Khi đối mặt với công nghệ lạ chưa có trong thư viện, Omni tự soạn thảo file `SKILL.md`, quét tĩnh AST kiểm tra an toàn, chạy kiểm thử trong sandbox và tự động thăng hạng vào thư viện cục bộ.
-4. **Cổng kiểm duyệt kiến trúc độc lập (Council Gate)**: Phát hiện các yêu cầu thiết kế hệ thống lớn (RFC, SDD, diff lớn) trong `< 25ms` logic nội bộ (`~120ms` toàn tiến trình subprocess trên Windows) mà không làm tắc nghẽn phiên chat bằng các lệnh gọi mạng đồng bộ.
+3. **Đồ thị cấu trúc Codebase chuẩn Graphify (Omni-Graph)**: Đồ thị quan hệ lưu trong SQLite WAL cục bộ của workspace (`.omni/codebase_graph.db`). Cung cấp **Bộ bảo vệ hợp đồng chữ ký hàm (Signature Contract Guard)**, **Cảnh báo vòng đời (Lifecycle Guard)**, **Tính bán kính ảnh hưởng Blast Radius (<2ms)**, và xuất **Đồ thị trực quan tương tác Vis.Network 9.1.6** khử hoàn toàn hiện tượng rung lắc/chuyển động vô tận.
+4. **Bộ trích xuất đa ngôn ngữ toàn năng (Universal Polyglot Extractor)**: Thiết kế riêng cho "vibe coder" linh hoạt, không yêu cầu cài đặt hay biên dịch C/Rust trên Windows. Tự động nhận diện Python, JavaScript/TypeScript, Go, Rust, SQL, Shell, Markdown docs và Configs.
+5. **Tự tổng hợp kỹ năng mới (Autonomous Skill Synthesis)**: Khi đối mặt với công nghệ lạ chưa có trong thư viện, Omni tự soạn thảo file `SKILL.md`, quét tĩnh AST kiểm tra an toàn, chạy kiểm thử trong sandbox và tự động thăng hạng vào thư viện cục bộ.
+6. **Cổng kiểm duyệt kiến trúc độc lập (Council Gate)**: Phát hiện các yêu cầu thiết kế hệ thống lớn (RFC, SDD, diff lớn) trong `< 25ms` logic nội bộ (`~120ms` toàn tiến trình subprocess trên Windows) mà không làm tắc nghẽn phiên chat bằng các lệnh gọi mạng đồng bộ.
 
 ---
 
@@ -32,98 +34,77 @@ Omni **không phải** là một tác tử lập trình độc lập (như Aider
 | **Dung lượng Ngữ cảnh** | Nhồi 50–120 kỹ năng (**15.000–25.000 token**), gây tràn ngữ cảnh và suy giảm IQ mô hình. | **< 300 Token ở trạng thái chờ!** Giữ nguyên tắc tinh gọn; kỹ năng, quy tắc và công cụ được phân giải Đúng Lúc (JIT). |
 | **Độ chính xác Định tuyến** | So khớp chuỗi con thô sơ dễ gọi nhầm sang kỹ năng không liên quan. | **Chấm điểm theo Segment + Ranh giới Từ**: Tách biệt rõ nhóm từ miền kỹ thuật (`docker`, `sqlite`, `postgres`) khỏi từ hành động chung (`fix`, `debug`, `guide`). Đạt **100% Top-1 & Top-3** trên bộ Golden Benchmark 25 câu hỏi. |
 | **Trí nhớ Dài hạn** | File JSON phẳng dễ hỏng hoặc vector DB SaaS đám mây cồng kềnh. | **Trí nhớ Đa tầng Tri-Tier**: Tầng 1 non-blocking RAM spool (<0.3ms); Tầng 2 SQLite WAL nhúng FTS5 BM25 + CPU ONNX Embeddings (0MB VRAM Tax); Tầng 3 Consolidator tự động tính độ trôi dạt Ebbinghaus. |
+| **Cấu trúc Codebase (Omni-Graph)** | Mù mờ về cấu trúc hoặc dump file JSON 50MB gây sập ngữ cảnh. | **Đồ thị quan hệ SQLite WAL**: Recursive CTEs tính toán bán kính ảnh hưởng caller/callee trong <2ms. Kiểm tra vi phạm tham số gọi hàm (PEP 570, kwargs) và xuất đồ thị tĩnh Vis.Network 9.1.6 không rung lắc. |
+| **Trích xuất Đa ngôn ngữ** | Bị giới hạn 1 ngôn ngữ hoặc phụ thuộc công cụ biên dịch C cồng kềnh. | **Universal Polyglot Extractor (Zero-Dependency)**: Native stdlib AST cho Python + regex streaming cho JS/TS, Go, Rust, SQL, Shell và Markdown docs. |
 | **Tổng hợp Kỹ năng** | Lập trình viên phải tự gõ thủ công từng file cấu hình cho mỗi thư viện mới. | **Quy trình Tự động**: `scripts/synthesizer.py` tự tạo mẫu, kiểm tra cú pháp AST, kiểm chứng assert trong sandbox và tự tái lập chỉ mục trong <150ms. |
 | **Kiểm soát Kiến trúc** | Subagent nội bộ dễ rơi vào "Buồng vang tự sướng" (Echo Chamber), tự khen code của nhau. | **Hội đồng Phản biện Độc lập (DeepSeek-V4.1-Flash)**: Cưỡng chế kiểm duyệt với chữ ký số HMAC-SHA256 và mã băm SHA-256 của file đích mà không làm nghẽn luồng hook. |
-| **Lõi Phụ thuộc** | Phụ thuộc thư viện nặng ngoài luồng, dễ lỗi môi trường. | **Lõi Python Standard Library thuần túy** cho Kernel, Hook và SQLite FTS5 (0 phụ thuộc ngoài). Tùy chọn cài thêm `fastembed` cho tìm kiếm vector CPU (tự động hạ cấp an toàn về FTS5 BM25 nếu chưa cài). |
+| **Lõi Phụ thuộc** | Phụ thuộc thư viện nặng ngoài luồng, dễ lỗi môi trường. | **Lõi Python Standard Library thuần túy** cho Kernel, Hook, SQLite FTS5 và Omni-Graph (0 phụ thuộc native ngoài). |
 
 ---
 
-## 🏗️ Kiến trúc Phân tầng
+## 🌐 Kiến trúc Omni-Graph (Đồ thị Codebase Chuẩn Graphify)
 
-Omni vận hành như một bộ cương đánh chặn bọc quanh tác tử AI:
+Omni-Graph thực thi nguyên tắc **Zero-Conflict Duality**:
+- **Trí nhớ Nhận thức Toàn cục (Global Cognitive Memory)**: Lưu trong `omni_memory.db` để học hỏi liên phiên và tích lũy tri thức xuyên dự án.
+- **Tô-pô Codebase Cục bộ (Local Codebase Topology)**: Lưu trong `<workspace>/.omni/codebase_graph.db` (chế độ SQLite WAL), hoàn toàn độc lập cho từng dự án.
 
-```text
-                      ┌────────────────────────────────────────────────────────┐
-                      │              AI AGENT: ANTIGRAVITY / CLAUDE            │
-                      │               (Lập kế hoạch, UI, Viết code)            │
-                      └───────────────────────────┬────────────────────────────┘
-                                                  │ (Trước mỗi lượt tương tác)
-                                                  ▼
-                      ┌────────────────────────────────────────────────────────┐
-                      │    PRE-FLIGHT HARNESS HOOK (hook_runner.py, <25ms)     │
-                      │  - Tầng 1: Phản xạ RAM không nghẽn lock (<0.3ms)       │
-                      │  - JIT Router: Phân giải kỹ năng theo segment (~2-5ms) │
-                      │  - Truy hồi Ký ức Thực nghiệm độ chính xác cao (<0.3ms)│
-                      │  - Cổng Giám sát: Đối chiếu chữ ký số HMAC-SHA256      │
-                      └───────────────────────────┬────────────────────────────┘
-                                                  │ (Tiêm <300 token ngữ cảnh JIT)
-                                                  ▼
-                                      ┌───────────────────────┐
-                                      │   LƯỢT CHAT CỦA AGENT │
-                                      └───────────────────────┘
-```
+### Các thành phần cốt lõi:
+1. **Lưu trữ Đồ thị Quan hệ (`scripts/omni_graph/storage.py`)**:
+   - Các bảng chuẩn hóa: `nodes`, `signatures`, `edges`, `lifecycle_hooks`, và `codebase_files_meta`.
+   - 7 chỉ mục B-Tree bao phủ giúp truy vấn đường dẫn gọi hàm trong nháy mắt.
+2. **Bộ phát hiện thay đổi 2 tầng (`scripts/omni_graph/fingerprint.py`)**:
+   - Tầng 1: So sánh `mtime` và `size_bytes` trong **< 2ms** cho hàng trăm file.
+   - Tầng 2: Kiểm tra băm SHA-256 khi tem thời gian thay đổi.
+3. **Bộ bảo vệ hợp đồng chữ ký hàm (`scripts/omni_graph/validator.py`)**:
+   - Chuẩn hóa receiver method (tự động loại trừ `self` và `cls`).
+   - Kiểm soát nghiêm ngặt tham số positional-only (PEP 570), keyword-only, và tham số lạ không tồn tại.
+   - Ngăn chặn lỗi gãy giao diện trước khi mã nguồn được chạy.
+4. **Trình trực quan hóa Vis-Network (`scripts/omni_graph/visualizer.py`)**:
+   - Nhúng Vis.Network 9.1.6 với bảng màu Tableau 10 của Graphify.
+   - Phân bổ vị trí hạt giống theo xoắn ốc Fermat ($x = 35 \sqrt{i} \cos(2.4 i)$, $y = 35 \sqrt{i} \sin(2.4 i)$).
+   - Tự động đóng băng động lực học ở bước 200 (**khử hoàn toàn hiện tượng rung lắc/di chuyển liên tục**).
+   - Thanh điều khiển Sidebar với chuyển đổi Theme (Dark/Light/System), tìm kiếm autocomplete, bảng tra cứu node và bộ lọc cụm cộng đồng.
 
 ---
 
-## 🧠 Kiến trúc Trí nhớ Đa tầng Tri-Tier Omni-Memory
+## 🛠️ Danh mục Module Lõi
 
-Toàn bộ giải pháp khắc phục lỗi và dấu vết thực thi được quản trị qua 3 tầng:
-
-1. **Tier 1 (L1 Ephemeral Reflex - <0.3ms cache reflex, <25ms logic hook nội bộ / ~120ms subprocess)**:
-   - Hook tiền khởi chạy viết bằng 100% Python Standard Library trong `scripts/hook_runner.py`.
-   - Đọc bộ đệm RAM nhanh từ `scripts/proven_traces.json` trong <0.02ms.
-   - Ghi nhật ký non-blocking vào `l1_staging_spool.jsonl` để loại trừ hoàn toàn hiện tượng tranh chấp khóa SQLite trên Windows NTFS.
-
-2. **Tier 2 (L2 Hybrid Episodic Memory - <15ms retrieval, 0MB VRAM Tax)**:
-   - Cơ sở dữ liệu SQLite nhúng tại `omni_memory.db` kích hoạt chế độ **WAL mode** (`PRAGMA synchronous = NORMAL;`, `busy_timeout = 5000;`).
-   - Tìm kiếm hỗn hợp kết hợp **Dual-Column FTS5 BM25** (`content_exact` trọng số 10.0 vs `content_folded` trọng số 1.0) song song với **CPU ONNX Embeddings** (`intfloat/multilingual-e5-small`, 384 chiều, INT8 quantization, 0MB VRAM) qua thuật toán Reciprocal Rank Fusion ($k=20$).
-   - *Cơ chế Hạ cấp An toàn:* Nếu môi trường chưa cài `fastembed`, hệ thống tự động fallback về chế độ 100% thuần stdlib SQLite FTS5 BM25.
-
-3. **Tier 3 (L3 Background Consolidator Daemon)**:
-   - Tiến trình chạy ngầm `scripts/consolidator.py` tiêu thụ các bản ghi từ spool vào cơ sở dữ liệu.
-   - Tự động thăng hạng vết tri thức đa kích hoạt ($\ge 2$ lần thành công) kèm gán nhãn song ngữ tự động.
-   - Áp dụng công thức suy giảm ổn định Ebbinghaus và sử dụng `PRAGMA wal_checkpoint(PASSIVE);` để chống hoàn toàn xung đột khóa file.
-
----
-
-## 🛠️ Danh mục Module Cốt lõi
-
-| Thành phần | Đường dẫn | Mô tả chức năng |
+| Thành phần | Đường dẫn | Chức năng |
 |---|---|---|
-| **PreInvocation Hook** | `scripts/hook_runner.py` | Cổng chặn kiểm duyệt tiền khởi chạy, nạp JIT kỹ năng, quy tắc và trí nhớ (<25ms nội bộ, ~120ms subprocess). |
-| **JIT Skill Resolver** | `scripts/resolver.py` | Động cơ định tuyến kỹ năng theo segment (<5ms warm, word-boundary, chế tài theo domain). |
-| **Autonomous Synthesizer** | `scripts/synthesizer.py` | Pipeline tự động tạo mẫu, kiểm tra cú pháp AST, chạy thử sandbox và thăng hạng kỹ năng mới. |
-| **Skill Indexer** | `scripts/indexer.py` | Bộ lập chỉ mục tốc độ cao quét 500+ kỹ năng qua 4 nguồn trong 0.12s với khả năng phát hiện thay đổi ở cấp mili-giây. |
-| **Experiential Memory** | `scripts/experiential_memory.py` | Kho lưu trữ vết thực thi với bộ lọc từ dừng và tốc độ truy hồi dưới 1 mili-giây. |
-| **Memory Engine** | `scripts/memory_engine.py` | Lõi tìm kiếm bộ nhớ hỗn hợp SQLite FTS5 BM25 + ONNX Dense Vector Embeddings qua RRF. |
-| **Embedding Service** | `scripts/embedding_service.py` | Dịch vụ sinh vector embedding cục bộ trên CPU bằng `fastembed` (`intfloat/multilingual-e5-small`, 384 chiều). |
-| **Memory Consolidator** | `scripts/consolidator.py` | Daemon tiêu thụ staging log, thăng hạng tri thức và tính toán độ suy giảm Ebbinghaus. |
-| **Architecture Auditor** | `scripts/consult_critic.py` | Client kết nối DeepSeek-V4.1-Flash phản biện kiến trúc độc lập. |
+| **PreInvocation Hook** | `scripts/hook_runner.py` | Bộ chặn tiền khởi chạy tiêm kỹ năng JIT, quy tắc và chỉ thị bộ nhớ (<25ms). |
+| **JIT Skill Resolver** | `scripts/resolver.py` | Bộ máy định tuyến kỹ năng và quy tắc theo phân đoạn (<5ms). |
+| **Omni-Graph CLI** | `scripts/omni_graph.py` | Trình điều khiển quét mã nguồn, kiểm tra hợp đồng chữ ký và xuất đồ thị. |
+| **Omni-Graph Engine** | `scripts/omni_graph/` | Trọn bộ động cơ đồ thị: `storage.py`, `fingerprint.py`, `visitor.py`, `validator.py`, `traversal.py`, `visualizer.py`. |
+| **Autonomous Synthesizer** | `scripts/synthesizer.py` | Quy trình tự soạn thảo, kiểm tra AST, sandbox test và thăng hạng kỹ năng mới. |
+| **Skill Indexer** | `scripts/indexer.py` | Bộ đánh chỉ mục siêu tốc quét 500+ kỹ năng trong 0.12s. |
+| **Experiential Memory** | `scripts/experiential_memory.py` | Lưu trữ và truy xuất các trace thực thi đã kiểm chứng dưới 1ms. |
+| **Memory Engine** | `scripts/memory_engine.py` | Tìm kiếm lai kết hợp SQLite FTS5 BM25 và vector dense qua RRF. |
+| **Embedding Service** | `scripts/embedding_service.py` | Tạo vector nhúng cục bộ trên CPU bằng `fastembed`. |
+| **Memory Consolidator** | `scripts/consolidator.py` | Tiến trình chạy nền gom dữ liệu staging, thăng hạng tri thức và áp dụng suy giảm Ebbinghaus. |
+| **Architecture Auditor** | `scripts/consult_critic.py` | Client phản biện độc lập kết nối DeepSeek-V4.1-Flash để review kiến trúc. |
 
 ---
 
-## 🧪 Kiểm thử Tự động & Chứng thực Thực nghiệm
+## 🧪 Kiểm thử Tự động & Xác minh Thực nghiệm
 
-Omni-Skill Orchestrator duy trì bộ kiểm thử tự động toàn diện với **100% tỷ lệ đỗ (277/277 Tests PASS, 0 Skipped, 0 Flaked)**:
+Omni-Skill Orchestrator duy trì bộ kiểm thử tự động toàn diện với **tỷ lệ đạt 100%**:
 
 ```bash
-# 1. Chạy toàn bộ pytest lõi và spec test suites (117 tests, 0 skipped)
-python -m pytest tests/ specs/001-omni-memory-v4/tests/ specs/002-deepseek-v41-auditor/tests/
+# 1. Chạy toàn bộ kiểm thử lõi và cổng kiểm duyệt DeepSeek (45 tests PASS)
+python -m pytest specs/002-deepseek-v41-auditor/tests/
 
-# 2. Chạy 4 bộ kiểm thử khắc phục Cluster 1–3 & Round 7 (160 tests)
-python scripts/test_cluster_1_remediation.py   # 69/69 passed (SQLite WAL, Outbox 2PC, Phân vùng SHA-256)
-python scripts/test_cluster_2_remediation.py   # 51/51 passed (SLA Hook <25ms, Cổng HMAC, Trust Lock)
-python scripts/test_cluster_3_remediation.py   # 17/17 passed (Resolver, Sandbox AST, CoW Stale-While-Revalidate)
-python scripts/test_round_7_remediation.py     # 23/23 passed (Tích hợp Liên cụm, Proven Recall & Edge Cases)
+# 2. Chạy bài thách thức thực nghiệm & validator hợp đồng chữ ký (16/16 PASS)
+python tests/test_omni_graph_validator_empirical.py
 
-# 3. Chạy Hợp đồng 10 Kịch bản Thực tế, Đánh giá Golden Routing 25 Câu & Đo Benchmark Thật
-python scripts/verify_real_world.py
-# Kết quả: 10/10 Kịch bản PASS | Golden Routing Top-1 = 25/25 (100%), Top-3 = 25/25 (100%)
-# Độ trễ thật: Resolver warm: ~2-5ms | Hook core: ~12-22ms | SQLite FTS5: ~0.3-0.5ms
+# 3. Chạy kiểm thử tích hợp không gian làm việc thực tế (2/2 PASS)
+python tests/test_omni_graph_live.py
+
+# 4. Quét và trực quan hóa bất kỳ workspace nào
+python scripts/omni_graph.py --workspace "." --scan --visualize
 ```
 
 ---
 
-## 📄 Giấy phép
+## 📄 Bản quyền
 
-Phát hành theo giấy phép MIT License. Xem chi tiết tại [LICENSE](LICENSE).
+Giấy phép MIT. Xem chi tiết tại [LICENSE](LICENSE).

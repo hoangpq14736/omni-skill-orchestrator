@@ -1,29 +1,29 @@
 {
-  "timestamp": "2026-11-04 02:30:55",
+  "timestamp": "2026-11-08 03:47:36",
   "user_input": "Thiết kế RFC mới cho module cache",
-  "workspace_dir": "C:\\Users\\vuhuu\\AppData\\Local\\Temp\\tmp4g0q_nxm",
-  "top_skill": "content-hash-cache-pattern",
+  "workspace_dir": "C:\\Users\\vuhuu\\AppData\\Local\\Temp\\tmp9xpyebhx",
+  "top_skill": "module-regression",
   "skills": [
-    {
-      "name": "content-hash-cache-pattern",
-      "version": "1.0.0",
-      "source_type": "library",
-      "raw_score": 65.0,
-      "arbitration_reason": "Optimal candidate for domain 'content'"
-    },
     {
       "name": "module-regression",
       "version": "1.0.0",
       "source_type": "library",
-      "raw_score": 65.0,
+      "raw_score": 105.0,
       "arbitration_reason": "Optimal candidate for domain 'module'"
     },
     {
-      "name": "pubmed-database",
-      "version": "1.4.0",
-      "source_type": "plugin",
-      "raw_score": 63.5,
-      "arbitration_reason": "Optimal candidate for domain 'database'"
+      "name": "content-hash-cache-pattern",
+      "version": "1.0.0",
+      "source_type": "library",
+      "raw_score": 85.0,
+      "arbitration_reason": "Optimal candidate for domain 'content'"
+    },
+    {
+      "name": "ralphinho-rfc-pipeline",
+      "version": "1.0.0",
+      "source_type": "library",
+      "raw_score": 82.5,
+      "arbitration_reason": "Optimal candidate for domain 'ralphinho'"
     }
   ],
   "inferred_rules": [
@@ -33,7 +33,7 @@
   ],
   "suggested_mcp": [],
   "cognitive_pre_flight": {
-    "loi_value": "Apply minimal diff via 'content-hash-cache-pattern' prioritizing standard library and zero bloat.",
+    "loi_value": "Apply minimal diff via 'module-regression' prioritizing standard library and zero bloat.",
     "hai_risks": [
       "Breaking existing callers or schemas without backwards compatibility",
       "Exposing secrets or introducing unvalidated trust boundaries"
@@ -54,13 +54,15 @@
     }
   },
   "tier_assessment": {
-    "score": 0,
+    "score": 25,
     "tier": 1,
     "tier_name": "L1 Reflex",
     "recommend_subagent": false,
     "subagent_role": null,
     "recommended_model": "inherit",
-    "factors": [],
+    "factors": [
+      "Structural Keywords (1)"
+    ],
     "quota_guard": "Engaged (L1 Reflex 0-Token Mode)"
   },
   "proven_traces": [
@@ -83,17 +85,17 @@
         ],
         "success_count": 2,
         "created_at": "2026-11-04 00:35:00",
-        "last_recalled": "2026-11-04 02:30:55"
+        "last_recalled": "2026-11-08 03:47:36"
       },
       "score": 1.1,
       "matched_tokens": [
-        "mới",
-        "cache",
         "kế",
+        "module",
         "rfc",
         "thiết",
-        "module",
-        "cho"
+        "mới",
+        "cho",
+        "cache"
       ]
     }
   ]

@@ -304,13 +304,57 @@ def infer_domain_rules_and_mcp(target_tokens):
     return inferred_rules, inferred_mcp
 
 
+def _enrich_pre_flight_with_graph(intent_text, workspace_dir, pre_flight):
+    """Fail-soft enrichment of Pre-Flight with Omni-Graph Code Topology (<1.5ms)."""
+    if not workspace_dir:
+        return
+    try:
+        from pathlib import Path
+        db_path = Path(workspace_dir) / ".omni" / "codebase_graph.db"
+        if not db_path.exists():
+            return
+
+        import re
+        from omni_graph.storage import get_connection
+        from omni_graph.traversal import compute_blast_radius
+
+        conn = get_connection(workspace_dir, read_only=True, timeout_ms=50)
+        words = re.findall(r"\b[A-Za-z_][A-Za-z0-9_]{3,}\b", intent_text)
+        checked_symbols = set()
+
+        for word in words:
+            if word in checked_symbols:
+                continue
+            checked_symbols.add(word)
+
+            cur = conn.cursor()
+            cur.execute("SELECT name, qualified_name, file_path FROM nodes WHERE name = ? OR qualified_name LIKE ? LIMIT 1", (word, f"%{word}%"))
+            node_row = cur.fetchone()
+            if node_row:
+                sym_name = node_row[0]
+                blast = compute_blast_radius(conn, sym_name, max_depth=3)
+                direct_callers = blast.get("direct_callers", [])
+                impacted_files = blast.get("impacted_files", [])
+                if direct_callers:
+                    caller_names = [c["source_id"].split(":")[-1] for c in direct_callers[:3]]
+                    pre_flight["du_completeness"].append(
+                        f"Omni-Graph Blast Radius: Modifying '{sym_name}' impacts {len(direct_callers)} caller(s) across {len(impacted_files)} file(s) ({', '.join(caller_names)}). Callers must be updated in lockstep."
+                    )
+                    pre_flight["hai_risks"].append(
+                        f"Omni-Graph Signature Guard: '{sym_name}' signature must remain backwards-compatible with callers in: {', '.join(impacted_files[:3])}."
+                    )
+                    break
+        conn.close()
+    except Exception:
+        pass
+
 def build_cognitive_pre_flight(intent_text, workspace_dir, top_skills, inferred_rules, inferred_mcp):
     """
     Constructs the 4-Dimensional Cognitive Pre-Flight Assessment (Lợi - Hại - Đủ - Thiếu).
     """
     top_name = top_skills[0]["skill"]["name"] if top_skills else "ponytail"
     
-    return {
+    pre_flight = {
         "loi_value": f"Apply minimal diff via '{top_name}' prioritizing standard library and zero bloat.",
         "hai_risks": [
             "Breaking existing callers or schemas without backwards compatibility",
@@ -325,6 +369,8 @@ def build_cognitive_pre_flight(intent_text, workspace_dir, top_skills, inferred_
             "suggested_mcp_drivers": inferred_mcp if inferred_mcp else ["Standard OS/Shell tools"]
         }
     }
+    _enrich_pre_flight_with_graph(intent_text, workspace_dir, pre_flight)
+    return pre_flight
 
 
 def load_learned_affinities(path=None):

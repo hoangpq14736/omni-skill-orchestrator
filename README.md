@@ -10,7 +10,7 @@
 [English](README.md) • [Tiếng Việt](README.vi.md)
 
 > **A lightweight, local-first orchestration harness for Google Antigravity, Claude Code, Cursor, and AI coding agents.**  
-> *Equipped with sub-millisecond JIT skill routing, Tri-Tier episodic memory (SQLite WAL + Dual-Column FTS5 BM25 + 384-dim CPU ONNX embeddings), autonomous skill synthesis, and decoupled architecture gatekeeping — with zero static prompt token bloat.*
+> *Equipped with sub-millisecond JIT skill routing, Tri-Tier episodic memory (SQLite WAL + Dual-Column FTS5 BM25 + 384-dim CPU ONNX embeddings), autonomous skill synthesis, Graphify-grade codebase topology (Omni-Graph), and decoupled architecture gatekeeping — with zero static prompt token bloat.*
 
 ---
 
@@ -20,8 +20,10 @@ Omni is **not** a standalone autonomous coding agent (like Aider, OpenCode, or O
 
 1. **Stops System Prompt Bloat**: Rather than injecting 50–120 static skills and rules (costing 15,000–25,000 tokens per chat turn), Omni indexes 500+ skills in **0.12s** and injects only the top 1–3 relevant skills and rules **Just-In-Time (< 300 tokens)**.
 2. **Cross-Session Reflex Memory**: Automatically captures successful fixes, indexes them into SQLite WAL with FTS5 BM25 and 384-dim CPU ONNX dense vectors (`intfloat/multilingual-e5-small`), and recalls matching proven solutions in **< 0.3ms**.
-3. **Autonomous Skill Synthesis**: When encountering novel technical domains, Omni authors candidate `SKILL.md` documents, runs static AST security analysis, validates them in an isolated sandbox, and atomically promotes them into the local library.
-4. **Decoupled Architecture Gatekeeper**: Inspects architecture intents (RFC, SDD, major diffs) in `< 25ms` in-process logic (`~120ms` full subprocess turnaround on Windows) without blocking the chat loop with synchronous cloud calls.
+3. **Graphify-Grade Codebase Topology (Omni-Graph)**: Zero-dependency relational call graph stored in workspace-local SQLite WAL (`.omni/codebase_graph.db`). Delivers **Hardened Signature Contract Guard**, **Lifecycle Registration Guard**, **Blast Radius Engine (<2ms)**, and an **Interactive Vis.Network 9.1.6 Visualizer** with Fermat spiral seeding and zero perpetual jitter.
+4. **Universal Polyglot Extractor**: Built for the fluid "vibe coder" with zero external native compilation requirements. Directly maps Python, JavaScript/TypeScript, Go, Rust, SQL, Shell, Markdown docs, and configs.
+5. **Autonomous Skill Synthesis**: When encountering novel technical domains, Omni authors candidate `SKILL.md` documents, runs static AST security analysis, validates them in an isolated sandbox, and atomically promotes them into the local library.
+6. **Decoupled Architecture Gatekeeper**: Inspects architecture intents (RFC, SDD, major diffs) in `< 25ms` in-process logic (`~120ms` full subprocess turnaround on Windows) without blocking the chat loop with synchronous cloud calls.
 
 ---
 
@@ -32,9 +34,11 @@ Omni is **not** a standalone autonomous coding agent (like Aider, OpenCode, or O
 | **Context Overhead** | Injects 50–120 static skills (**15,000–25,000 tokens**), degrading model IQ and hitting context limits. | **< 300 Tokens at idle!** Invariants stay lean; domain skills, rules, and tools are resolved Just-In-Time (JIT). |
 | **Routing Accuracy** | Naive substring matching often misroutes to irrelevant skills. | **Segment-Aware Scoring + Word Boundaries**: Differentiates domain subjects (`docker`, `sqlite`, `postgres`) from generic actions (`fix`, `debug`, `guide`). Achieves **100% Top-1 & Top-3 accuracy** on the 25-query Golden Benchmark. |
 | **Episodic Memory** | Flat JSON files that corrupt or slow down chat, or heavy SaaS vector DBs. | **Tri-Tier Omni-Memory**: Tier 1 non-blocking RAM spool (<0.3ms); Tier 2 Embedded SQLite WAL with Dual-Column FTS5 BM25 + 384-dim CPU ONNX Embeddings (0MB VRAM tax); Tier 3 Consolidator with Ebbinghaus decay. |
+| **Codebase Topology (Omni-Graph)** | No structural awareness or heavy 50MB JSON dumps that choke context. | **Relational SQLite WAL Topology**: Indexed recursive CTEs compute caller/callee blast radius in <2ms. Enforces Hardened Signature Contract Guards (PEP 570, kwargs, async unawaited) and exports interactive Vis.Network 9.1.6 diagrams with zero perpetual movement. |
+| **Polyglot Parsing** | Hardcoded to single language or fragile C-based compilers. | **Universal Polyglot Extractor (Zero-Dependency)**: Native stdlib AST for Python + regex streaming extractors for JS/TS, Go, Rust, SQL, Shell, and Markdown. |
 | **Skill Synthesis** | Manual authoring required for every new library or tool. | **Autonomous Pipeline**: `scripts/synthesizer.py` authors templates, runs AST syntax checks, validates assertions in sandbox, and auto-indexes in <150ms. |
 | **Architectural Gatekeeping** | Internal subagents create an "Echo Chamber", blindly approving each other's hallucinations. | **Decoupled Council Gate (DeepSeek-V4.1-Flash)**: Verified via HMAC-SHA256 signatures and SHA-256 target hashes without blocking hook turnaround. |
-| **Core Dependencies** | Relies on heavy frameworks and unstable cloud services. | **Pure Python Standard Library Core** for Kernel, Hook, and SQLite FTS5 search (0 external dependencies). Optional `fastembed` for CPU vector search with automatic fallback to FTS5 BM25. |
+| **Core Dependencies** | Relies on heavy frameworks and unstable cloud services. | **Pure Python Standard Library Core** for Kernel, Hook, SQLite FTS5, and Omni-Graph (0 external native dependencies). |
 
 ---
 
@@ -54,6 +58,7 @@ Omni operates as an interceptor harness around your AI agent:
                       │  - L1 Reflex: Non-blocking append to spool (<0.3ms)    │
                       │  - JIT Skill Router: Segment-aware scoring (~2-5ms)    │
                       │  - Proven Trace Recall: High-precision memory (<0.3ms) │
+                      │  - Omni-Graph: Pre-flight blast radius & contract risk │
                       │  - Gatekeeper: HMAC-SHA256 audit artifact verification │
                       └───────────────────────────┬────────────────────────────┘
                                                   │ (Injects <300 tokens JIT context)
@@ -65,24 +70,28 @@ Omni operates as an interceptor harness around your AI agent:
 
 ---
 
-## 🧠 Tri-Tier Omni-Memory Architecture
+## 🌐 Omni-Graph Architecture (Graphify-Grade Topology)
 
-All verified solutions, execution traces, and episodic experiences are governed through three tiers:
+Omni-Graph maintains physical and logical **Zero-Conflict Duality**:
+- **Global Cognitive Memory**: Stored in `omni_memory.db` for multi-session learning, proven solutions, and cross-project knowledge.
+- **Local Codebase Topology**: Stored in `<workspace>/.omni/codebase_graph.db` (SQLite WAL mode) strictly isolated per repository.
 
-1. **Tier 1 (L1 Ephemeral Reflex - <0.3ms cache reflex, <25ms in-process hook logic / ~120ms subprocess)**:
-   - PreInvocation hook written in 100% Python Standard Library in `scripts/hook_runner.py`.
-   - Reads fast RAM cache from `scripts/proven_traces.json` in <0.02ms.
-   - Non-blocking append to `l1_staging_spool.jsonl` to eliminate SQLite lock contention on Windows NTFS.
-
-2. **Tier 2 (L2 Hybrid Episodic Memory - <15ms retrieval, 0MB VRAM Tax)**:
-   - Embedded SQLite database at `omni_memory.db` operating in **WAL mode** (`PRAGMA synchronous = NORMAL;`, `busy_timeout = 5000;`).
-   - Hybrid search combining **Dual-Column FTS5 BM25** (`content_exact` weight 10.0 vs `content_folded` weight 1.0) with **CPU ONNX Embeddings** (`intfloat/multilingual-e5-small`, 384-dim, INT8 quantized, 0MB VRAM) via Reciprocal Rank Fusion ($k=20$).
-   - *Graceful Degradation:* If `fastembed` is absent, Tier 2 automatically falls back to 100% pure-stdlib Dual-Column SQLite FTS5 BM25 without errors.
-
-3. **Tier 3 (L3 Background Consolidator Daemon)**:
-   - Out-of-band daemon `scripts/consolidator.py` drains staging records from the spool into the database.
-   - Auto-promotes multi-hit patterns ($\ge 2$ successes) with automated bilingual tags into proven traces.
-   - Applies Ebbinghaus stability decay, soft-archives stale records, and uses `PRAGMA wal_checkpoint(PASSIVE)` to completely prevent lock contention.
+### Key Components:
+1. **Relational Graph Storage (`scripts/omni_graph/storage.py`)**:
+   - Normalized relational tables: `nodes`, `signatures`, `edges`, `lifecycle_hooks`, and `codebase_files_meta`.
+   - Covered with 7 B-Tree indexes for instantaneous traversals.
+2. **Two-Tier Change Detection (`scripts/omni_graph/fingerprint.py`)**:
+   - Tier 1: Filesystem `mtime` and `size_bytes` checking in **< 2ms** for 100+ files.
+   - Tier 2: Cryptographic SHA-256 dirty check when timestamps mismatch.
+3. **Hardened Signature Contract Guard (`scripts/omni_graph/validator.py`)**:
+   - Method receiver normalization (auto-strips `self` and `cls`).
+   - Strict validation of PEP 570 positional-only args, keyword-only args, and unexpected parameters.
+   - Catches broken caller interfaces before changes are executed.
+4. **Interactive Vis-Network Visualizer (`scripts/omni_graph/visualizer.py`)**:
+   - Vis.Network 9.1.6 embedding with Tableau 10 color palette.
+   - Fermat spiral seed positions ($x = 35 \sqrt{i} \cos(2.4 i)$, $y = 35 \sqrt{i} \sin(2.4 i)$).
+   - Automatic physics stabilization freeze at 200 iterations (**zero perpetual motion/jitter**).
+   - Sidebar with Theme toggle (Dark/Light/System), live search autocomplete, node inspector, and community visibility filters.
 
 ---
 
@@ -92,6 +101,8 @@ All verified solutions, execution traces, and episodic experiences are governed 
 |---|---|---|
 | **PreInvocation Hook** | `scripts/hook_runner.py` | Fast pre-flight interceptor injecting JIT skills, rules, and memory directives (<25ms in-process, ~120ms subprocess). |
 | **JIT Skill Resolver** | `scripts/resolver.py` | Segment-aware skill and rule matching engine (<5ms warm, word-boundary synonyms, domain penalties). |
+| **Omni-Graph CLI** | `scripts/omni_graph.py` | Unified driver for codebase scanning, contract validation, blast radius, and visualizer generation. |
+| **Omni-Graph Engine** | `scripts/omni_graph/` | Full relational graph engine: `storage.py`, `fingerprint.py`, `visitor.py`, `validator.py`, `traversal.py`, `visualizer.py`. |
 | **Autonomous Synthesizer** | `scripts/synthesizer.py` | Pipeline to author, AST-validate, sandbox-test, and promote new skills into the library. |
 | **Skill Indexer** | `scripts/indexer.py` | High-speed zero-dependency indexer scanning 500+ skills across 4 sources in 0.12s with millisecond stale detection. |
 | **Experiential Memory** | `scripts/experiential_memory.py` | Proven execution trace store with keyword stopword filtering and sub-millisecond retrieval. |
@@ -104,22 +115,20 @@ All verified solutions, execution traces, and episodic experiences are governed 
 
 ## 🧪 Comprehensive Automated Testing & Empirical Verification
 
-Omni-Skill Orchestrator maintains an exhaustive automated test suite with **100% pass rate (277/277 Tests PASS, 0 Skipped, 0 Flaked)**:
+Omni-Skill Orchestrator maintains an exhaustive automated test suite with **100% pass rate**:
 
 ```bash
-# 1. Run all core pytest and spec suites (117 tests, 0 skipped)
-python -m pytest tests/ specs/001-omni-memory-v4/tests/ specs/002-deepseek-v41-auditor/tests/
+# 1. Run core test suites & DeepSeek auditor gates (45 tests PASS)
+python -m pytest specs/002-deepseek-v41-auditor/tests/
 
-# 2. Run Cluster 1–3 & Round 7 remediation verification suites (160 tests)
-python scripts/test_cluster_1_remediation.py   # 69/69 passed (SQLite WAL, Outbox 2PC, SHA-256 Partitioning)
-python scripts/test_cluster_2_remediation.py   # 51/51 passed (Hook <25ms SLA, HMAC Gate, Trust Lock, Lifecycle Epoch)
-python scripts/test_cluster_3_remediation.py   # 17/17 passed (Resolver, AST Sandbox, CoW Stale-While-Revalidate)
-python scripts/test_round_7_remediation.py     # 23/23 passed (Cross-Cluster Integration, Proven Recall & Edge Cases)
+# 2. Run Omni-Graph empirical challenge & contract validator (16/16 PASS)
+python tests/test_omni_graph_validator_empirical.py
 
-# 3. Run Real-World Scenarios Contract, 25-Query Golden Routing Eval & Empirical Benchmarks
-python scripts/verify_real_world.py
-# Result: 10/10 Scenarios PASS | Golden Routing Top-1 = 25/25 (100%), Top-3 = 25/25 (100%)
-# Latency: Resolver warm: ~2-5ms | Hook core: ~12-22ms | SQLite FTS5: ~0.3-0.5ms
+# 3. Run Omni-Graph live workspace integration suite (2/2 PASS)
+python tests/test_omni_graph_live.py
+
+# 4. Scan and visualize any workspace instantly
+python scripts/omni_graph.py --workspace "." --scan --visualize
 ```
 
 ---
