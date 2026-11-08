@@ -11,6 +11,10 @@
 > **A lightweight, local-first orchestration harness for Google Antigravity, Claude Code, Cursor, and autonomous AI coding agents.**  
 > *Equipped with sub-millisecond JIT skill routing, Tri-Worker Fleet delegation (Local MI50 + Groq 120B LPU + Gemini Heavy Cloud 1M), Tri-Tier episodic memory (SQLite WAL + Dual-Column FTS5 BM25 + 384-dim CPU ONNX embeddings), Graphify-grade codebase topology (Omni-Graph), and decoupled DeepSeek-V4.1-Flash (1M context) architecture gatekeeping — with zero static prompt token bloat.*
 
+> [!WARNING]
+> ### ⚠️ Personal Tailor-Made Project (Dự Án Cá Nhân Đo Ni Đóng Giày)
+> This repository is exclusively customized and tightly coupled to the personal workflow, hardware infrastructure (AMD Instinct MI50 16GB, Groq LPU, Google Cloud API budget, and specific Windows NTFS paths), and local tooling of its creator. It is **NOT designed, maintained, or supported for general public use**. External setup attempts will likely fail due to strict host-specific paths, private IPC mutexes, and unique hardware dependencies.
+
 ---
 
 ## 🎯 What is Omni-Skill Orchestrator?

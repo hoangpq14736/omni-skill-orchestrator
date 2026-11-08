@@ -11,6 +11,10 @@
 > **Lớp điều phối (harness) siêu nhẹ, vận hành cục bộ (local-first) dành cho Google Antigravity, Claude Code, Cursor và các AI coding agent.**  
 > *Trang bị cơ chế định tuyến kỹ năng JIT tốc độ dưới mili-giây, Hạm đội Tri-Worker tự động phân luồng (Local MI50 + Groq 120B LPU + Gemini Heavy Cloud 1M), kiến trúc trí nhớ đa tầng Tri-Tier (SQLite WAL + Dual-Column FTS5 BM25 + CPU ONNX Embeddings 384 chiều), đồ thị cấu trúc codebase chuẩn Graphify (Omni-Graph), và cổng kiểm duyệt kiến trúc độc lập DeepSeek-V4.1-Flash (1M context) — với 0 token tĩnh lãng phí.*
 
+> [!WARNING]
+> ### ⚠️ Dự Án Cá Nhân Đo Ni Đóng Giày (Personal Tailor-Made Project)
+> Repository này là dự án cá nhân được thiết kế và tùy biến riêng biệt ("đo ni đóng giày") 100% cho tác giả, gắn liền với hạ tầng phần cứng cụ thể (AMD Instinct MI50 16GB, Groq LPU, hạn mức Google Cloud API, đường dẫn Windows NTFS cục bộ) và thói quen làm việc riêng. Dự án **KHÔNG dành cho cộng đồng, không hỗ trợ cài đặt hay phục vụ mục đích sử dụng chung**. Vui lòng không sao chép hoặc cố gắng cài đặt nếu không có cùng hạ tầng phần cứng và môi trường đặc thù.
+
 ---
 
 ## 🎯 Omni-Skill Orchestrator thực sự là gì?
