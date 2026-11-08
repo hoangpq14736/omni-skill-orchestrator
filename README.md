@@ -26,6 +26,7 @@ Omni is **not** a standalone autonomous coding agent (like Aider, OpenCode, or O
 6. **Decoupled Architecture Gatekeeper**: Inspects architecture intents (RFC, SDD, major diffs) in `< 25ms` in-process logic (`~120ms` full subprocess turnaround on Windows) without blocking the chat loop with synchronous cloud calls.
 7. **Episodic Anti-Patterns Engine & Heuristic Guard**: Traps execution failures (non-zero exits, structural errors, syntax traps) via a 3-tier heuristic filter, indexing recurring anti-patterns into SQLite WAL with TTL-based expiration and proactive consolidation, eliminating repeated failure traps.
 8. **Windows Service & Background Consolidator**: Autonomous daemon running silent 15-minute background cycles via Windows Task Scheduler (`pythonw.exe`), performing out-of-band Ebbinghaus memory decay, pattern promotion, and proactive TTL sweeps without user intervention or terminal locking.
+9. **Universal Portability & Git-Root Identity**: Completely decouples the harness from machine-specific paths, drive letters, and user accounts. Uses canonical Git Remote URL hashes for cross-drive/cross-machine memory recall (Dual-Lookup), provides a 1-click bootstrapper (`scripts/bootstrap.py`), and auto-falls back to Groq Cloud LPU when local workers are offline.
 
 ---
 
@@ -114,6 +115,7 @@ Omni-Graph maintains physical and logical **Zero-Conflict Duality**:
 | **Architecture Auditor** | `scripts/consult_critic.py` | External Red-Teaming critic client connecting to DeepSeek-V4.1-Flash for architecture review. |
 | **Anti-Pattern Guard** | `scripts/antipattern_guard.py` | Autonomous 3-tier post-execution failure interceptor & recurrent anti-pattern filter. |
 | **Windows Service Manager** | `scripts/service_manager.py` | Non-admin Windows Task Scheduler manager running silent background consolidation via `pythonw.exe`. |
+| **Environment Bootstrapper** | `scripts/bootstrap.py` | 1-Click environment installer, auto-configuring plugin links, SQLite WAL, Task Scheduler, and Omni-Graph. |
 
 ---
 
@@ -136,6 +138,9 @@ python scripts/omni_graph.py --workspace "." --scan --visualize
 
 # 5. Run Episodic Anti-Patterns & Heuristic Guard test suite (7/7 PASS)
 python -m unittest tests/test_antipatterns.py tests/test_antipattern_guard.py tests/test_consolidator_antipatterns.py
+
+# 6. Run Universal Portability & Zero-PII test suite (6/6 PASS)
+python -m unittest tests/test_portability.py
 ```
 
 ---

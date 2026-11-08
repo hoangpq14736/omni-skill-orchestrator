@@ -9,7 +9,7 @@ if _SCRIPT_DIR not in sys.path:
 
 from indexer import build_index, parse_frontmatter
 
-LIBRARY_DIR = r"C:\Users\vuhuu\.gemini\config\skills_library"
+LIBRARY_DIR = os.path.join(os.path.expanduser("~"), ".gemini", "config", "skills_library")
 os.makedirs(LIBRARY_DIR, exist_ok=True)
 
 HEADERS = {"User-Agent": "Mozilla/5.0", "Accept": "application/vnd.github.v3+json"}

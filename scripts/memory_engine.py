@@ -18,7 +18,7 @@ from typing import Dict, List, Optional, Tuple, Any
 
 _local = threading.local()
 
-from memory_utils import fold_vietnamese, sanitize_fts5_query, canonical_workspace_hash, redact_secrets, is_valid_hex_hash, persist_diag
+from memory_utils import fold_vietnamese, sanitize_fts5_query, canonical_workspace_hash, redact_secrets, is_valid_hex_hash, persist_diag, get_workspace_hashes
 
 
 # ============================================================================
@@ -681,7 +681,7 @@ def recall_antipatterns(
     Increments trigger_count when matching pattern is intercepted.
     """
     import datetime
-    ws_hash = canonical_workspace_hash(workspace_dir)
+    ws_hashes = get_workspace_hashes(workspace_dir)
     now = datetime.datetime.now(datetime.timezone.utc)
     now_iso = now.isoformat()
 
@@ -691,15 +691,16 @@ def recall_antipatterns(
 
     try:
         cur = conn.cursor()
+        placeholders = ",".join("?" for _ in ws_hashes)
         cur.execute(
-            """
+            f"""
             SELECT antipattern_id, workspace_hash, tool_name, command_pattern,
                    error_signature, root_cause, mitigation_guidance, ttl_days,
                    trigger_count, status, last_triggered_at, created_at
             FROM episodic_antipatterns
-            WHERE status = 'Active' AND workspace_hash = ?
+            WHERE status = 'Active' AND workspace_hash IN ({placeholders})
             """,
-            (ws_hash,)
+            tuple(ws_hashes)
         )
         rows = cur.fetchall()
         matched = []

@@ -26,6 +26,7 @@ Omni **không phải** là một tác tử lập trình độc lập (như Aider
 6. **Cổng kiểm duyệt kiến trúc độc lập (Council Gate)**: Phát hiện các yêu cầu thiết kế hệ thống lớn (RFC, SDD, diff lớn) trong `< 25ms` logic nội bộ (`~120ms` toàn tiến trình subprocess trên Windows) mà không làm tắc nghẽn phiên chat bằng các lệnh gọi mạng đồng bộ.
 7. **Động cơ Bẫy Lỗi Thực nghiệm (Episodic Anti-Patterns & Heuristic Guard)**: Tự động phát hiện và ghi nhận các lỗi thực thi dòng lệnh (exit code != 0, lỗi cú pháp quoting, thiếu module) qua bộ lọc 3 tầng, lưu vết với cơ chế TTL 14 ngày và quét dọn chủ động, ngăn chặn tác tử rơi lại vào các bẫy lỗi cũ mà không cần viết prompt thủ công.
 8. **Trình Quản lý Dịch vụ Chạy Nền Windows (Windows Service & Task Scheduler Manager)**: Quản lý tác vụ chạy ngầm định kỳ 15 phút qua `pythonw.exe` và Task Scheduler (`scripts/service_manager.py`), tự động dọn rác, suy giảm Ebbinghaus và quét bản ghi hết hạn mà không hiện cửa sổ terminal hay khóa tiến trình.
+9. **Tính Di Động Toàn Năng & Định Danh Git-Root (Universal Portability)**: Tách rời hoàn toàn khỏi các đường dẫn ổ đĩa cố định và tên tài khoản máy tính. Sử dụng mã băm URL Git Remote để nhận diện dự án liên ổ đĩa (Dual-Lookup), cung cấp bộ cài đặt 1-click (`scripts/bootstrap.py`), và tự động chuyển vùng sang Groq Cloud LPU khi worker cục bộ offline.
 
 ---
 
@@ -86,6 +87,7 @@ Omni-Graph thực thi nguyên tắc **Zero-Conflict Duality**:
 | **Architecture Auditor** | `scripts/consult_critic.py` | Client phản biện độc lập kết nối DeepSeek-V4.1-Flash để review kiến trúc. |
 | **Anti-Pattern Guard** | `scripts/antipattern_guard.py` | Bộ đánh chặn lỗi hậu thực thi 3 tầng phân loại & chống bẫy tái diễn. |
 | **Windows Service Manager** | `scripts/service_manager.py` | Bộ quản lý Windows Task Scheduler chạy nền silent consolidator qua `pythonw.exe`. |
+| **Environment Bootstrapper** | `scripts/bootstrap.py` | Trình cài đặt môi trường 1-Click, tự động liên kết plugin, khởi tạo SQLite WAL, Task Scheduler và Omni-Graph. |
 
 ---
 
@@ -108,6 +110,9 @@ python scripts/omni_graph.py --workspace "." --scan --visualize
 
 # 5. Chạy bộ kiểm thử Bẫy Lỗi Thực nghiệm & Bộ lọc Đánh chặn (7/7 PASS)
 python -m unittest tests/test_antipatterns.py tests/test_antipattern_guard.py tests/test_consolidator_antipatterns.py
+
+# 6. Chạy bộ kiểm thử Di Động & Khử Hardcode PII (6/6 PASS)
+python -m unittest tests/test_portability.py
 ```
 
 ---

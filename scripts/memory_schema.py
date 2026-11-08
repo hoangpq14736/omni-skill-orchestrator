@@ -8,6 +8,8 @@ import sqlite3
 import uuid
 from typing import Optional
 
+CURRENT_SCHEMA_VERSION = 410
+
 DDL_PRAGMAS = """
 PRAGMA journal_mode = WAL;
 PRAGMA synchronous = NORMAL;
@@ -495,6 +497,10 @@ def init_database(db_path: str = "omni_memory.db", isolation_level: Optional[str
     verified_ae = [r[1] for r in conn.execute("PRAGMA table_info(activation_events);").fetchall()]
     if "last_error" not in verified_ae:
         raise RuntimeError(f"activation_events missing last_error column (expected last_error; found {verified_ae})")
+
+    cur_v = conn.execute("PRAGMA user_version;").fetchone()[0]
+    if cur_v < CURRENT_SCHEMA_VERSION:
+        conn.execute(f"PRAGMA user_version = {CURRENT_SCHEMA_VERSION};")
 
     conn.isolation_level = target_isolation
     return conn

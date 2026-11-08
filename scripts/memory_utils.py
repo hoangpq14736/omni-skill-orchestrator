@@ -10,7 +10,8 @@ import re
 import unicodedata
 import stat
 import threading
-from typing import Optional, Any, Tuple
+from pathlib import Path
+from typing import Optional, Any, Tuple, List
 
 __all__ = [
     "redact_secrets",
@@ -23,6 +24,10 @@ __all__ = [
     "is_valid_hex_hash",
     "canonical_workspace_hash",
     "legacy_workspace_hash",
+    "resolve_git_remote_url",
+    "git_workspace_hash",
+    "get_workspace_hashes",
+    "get_omni_memory_db_path",
     "get_audit_hmac_key",
     "sign_audit_meta",
     "verify_audit_meta",
@@ -291,6 +296,96 @@ def legacy_workspace_hash(path: Optional[str]) -> str:
     normalized_path = unicodedata.normalize("NFC", str(path))
     canonical = os.path.normcase(os.path.realpath(os.path.abspath(normalized_path)))
     return hashlib.md5(canonical.encode("utf-8")).hexdigest()
+
+
+def resolve_git_remote_url(path: Optional[str]) -> Optional[str]:
+    """
+    Locates the nearest .git directory from path and extracts normalized origin URL.
+    100% pure Python standard library, zero subprocess overhead.
+    """
+    if not path or is_valid_hex_hash(path, length=64) or is_valid_hex_hash(path, length=32):
+        return None
+    try:
+        cur = Path(os.path.normcase(os.path.realpath(os.path.abspath(path))))
+        while cur and cur != cur.parent:
+            git_dir = cur / ".git"
+            if git_dir.is_dir():
+                cfg_file = git_dir / "config"
+                if cfg_file.is_file():
+                    content = cfg_file.read_text(encoding="utf-8", errors="ignore")
+                    m = re.search(r'\[remote\s+"origin"\][^\[]*?url\s*=\s*([^\r\n]+)', content, re.IGNORECASE)
+                    if m:
+                        raw_url = m.group(1).strip()
+                        norm = re.sub(r'\.git$', '', raw_url, flags=re.IGNORECASE).strip().rstrip("/").lower()
+                        return norm
+                break
+            cur = cur.parent
+    except Exception:
+        pass
+    return None
+
+
+def git_workspace_hash(path: Optional[str]) -> Optional[str]:
+    """
+    Generate deterministic SHA-256 hash based on canonical git remote origin URL.
+    Guarantees cross-machine / cross-drive partition preservation.
+    """
+    remote_url = resolve_git_remote_url(path)
+    if remote_url:
+        return hashlib.sha256(f"git:{remote_url}".encode("utf-8")).hexdigest()
+    return None
+
+
+def get_workspace_hashes(path: Optional[str]) -> List[str]:
+    """
+    Returns all valid workspace hash aliases for partition recall:
+    [canonical_path_hash, git_hash] (deduplicated).
+    Enables dual-lookup so records keyed by either path or git identity are seamlessly recalled.
+    """
+    if not path:
+        return [canonical_workspace_hash(path)]
+    if is_valid_hex_hash(path, length=64):
+        return [path.lower()]
+
+    hashes = []
+    p_hash = canonical_workspace_hash(path)
+    hashes.append(p_hash)
+
+    g_hash = git_workspace_hash(path)
+    if g_hash and g_hash not in hashes:
+        hashes.append(g_hash)
+
+    return hashes
+
+
+def get_omni_memory_db_path(workspace_dir: Optional[str] = None) -> str:
+    """
+    Resolves the canonical SQLite DB path using the Hybrid Dual-Zone architecture:
+    1. OMNI_MEMORY_PATH environment variable override (if set).
+    2. Local Dev Lab: If workspace_dir contains an existing 'omni_memory.db', use it.
+    3. Global Production: Default to ~/.gemini/omni_memory.db (auto-creates directory).
+    """
+    env_override = os.environ.get("OMNI_MEMORY_PATH")
+    if env_override:
+        return env_override
+
+    # Check local workspace dev lab
+    if workspace_dir:
+        local_db = os.path.join(workspace_dir, "omni_memory.db")
+        if os.path.isfile(local_db):
+            return local_db
+        global_dir = os.path.join(os.path.expanduser("~"), ".gemini")
+        os.makedirs(global_dir, exist_ok=True)
+        return os.path.join(global_dir, "omni_memory.db")
+
+    cur_local = os.path.join(os.getcwd(), "omni_memory.db")
+    if os.path.isfile(cur_local):
+        return cur_local
+
+    # Global production path
+    global_dir = os.path.join(os.path.expanduser("~"), ".gemini")
+    os.makedirs(global_dir, exist_ok=True)
+    return os.path.join(global_dir, "omni_memory.db")
 
 
 # ----------------------------------------------------------------------

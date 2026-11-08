@@ -75,3 +75,8 @@ def poll_socket_alive(host: str = "127.0.0.1", port: int = 8080, timeout_sec: fl
             return True
     except (socket.timeout, ConnectionRefusedError, OSError):
         return False
+
+
+def is_local_worker_available(host: str = "127.0.0.1", port: int = 8080, timeout_sec: float = 0.5) -> bool:
+    """Fast probe (<500ms) to check if local AMD MI50 server is active for execution routing."""
+    return poll_socket_alive(host=host, port=port, timeout_sec=timeout_sec)

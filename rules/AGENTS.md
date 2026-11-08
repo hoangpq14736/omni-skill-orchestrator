@@ -14,19 +14,19 @@ You have access to the **Omni-Kernel v4.1 Orchestrator**, a unified autonomous i
 
 2. **Mandatory Step 0 Gatekeeper & Cognitive Pre-Flight Loop**:
    - BEFORE planning or modifying code on any technical task:
-     Execute: `python "C:/Users/vuhuu/.gemini/config/plugins/omni-skill-orchestrator/scripts/resolver.py" --intent "<user_query>" --workspace "<current_workspace>"`
+     Execute: `python "%USERPROFILE%/.gemini/config/plugins/omni-skill-orchestrator/scripts/resolver.py" --intent "<user_query>" --workspace "<current_workspace>"`
    - Use `read_file` to read the top candidate's `SKILL.md` before generating code.
    - Assess the 4 Cognitive Axes: **Lợi (Value)**, **Hại (Risks)**, **Đủ (Completeness)**, **Thiếu (Implicit Inferred Requirements)**.
 
 3. **Autonomous Skill & Tool Synthesis (Self-Bootstrapping)**:
    - When a required domain or skill is missing from the 500+ library:
      Synthesize and validate in sandbox:
-     `python "C:/Users/vuhuu/.gemini/config/plugins/omni-skill-orchestrator/scripts/synthesizer.py" --name "<name>" --desc "<desc>" --domain "<domain>" --test "<test_code>"`
+     `python "%USERPROFILE%/.gemini/config/plugins/omni-skill-orchestrator/scripts/synthesizer.py" --name "<name>" --desc "<desc>" --domain "<domain>" --test "<test_code>"`
    - Omni automatically reindexes the library in <150ms.
 
 4. **Continuous Meta-Learning & Feedback Loop**:
    - When an alternative skill is selected or corrected:
-     `python "C:/Users/vuhuu/.gemini/config/plugins/omni-skill-orchestrator/scripts/resolver.py" --intent "<user_query>" --workspace "<current_workspace>" --feedback "<chosen_skill>"`
+     `python "%USERPROFILE%/.gemini/config/plugins/omni-skill-orchestrator/scripts/resolver.py" --intent "<user_query>" --workspace "<current_workspace>" --feedback "<chosen_skill>"`
    - Omni dynamically adapts learned affinities (`learned_affinities.json`).
 
 5. **Dual Worker Fleet Directives (Local MI50 + Groq Cloud LPU)**:
@@ -39,7 +39,7 @@ You have access to the **Omni-Kernel v4.1 Orchestrator**, a unified autonomous i
 
 6. **Architectural Gatekeeper & Council Protocol**:
    - When designing major systems, starting new projects, or drafting RFC/FRC specifications:
-     Execute: `python "C:/Users/vuhuu/.gemini/config/plugins/omni-skill-orchestrator/scripts/consult_critic.py" --file "<path_to_rfc>" --out "<path_to_review>"` (powered by DeepSeek-V4.1-Flash).
+     Execute: `python "%USERPROFILE%/.gemini/config/plugins/omni-skill-orchestrator/scripts/consult_critic.py" --file "<path_to_rfc>" --out "<path_to_review>"` (powered by DeepSeek-V4.1-Flash).
      Incorporate independent red-teaming critique and edge-case mitigations into the final blueprint before dispatching implementation tasks to worker fleet.
      Enforces strict POSIX exit codes (0=Approved, 1=Critique generated, 2=Auth/Quota, 3=Timeout/Network, 4=Usage/Config, 5=Strict rejection).
      Strictly prohibits internal self-review ("echo chamber") with duplicate Gemini subagents.
@@ -51,7 +51,7 @@ You have access to the **Omni-Kernel v4.1 Orchestrator**, a unified autonomous i
 
 8. **Kernel Version & Skill Alignment Invariant**:
    - All active skills, SDD blueprints, and orchestration scripts MUST align with the ratified Constitution version (`v4.1.0`).
-   - Run `python "C:/Users/vuhuu/.gemini/config/plugins/omni-skill-orchestrator/scripts/updater.py" --sync-kernel` to resolve any version drift across the ecosystem.
+   - Run `python "%USERPROFILE%/.gemini/config/plugins/omni-skill-orchestrator/scripts/updater.py" --sync-kernel` to resolve any version drift across the ecosystem.
 
 <!-- OMNI-KERNEL-START v4.1.0 -->
 # --- OMNI-KERNEL v4.1 AGENT INVARIANTS ---
