@@ -105,6 +105,21 @@ python scripts/omni_graph.py --workspace "." --scan --visualize
 
 ---
 
+## 🙏 Lời Cảm Ơn & Nguồn Cảm Hứng (Acknowledgements)
+
+Omni-Skill Orchestrator được xây dựng dựa trên sự kế thừa và học hỏi từ các công trình mã nguồn mở xuất sắc của cộng đồng. Chúng tôi xin gửi lời cảm ơn và tri ân sâu sắc tới các tác giả và dự án tiên phong sau:
+
+- **[Graphify](https://github.com/Graphify-Labs/graphify)** (*Graphify-Labs*): Người tiên phong trong việc chuyển hóa toàn bộ codebase thành đồ thị tri thức truy vấn được cho trợ lý AI, thuật toán phân bổ nút xoắn ốc Fermat, và giao diện trực quan hóa tương tác Vis.Network đã trực tiếp định hình nên tính năng Omni-Graph.
+- **[Spec Kit](https://github.com/github/spec-kit)** (*GitHub*): Dự án nguồn cảm hứng cho quy trình 10 bước Kỹ nghệ Phần mềm Theo Đặc tả (Specification-Driven Development - SDD) định hình tư duy kỷ luật kiến trúc của hệ thống.
+- **[Ponytail](https://github.com/DietrichGebert/ponytail)** (*Dietrich Gebert*): Triết lý lập trình tối giản đỉnh cao (Lazy Senior Dev Mode): sự khác biệt hoàn chỉnh nhỏ nhất, ưu tiên thư viện chuẩn hơn là dependencies cồng kềnh, YAGNI, và minh bạch rủi ro.
+- **[Hermes-Agent](https://github.com/NousResearch/hermes-agent)** (*Nous Research*): Cấu trúc tác tử tự chủ cao (high-agency), mô hình điều phối đa công cụ và cơ chế phản xạ bộ nhớ thực nghiệm.
+- **[Awesome Agent Skills](https://github.com/VoltAgent/awesome-agent-skills)** (*VoltAgent*): Hệ thống phân loại và kho kỹ năng quy chuẩn mẫu mực cho các tác tử AI.
+- **[DeepSeek AI](https://github.com/deepseek-ai)** (*DeepSeek*): Mô hình lý luận đột phá làm nền tảng cho Cổng Kiểm duyệt Kiến trúc Độc lập (Council Gate) chống buồng vang tự kỷ.
+- **[Vis.js Network](https://github.com/visjs/vis-network)**: Engine mô phỏng vật lý và vẽ đồ thị mạng nhện tương tác mượt mà chạy trực tiếp trên trình duyệt.
+- **[FastEmbed](https://github.com/qdrant/fastembed)** (*Qdrant*) & **[IntFloat](https://huggingface.co/intfloat)**: Mô hình nhúng CPU ONNX hiệu năng cao (`multilingual-e5-small`) cho phép truy xuất bộ nhớ ngữ nghĩa với 0MB tiêu tốn GPU.
+
+---
+
 ## 📄 Bản quyền
 
 Giấy phép MIT. Xem chi tiết tại [LICENSE](LICENSE).

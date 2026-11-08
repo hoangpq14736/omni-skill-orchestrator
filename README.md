@@ -133,6 +133,21 @@ python scripts/omni_graph.py --workspace "." --scan --visualize
 
 ---
 
+## 🙏 Acknowledgements & Inspirations
+
+Omni-Skill Orchestrator stands on the shoulders of remarkable open-source engineering. We extend our deepest gratitude to the creators and maintainers of the following pioneering projects whose architectures, principles, and designs directly inspired this work:
+
+- **[Graphify](https://github.com/Graphify-Labs/graphify)** (*Graphify-Labs*): Pioneered the concept of turning entire codebases into queryable knowledge graphs for AI assistants, the Fermat spiral node distribution, and the interactive Vis.Network topology visualization that directly guided Omni-Graph.
+- **[Spec Kit](https://github.com/github/spec-kit)** (*GitHub*): Inspired the 10-phase Specification-Driven Development (SDD) methodology that enforces our specification-first engineering discipline.
+- **[Ponytail](https://github.com/DietrichGebert/ponytail)** (*Dietrich Gebert*): The foundational philosophy of radical simplicity: shortest complete working diff, standard library precedence, YAGNI, and honest risk transparency.
+- **[Hermes-Agent](https://github.com/NousResearch/hermes-agent)** (*Nous Research*): High-agency agent patterns, multi-tool orchestration, and experiential reflex memory.
+- **[Awesome Agent Skills](https://github.com/VoltAgent/awesome-agent-skills)** (*VoltAgent*): Outstanding curated taxonomy for production-ready AI skills and tool specifications.
+- **[DeepSeek AI](https://github.com/deepseek-ai)** (*DeepSeek*): Frontier reasoning capabilities that power our independent Decoupled Architecture Gatekeeper (Council Protocol).
+- **[Vis.js Network](https://github.com/visjs/vis-network)**: The extraordinary browser-based network visualization engine powering our interactive, zero-jitter topology explorer.
+- **[FastEmbed](https://github.com/qdrant/fastembed)** (*Qdrant*) & **[IntFloat](https://huggingface.co/intfloat)**: High-efficiency CPU ONNX embeddings (`multilingual-e5-small`) enabling zero-GPU semantic memory retrieval.
+
+---
+
 ## 📄 License
 
 MIT License. See [LICENSE](LICENSE) for details.
