@@ -26,7 +26,16 @@ Omni is **not** a standalone autonomous coding agent (like Aider, OpenCode, or O
 6. **Decoupled Architecture Gatekeeper**: Inspects architecture intents (RFC, SDD, major diffs) in `< 25ms` in-process logic (`~120ms` full subprocess turnaround on Windows) without blocking the chat loop with synchronous cloud calls.
 7. **Episodic Anti-Patterns Engine & Heuristic Guard**: Traps execution failures (non-zero exits, structural errors, syntax traps) via a 3-tier heuristic filter, indexing recurring anti-patterns into SQLite WAL with TTL-based expiration and proactive consolidation, eliminating repeated failure traps.
 8. **Windows Service & Background Consolidator**: Autonomous daemon running silent 15-minute background cycles via Windows Task Scheduler (`pythonw.exe`), performing out-of-band Ebbinghaus memory decay, pattern promotion, and proactive TTL sweeps without user intervention or terminal locking.
-9. **Universal Portability & Git-Root Identity**: Completely decouples the harness from machine-specific paths, drive letters, and user accounts. Uses canonical Git Remote URL hashes for cross-drive/cross-machine memory recall (Dual-Lookup), provides a 1-click bootstrapper (`scripts/bootstrap.py`), and auto-falls back to Groq Cloud LPU when local workers are offline.
+9. **Universal Portability & Git-Root Identity**: Completely decouples the harness from machine-specific paths, drive letters, and user accounts. Uses canonical Git Remote URL hashes for cross-drive/cross-machine memory recall (Dual-Lookup), provides a 1-click bootstrapper (`setup.bat` / `scripts/bootstrap.py`), and auto-falls back to Groq Cloud LPU when local workers are offline.
+
+---
+
+## 🚀 1-Click Machine Setup (setup.bat)
+
+When switching to a new PC or reinstalling Windows, simply double-click `setup.bat` (or run `./setup.bat` in terminal). It automatically:
+- Detects Python runtime (or prompts to auto-install Python via `winget` if missing).
+- Synchronizes the repository to the active Gemini plugin directory (`%USERPROFILE%/.gemini/...`).
+- Validates SQLite WAL schema, registers the silent 15-minute background Task Scheduler consolidation, and scans Omni-Graph topology in under 2 seconds.
 
 ---
 
