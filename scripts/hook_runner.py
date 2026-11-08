@@ -461,7 +461,8 @@ def build_preflight_message(resolution: dict, gatekeeper_text: str = None, drift
     lines.append("\n🤖 Active Hardware & Worker Fleet Directives (MANDATORY DELEGATION INVARIANT):")
     lines.append("  * local_worker_mi50: AMD Instinct MI50 (Vega 20, 16GB HBM2 @ 1024 GB/s) via http://127.0.0.1:8080/v1 (48.5 tok/s, 16k context, SQLite/IPC/FastEdit)")
     lines.append("  * groq_worker_cloud: Groq LPU (openai/gpt-oss-120b) via Cloud API (300-800+ tok/s, pure algorithmic/transformation tasks)")
-    lines.append("  * DELEGATION MANDATE: Do NOT generate large code or tests in Cloud context. Delegate code generation and unit tests to 'groq_worker_cloud' (groq_code_gen, groq_generate_tests) and local edits to 'local_worker_mi50' (fast_edit, execute_code_task). Cloud agent acts strictly as Architect & Gatekeeper.")
+    lines.append("  * gemini_worker_cloud: Google Gemini 3.5 Flash-Lite / 3.8 Flash (1M context, heavy code generation, multimodal vision, Argon deep reasoning via 10$/month API credits)")
+    lines.append("  * DELEGATION MANDATE: Do NOT generate large code or tests in Cloud context. Delegate fast code/tests to 'groq_worker_cloud' (groq_code_gen, groq_generate_tests), heavy/multimodal tasks to 'gemini_worker_cloud' (gemini_heavy_code_gen, gemini_multimodal_vision), and local edits to 'local_worker_mi50' (fast_edit, execute_code_task). Cloud agent acts strictly as Architect & Gatekeeper.")
 
     # 7. Dual-Tier Cognitive Routing & Quota Guard
     tier_info = resolution.get("tier_assessment", {})

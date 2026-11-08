@@ -88,7 +88,7 @@ CANONICAL_KERNEL_RULES_V41 = """# --- OMNI-KERNEL v4.1 AGENT INVARIANTS ---
 # 2. Reliable Engineering: Fail loudly with context. Never swallow exceptions. Immutability first.
 # 3. Ponytail Simplicity: Smallest complete working diff wins. YAGNI. Codebase > Stdlib > Deps.
 # 4. Bilingual Native Parity: First-class English & Tiếng Việt reasoning and indexing.
-# 5. Dual Worker Fleet: Mandatory delegation to local_worker_mi50 (AMD MI50) & groq_worker_cloud (Groq LPU).
+# 5. Tri-Worker Fleet: Mandatory delegation to local_worker_mi50 (AMD MI50), groq_worker_cloud (Groq LPU), and gemini_worker_cloud (Google Gemini).
 # 6. Tri-Tier Memory: L1 Reflex (<0.3ms), L2 WAL FTS5+ONNX (<15ms), L3 Consolidator.
 # 7. Mandatory Transparency: Always render Omni-Kernel badge at the head of every response."""
 

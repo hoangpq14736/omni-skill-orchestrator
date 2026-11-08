@@ -98,7 +98,7 @@ SDD is deeply integrated with the **Omni-Memory v4.1 Tri-Tier Cognitive Hierarch
 
 ### 5. `council_gate` (Strict Architecture Gatekeeper / Red-Teaming)
 - **Purpose**: Subject the completed `spec.md` and `plan.md` to independent architectural review before task execution.
-- **Mechanism**: Invokes the **Omni-Auditor Gatekeeper (DeepSeek-V4.1-Flash Council Gate)** via `consult_critic.py` or `deepseek_worker_mcp`.
+- **Mechanism**: Invokes the **Omni-Auditor Gatekeeper (DeepSeek-V4.1-Flash Council Gate)** via `consult_critic.py` or `deepseek_worker_mcp` with native **1,000,000 tokens context window**, accepting full project context, database schemas, and codebase references.
 - **Invariant**: Strict prohibition against internal self-review ("echo chamber"). Hard rejection if any Ring 0 invariant or constitutional rule is violated.
 
 ### 6. `tasks` (Actionable Task Decomposition)
@@ -114,8 +114,9 @@ SDD is deeply integrated with the **Omni-Memory v4.1 Tri-Tier Cognitive Hierarch
 ### 7. `implement` (Step-by-Step Task Execution & Worker Fleet)
 - **Purpose**: Execute tasks sequentially following `tasks.md`.
 - **Fleet Allocation**:
-  - `groq_worker_cloud` (Groq LPU): Generates boilerplate, AST parsing, and rapid unit test suites.
-  - `local_worker_mi50` (AMD Instinct MI50): In-place file edits (`fast_edit`), SQLite WAL transactions, 100% offline.
+  - `groq_worker_cloud` (Groq LPU): Generates boilerplate, AST parsing, and rapid unit test suites (<1s turnaround).
+  - `local_worker_mi50` (AMD Instinct MI50): In-place file edits (`fast_edit`), SQLite WAL transactions, 100% offline Ring 0 security.
+  - `gemini_worker_cloud` (Google Gemini 3.5 Lite / 3.8 Flash): Generates large-context modules (>32K context), multi-file refactoring with 1M tokens context, and multimodal vision specs; calls `gemini-4-argon` for deep algorithmic/reasoning problems.
 - **Rules**:
   - Complete tasks one at a time or in small atomic batches.
   - Mark finished tasks as `- [x] T001: Description`.

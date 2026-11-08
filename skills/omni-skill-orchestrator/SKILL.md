@@ -25,6 +25,7 @@ The **Omni-Kernel Orchestrator** is an autonomous AI cognitive kernel and unifie
 6. **Worker Fleet Protocol**:
    - `local_worker_mi50` (AMD Instinct MI50 16GB HBM2 @ 1024 GB/s): Dedicated to SQLite WAL data access, IPC mutex locking, in-place `fast_edit`, and hardware telemetry.
    - `groq_worker_cloud` (Groq LPU @ 300-800+ tok/s): Dedicated to pure algorithmic calculations, string parsing, tokenization, and rapid unit test generation.
+   - `gemini_worker_cloud` (Google Gemini 3.5 Flash-Lite / 3.8 Flash / 4 Argon): Dedicated to large-context codebase synthesis (>32K context), cross-module refactoring with 1M tokens context, multimodal vision (UI/diagrams), and deep mathematical/reasoning solutions via 10$/month API credits.
 
 ---
 

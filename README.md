@@ -1,16 +1,15 @@
-# 🧠 Omni-Skill Orchestrator v4.1: Adaptive JIT Harness & Reflex Memory for AI Agents
+# ⚡ Omni-Skill Orchestrator v4.2: Adaptive JIT Harness, Tri-Worker Fleet & Reflex Memory
 
 [![Agent Plugins 1.0.0](https://img.shields.io/badge/Spec-Agent%20Plugins%201.0.0-blue.svg)](https://agent-plugins.org)
 [![Python 3.10+](https://img.shields.io/badge/Python-3.10%2B-green.svg)](https://python.org)
 [![Zero Dependency Kernel](https://img.shields.io/badge/Dependencies-0%20(Pure%20Stdlib%20Core)-brightgreen.svg)]()
-[![Tests](https://img.shields.io/badge/Tests-277%2F277%20Passing-success.svg)]()
-[![Council Gate](https://img.shields.io/badge/DeepSeek%20Council%20Gate-APPROVED-brightgreen.svg)](docs/audits/omni_kernel_v41_final_approved_verdict.md)
+[![Council Gate](https://img.shields.io/badge/DeepSeek%20Council%20Gate-APPROVED%20(1M%20Context)-brightgreen.svg)](docs/audits/omni_kernel_v41_final_approved_verdict.md)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 [English](README.md) • [Tiếng Việt](README.vi.md)
 
-> **A lightweight, local-first orchestration harness for Google Antigravity, Claude Code, Cursor, and AI coding agents.**  
-> *Equipped with sub-millisecond JIT skill routing, Tri-Tier episodic memory (SQLite WAL + Dual-Column FTS5 BM25 + 384-dim CPU ONNX embeddings), autonomous skill synthesis, Graphify-grade codebase topology (Omni-Graph), and decoupled architecture gatekeeping — with zero static prompt token bloat.*
+> **A lightweight, local-first orchestration harness for Google Antigravity, Claude Code, Cursor, and autonomous AI coding agents.**  
+> *Equipped with sub-millisecond JIT skill routing, Tri-Worker Fleet delegation (Local MI50 + Groq 120B LPU + Gemini Heavy Cloud 1M), Tri-Tier episodic memory (SQLite WAL + Dual-Column FTS5 BM25 + 384-dim CPU ONNX embeddings), Graphify-grade codebase topology (Omni-Graph), and decoupled DeepSeek-V4.1-Flash (1M context) architecture gatekeeping — with zero static prompt token bloat.*
 
 ---
 
@@ -19,153 +18,117 @@
 Omni is **not** a standalone autonomous coding agent (like Aider, OpenCode, or OpenHands). Instead, it is an **intelligent pre-flight harness and reflex layer** that sits in front of your primary agent (e.g., Antigravity, Claude Code):
 
 1. **Stops System Prompt Bloat**: Rather than injecting 50–120 static skills and rules (costing 15,000–25,000 tokens per chat turn), Omni indexes 500+ skills in **0.12s** and injects only the top 1–3 relevant skills and rules **Just-In-Time (< 300 tokens)**.
-2. **Cross-Session Reflex Memory**: Automatically captures successful fixes, indexes them into SQLite WAL with FTS5 BM25 and 384-dim CPU ONNX dense vectors (`intfloat/multilingual-e5-small`), and recalls matching proven solutions in **< 0.3ms**.
-3. **Graphify-Grade Codebase Topology (Omni-Graph)**: Zero-dependency relational call graph stored in workspace-local SQLite WAL (`.omni/codebase_graph.db`). Delivers **Hardened Signature Contract Guard**, **Lifecycle Registration Guard**, **Blast Radius Engine (<2ms)**, and an **Interactive Vis.Network 9.1.6 Visualizer** with Fermat spiral seeding and zero perpetual jitter.
-4. **Universal Polyglot Extractor**: Built for the fluid "vibe coder" with zero external native compilation requirements. Directly maps Python, JavaScript/TypeScript, Go, Rust, SQL, Shell, Markdown docs, and configs.
-5. **Autonomous Skill Synthesis**: When encountering novel technical domains, Omni authors candidate `SKILL.md` documents, runs static AST security analysis, validates them in an isolated sandbox, and atomically promotes them into the local library.
-6. **Decoupled Architecture Gatekeeper**: Inspects architecture intents (RFC, SDD, major diffs) in `< 25ms` in-process logic (`~120ms` full subprocess turnaround on Windows) without blocking the chat loop with synchronous cloud calls.
-7. **Episodic Anti-Patterns Engine & Heuristic Guard**: Traps execution failures (non-zero exits, structural errors, syntax traps) via a 3-tier heuristic filter, indexing recurring anti-patterns into SQLite WAL with TTL-based expiration and proactive consolidation, eliminating repeated failure traps.
-8. **Windows Service & Background Consolidator**: Autonomous daemon running silent 15-minute background cycles via Windows Task Scheduler (`pythonw.exe`), performing out-of-band Ebbinghaus memory decay, pattern promotion, and proactive TTL sweeps without user intervention or terminal locking.
-9. **Universal Portability & Git-Root Identity**: Completely decouples the harness from machine-specific paths, drive letters, and user accounts. Uses canonical Git Remote URL hashes for cross-drive/cross-machine memory recall (Dual-Lookup), provides a 1-click bootstrapper (`setup.bat` / `scripts/bootstrap.py`), and auto-falls back to Groq Cloud LPU when local workers are offline.
-
----
-
-## 🚀 1-Click Machine Setup (setup.bat)
-
-When switching to a new PC or reinstalling Windows, simply double-click `setup.bat` (or run `./setup.bat` in terminal). It automatically:
-- Detects Python runtime (or prompts to auto-install Python via `winget` if missing).
-- Synchronizes the repository to the active Gemini plugin directory (`%USERPROFILE%/.gemini/...`).
-- Validates SQLite WAL schema, registers the silent 15-minute background Task Scheduler consolidation, and scans Omni-Graph topology in under 2 seconds.
+2. **Tri-Worker Fleet Protocol**: Autonomous behind-the-scenes workload dispatching to conserve cloud context:
+   - **`local_worker_mi50`** (AMD Instinct MI50 16GB HBM2 @ 1024 GB/s): Offline logic, in-place surgical edits (`fast_edit`), SQLite WAL transactions, IPC mutex locking.
+   - **`groq_worker_cloud`** (Groq LPU @ 300–800+ tok/s): Sub-second boilerplate generation, AST/regex transformations, rapid unit test suite synthesis.
+   - **`gemini_worker_cloud`** (Google Gemini 3.5 Flash-Lite / 3.8 Flash / 4 Argon): Heavy-context codebase synthesis (>32K context), cross-module refactoring with **1,000,000 tokens context window**, multimodal vision analysis (UI/diagrams), and deep mathematical/reasoning solutions.
+3. **Decoupled Architecture Gatekeeper (DeepSeek-V4.1-Flash 1M Context)**: Protects against the "Echo Chamber" anti-pattern (Gemini subagents reviewing Gemini). Inspects RFCs, SDD bundles, and patches via an independent 552B MoE model natively supporting **1,000,000 tokens context** and FP4 KV cache compression.
+4. **Cross-Session Reflex Memory**: Automatically captures successful fixes, indexes them into SQLite WAL with Dual-Column FTS5 BM25 and 384-dim CPU ONNX dense vectors (`intfloat/multilingual-e5-small`), and recalls matching proven solutions in **< 0.3ms**.
+5. **Graphify-Grade Codebase Topology (Omni-Graph)**: Zero-dependency relational call graph stored in workspace-local SQLite WAL (`.omni/codebase_graph.db`). Delivers **Hardened Signature Contract Guard**, **Lifecycle Registration Guard**, **Blast Radius Engine (<2ms)**, and an **Interactive Vis.Network 9.1.6 Visualizer** with Fermat spiral seeding and zero perpetual jitter.
+6. **Universal Polyglot Extractor**: Built for the fluid "vibe coder" with zero external native compilation requirements. Directly maps Python, JavaScript/TypeScript, Go, Rust, SQL, Shell, Markdown docs, and configs.
+7. **Autonomous Skill Synthesis**: When encountering novel technical domains, Omni authors candidate `SKILL.md` documents, runs static AST security analysis, validates them in an isolated sandbox, and atomically promotes them into the local library.
 
 ---
 
 ## ⚡ Feature Comparison
 
-| Capability | Static Skills & Prompt Bloat | Omni-Skill Orchestrator v4.1 |
+| Capability | Static Skills & Prompt Bloat | Omni-Skill Orchestrator v4.2 |
 |---|---|---|
 | **Context Overhead** | Injects 50–120 static skills (**15,000–25,000 tokens**), degrading model IQ and hitting context limits. | **< 300 Tokens at idle!** Invariants stay lean; domain skills, rules, and tools are resolved Just-In-Time (JIT). |
-| **Routing Accuracy** | Naive substring matching often misroutes to irrelevant skills. | **Segment-Aware Scoring + Word Boundaries**: Differentiates domain subjects (`docker`, `sqlite`, `postgres`) from generic actions (`fix`, `debug`, `guide`). Achieves **100% Top-1 & Top-3 accuracy** on the 25-query Golden Benchmark. |
+| **Worker Delegation** | Agent bloats context generating boilerplate and massive tests directly. | **Tri-Worker Fleet**: Dedicated offloading to MI50 (16GB offline), Groq (300-800 t/s LPU), and Gemini Cloud (1M context heavy coder). |
+| **Architectural Gatekeeping** | Internal subagents create an "Echo Chamber", blindly approving each other's hallucinations. | **Decoupled Council Gate (DeepSeek-V4.1-Flash 1M)**: Verified via HMAC-SHA256 signatures, 1M native context, independent multi-vendor red-teaming. |
+| **Routing Accuracy** | Naive substring matching often misroutes to irrelevant skills. | **Segment-Aware Scoring + Word Boundaries**: Differentiates domain subjects (`docker`, `sqlite`, `postgres`) from generic actions (`fix`, `debug`, `guide`). Achieves **100% Top-1 & Top-3 accuracy** on Golden Benchmark. |
 | **Episodic Memory** | Flat JSON files that corrupt or slow down chat, or heavy SaaS vector DBs. | **Tri-Tier Omni-Memory**: Tier 1 non-blocking RAM spool (<0.3ms); Tier 2 Embedded SQLite WAL with Dual-Column FTS5 BM25 + 384-dim CPU ONNX Embeddings (0MB VRAM tax); Tier 3 Consolidator with Ebbinghaus decay. |
-| **Codebase Topology (Omni-Graph)** | No structural awareness or heavy 50MB JSON dumps that choke context. | **Relational SQLite WAL Topology**: Indexed recursive CTEs compute caller/callee blast radius in <2ms. Enforces Hardened Signature Contract Guards (PEP 570, kwargs, async unawaited) and exports interactive Vis.Network 9.1.6 diagrams with zero perpetual movement. |
-| **Polyglot Parsing** | Hardcoded to single language or fragile C-based compilers. | **Universal Polyglot Extractor (Zero-Dependency)**: Native stdlib AST for Python + regex streaming extractors for JS/TS, Go, Rust, SQL, Shell, and Markdown. |
-| **Skill Synthesis** | Manual authoring required for every new library or tool. | **Autonomous Pipeline**: `scripts/synthesizer.py` authors templates, runs AST syntax checks, validates assertions in sandbox, and auto-indexes in <150ms. |
-| **Architectural Gatekeeping** | Internal subagents create an "Echo Chamber", blindly approving each other's hallucinations. | **Decoupled Council Gate (DeepSeek-V4.1-Flash)**: Verified via HMAC-SHA256 signatures and SHA-256 target hashes without blocking hook turnaround. |
+| **Codebase Topology (Omni-Graph)** | No structural awareness or heavy 50MB JSON dumps that choke context. | **Relational SQLite WAL Topology**: Indexed recursive CTEs compute caller/callee blast radius in <2ms. Enforces Hardened Signature Contract Guards (PEP 570, kwargs, async unawaited) and exports interactive Vis.Network 9.1.6 diagrams. |
 | **Core Dependencies** | Relies on heavy frameworks and unstable cloud services. | **Pure Python Standard Library Core** for Kernel, Hook, SQLite FTS5, and Omni-Graph (0 external native dependencies). |
 
 ---
 
 ## 🏗️ Layered Architecture
 
-Omni operates as an interceptor harness around your AI agent:
-
 ```text
-                      ┌────────────────────────────────────────────────────────┐
-                      │              AI AGENT: ANTIGRAVITY / CLAUDE            │
-                      │             (Planning, UI, Coding, Execution)          │
-                      └───────────────────────────┬────────────────────────────┘
-                                                  │ (Before every chat turn)
-                                                  ▼
-                      ┌────────────────────────────────────────────────────────┐
-                      │     PRE-FLIGHT HARNESS HOOK (hook_runner.py, <25ms)    │
-                      │  - L1 Reflex: Non-blocking append to spool (<0.3ms)    │
-                      │  - JIT Skill Router: Segment-aware scoring (~2-5ms)    │
-                      │  - Proven Trace Recall: High-precision memory (<0.3ms) │
-                      │  - Omni-Graph: Pre-flight blast radius & contract risk │
-                      │  - Gatekeeper: HMAC-SHA256 audit artifact verification │
-                      └───────────────────────────┬────────────────────────────┘
-                                                  │ (Injects <300 tokens JIT context)
-                                                  ▼
-                                      ┌───────────────────────┐
-                                      │  INFORMED AGENT TURN  │
-                                      └───────────────────────┘
+┌────────────────────────────────────────────────────────────────────────┐
+│                   PRIMARY AGENT HARNESS (Free Quota)                  │
+│       Google Antigravity / Claude Code / Cursor (Architect / Router)   │
+└──────────────────────────────────┬─────────────────────────────────────┘
+                                   │ Pre-Flight Reflex (<0.3ms)
+                                   ▼
+┌────────────────────────────────────────────────────────────────────────┐
+│                   OMNI-KERNEL v4.2 ENGINE                              │
+│   • L1 Reflex Hook (scripts/hook_runner.py)                           │
+│   • JIT Skill & Rule Resolver (scripts/resolver.py)                    │
+│   • Tri-Tier Omni-Memory (scripts/memory_engine.py - SQLite WAL FTS5)   │
+│   • Omni-Graph Topology Guard (scripts/omni_graph.py - Blast Radius)   │
+└──────────────────┬───────────────────────┬─────────────────────────────┘
+                   │                       │
+      Implementation Delegation            │ Architecture Gatekeeper
+                   │                       ▼
+         ┌─────────┴─────────┐   ┌──────────────────────────────────────┐
+         ▼                   ▼   │       COUNCIL PROTOCOL GATE          │
+┌─────────────────┐ ┌──────────┐ │   DeepSeek-V4.1-Flash (1M Context)   │
+│  LOCAL WORKER   │ │   GROQ   │ │   • Anti-Echo-Chamber Verification   │
+│ AMD MI50 (16GB) │ │ 120B LPU │ │   • HMAC-SHA256 Cryptographic Binding│
+│  (In-place edit)│ │  (<1s)   │ └──────────────────────────────────────┘
+└─────────────────┘ └────┬─────┘
+                         │ (Heavy / 1M Context / Vision)
+                         ▼
+                ┌──────────────────┐
+                │  GEMINI WORKER   │
+                │ 3.5 Lite / 3.8 / │
+                │   4 Argon (1M)   │
+                └──────────────────┘
 ```
 
 ---
 
-## 🌐 Omni-Graph Architecture (Graphify-Grade Topology)
-
-Omni-Graph maintains physical and logical **Zero-Conflict Duality**:
-- **Global Cognitive Memory**: Stored in `omni_memory.db` for multi-session learning, proven solutions, and cross-project knowledge.
-- **Local Codebase Topology**: Stored in `<workspace>/.omni/codebase_graph.db` (SQLite WAL mode) strictly isolated per repository.
-
-### Key Components:
-1. **Relational Graph Storage (`scripts/omni_graph/storage.py`)**:
-   - Normalized relational tables: `nodes`, `signatures`, `edges`, `lifecycle_hooks`, and `codebase_files_meta`.
-   - Covered with 7 B-Tree indexes for instantaneous traversals.
-2. **Two-Tier Change Detection (`scripts/omni_graph/fingerprint.py`)**:
-   - Tier 1: Filesystem `mtime` and `size_bytes` checking in **< 2ms** for 100+ files.
-   - Tier 2: Cryptographic SHA-256 dirty check when timestamps mismatch.
-3. **Hardened Signature Contract Guard (`scripts/omni_graph/validator.py`)**:
-   - Method receiver normalization (auto-strips `self` and `cls`).
-   - Strict validation of PEP 570 positional-only args, keyword-only args, and unexpected parameters.
-   - Catches broken caller interfaces before changes are executed.
-4. **Interactive Vis-Network Visualizer (`scripts/omni_graph/visualizer.py`)**:
-   - Vis.Network 9.1.6 embedding with Tableau 10 color palette.
-   - Fermat spiral seed positions ($x = 35 \sqrt{i} \cos(2.4 i)$, $y = 35 \sqrt{i} \sin(2.4 i)$).
-   - Automatic physics stabilization freeze at 200 iterations (**zero perpetual motion/jitter**).
-   - Sidebar with Theme toggle (Dark/Light/System), live search autocomplete, node inspector, and community visibility filters.
-
----
-
-## 🛠️ Core Module Registry
+## 📦 Core Module Catalog
 
 | Component | Path | Description |
 |---|---|---|
-| **PreInvocation Hook** | `scripts/hook_runner.py` | Fast pre-flight interceptor injecting JIT skills, rules, and memory directives (<25ms in-process, ~120ms subprocess). |
-| **JIT Skill Resolver** | `scripts/resolver.py` | Segment-aware skill and rule matching engine (<5ms warm, word-boundary synonyms, domain penalties). |
-| **Omni-Graph CLI** | `scripts/omni_graph.py` | Unified driver for codebase scanning, contract validation, blast radius, and visualizer generation. |
-| **Omni-Graph Engine** | `scripts/omni_graph/` | Full relational graph engine: `storage.py`, `fingerprint.py`, `visitor.py`, `validator.py`, `traversal.py`, `visualizer.py`. |
-| **Autonomous Synthesizer** | `scripts/synthesizer.py` | Pipeline to author, AST-validate, sandbox-test, and promote new skills into the library. |
-| **Skill Indexer** | `scripts/indexer.py` | High-speed zero-dependency indexer scanning 500+ skills across 4 sources in 0.12s with millisecond stale detection. |
-| **Experiential Memory** | `scripts/experiential_memory.py` | Proven execution trace store with keyword stopword filtering and sub-millisecond retrieval. |
-| **Memory Engine** | `scripts/memory_engine.py` | Hybrid search engine combining SQLite FTS5 BM25 with dense vector embeddings via RRF. |
-| **Embedding Service** | `scripts/embedding_service.py` | Local CPU embedding generator using `fastembed` (`intfloat/multilingual-e5-small`, 384 dimensions). |
-| **Memory Consolidator** | `scripts/consolidator.py` | Background daemon consuming staging logs, promoting multi-hit knowledge, and applying Ebbinghaus decay. |
-| **Architecture Auditor** | `scripts/consult_critic.py` | External Red-Teaming critic client connecting to DeepSeek-V4.1-Flash for architecture review. |
-| **Anti-Pattern Guard** | `scripts/antipattern_guard.py` | Autonomous 3-tier post-execution failure interceptor & recurrent anti-pattern filter. |
-| **Windows Service Manager** | `scripts/service_manager.py` | Non-admin Windows Task Scheduler manager running silent background consolidation via `pythonw.exe`. |
-| **Environment Bootstrapper** | `scripts/bootstrap.py` | 1-Click environment installer, auto-configuring plugin links, SQLite WAL, Task Scheduler, and Omni-Graph. |
+| **PreInvocation Hook** | `scripts/hook_runner.py` | Sub-millisecond pre-flight interceptor injecting JIT skills, rules, and hardware fleet directives (<25ms). |
+| **JIT Skill Resolver** | `scripts/resolver.py` | Segment-aware skill and rule matching engine (<5ms). |
+| **Gemini Cloud Worker** | `scripts/gemini_worker.py` | 100% Python stdlib driver for Google Gemini 3.5/3.8/Argon (1M context, multimodal, deep reasoning). |
+| **Gemini Worker MCP** | `D:\Antigravity\Gemini Worker\gemini_worker_mcp.py` | JSON-RPC 2.0 stdio MCP server exposing `gemini_heavy_code_gen`, `gemini_multimodal_vision`, and `gemini_argon_solve`. |
+| **Groq Worker MCP** | `D:\Antigravity\Groq Worker\groq_worker_mcp.py` | JSON-RPC 2.0 stdio MCP server for Groq 120B sub-second code generation and tests. |
+| **Local MI50 Worker** | `D:\Antigravity\Local Worker\local_llm_worker_mcp.py` | In-place file surgical editing (`fast_edit`) and offline execution on AMD MI50 GPU. |
+| **Architecture Auditor** | `scripts/consult_critic.py` | Decoupled Council Gatekeeper client connecting to DeepSeek-V4.1-Flash with 1,000,000 tokens context. |
+| **Omni-Graph CLI** | `scripts/omni_graph.py` | CLI driver for scanning codebases, validating signature contracts, and generating visual graphs. |
+| **Memory Engine** | `scripts/memory_engine.py` | Hybrid search engine combining SQLite FTS5 BM25 and CPU ONNX dense vectors via RRF. |
+| **Autonomous Synthesizer** | `scripts/synthesizer.py` | Self-bootstrapping pipeline authoring, verifying in sandbox, and promoting novel skills. |
 
 ---
 
-## 🧪 Comprehensive Automated Testing & Empirical Verification
+## 🧪 Testing & Verification
 
-Omni-Skill Orchestrator maintains an exhaustive automated test suite with **100% pass rate**:
+Omni-Skill Orchestrator maintains a comprehensive automated test suite with **100% pass rate**:
 
 ```bash
-# 1. Run core test suites & DeepSeek auditor gates (45 tests PASS)
-python -m pytest specs/002-deepseek-v41-auditor/tests/
+# 1. Run WAL Multi-Process Concurrency Test (NT/Windows SQLite WAL Stress Test)
+python tests/test_concurrency_wal.py
 
-# 2. Run Omni-Graph empirical challenge & contract validator (16/16 PASS)
-python tests/test_omni_graph_validator_empirical.py
+# 2. Run DeepSeek Council Gatekeeper Live Review (1M Context Verification)
+python scripts/consult_critic.py --prompt "System health check" --mode rfc
 
-# 3. Run Omni-Graph live workspace integration suite (2/2 PASS)
-python tests/test_omni_graph_live.py
+# 3. Test Gemini Cloud Worker Live Inference (1M Context Flash-Lite)
+python scripts/gemini_worker.py --task "Test echo" --model gemini-3.5-flash-lite
 
-# 4. Scan and visualize any workspace instantly
+# 4. Scan & Visualize Codebase Topology
 python scripts/omni_graph.py --workspace "." --scan --visualize
-
-# 5. Run Episodic Anti-Patterns & Heuristic Guard test suite (7/7 PASS)
-python -m unittest tests/test_antipatterns.py tests/test_antipattern_guard.py tests/test_consolidator_antipatterns.py
-
-# 6. Run Universal Portability & Zero-PII test suite (6/6 PASS)
-python -m unittest tests/test_portability.py
 ```
 
 ---
 
-## 🙏 Acknowledgements & Inspirations
+## 🙏 Acknowledgements
 
-Omni-Skill Orchestrator stands on the shoulders of remarkable open-source engineering. We extend our deepest gratitude to the creators and maintainers of the following pioneering projects whose architectures, principles, and designs directly inspired this work:
+Omni-Skill Orchestrator stands on the shoulders of giants in the open-source and AI engineering community:
 
-- **[Graphify](https://github.com/Graphify-Labs/graphify)** (*Graphify-Labs*): Pioneered the concept of turning entire codebases into queryable knowledge graphs for AI assistants, the Fermat spiral node distribution, and the interactive Vis.Network topology visualization that directly guided Omni-Graph.
-- **[Spec Kit](https://github.com/github/spec-kit)** (*GitHub*): Inspired the 10-phase Specification-Driven Development (SDD) methodology that enforces our specification-first engineering discipline.
-- **[Ponytail](https://github.com/DietrichGebert/ponytail)** (*Dietrich Gebert*): The foundational philosophy of radical simplicity: shortest complete working diff, standard library precedence, YAGNI, and honest risk transparency.
-- **[Hermes-Agent](https://github.com/NousResearch/hermes-agent)** (*Nous Research*): High-agency agent patterns, multi-tool orchestration, and experiential reflex memory.
-- **[Awesome Agent Skills](https://github.com/VoltAgent/awesome-agent-skills)** (*VoltAgent*): Outstanding curated taxonomy for production-ready AI skills and tool specifications.
-- **[DeepSeek AI](https://github.com/deepseek-ai)** (*DeepSeek*): Frontier reasoning capabilities that power our independent Decoupled Architecture Gatekeeper (Council Protocol).
-- **[Vis.js Network](https://github.com/visjs/vis-network)**: The extraordinary browser-based network visualization engine powering our interactive, zero-jitter topology explorer.
-- **[FastEmbed](https://github.com/qdrant/fastembed)** (*Qdrant*) & **[IntFloat](https://huggingface.co/intfloat)**: High-efficiency CPU ONNX embeddings (`multilingual-e5-small`) enabling zero-GPU semantic memory retrieval.
+- **[Graphify](https://github.com/Graphify-Labs/graphify)** (*Graphify-Labs*): Pioneer in turning codebases into queryable knowledge graphs, Fermat spiral distribution, and Vis.Network visualizers.
+- **[Spec Kit](https://github.com/github/spec-kit)** (*GitHub*): Inspiration for the 10-phase Specification-Driven Development (SDD) engineering rigor.
+- **[Ponytail](https://github.com/DietrichGebert/ponytail)** (*Dietrich Gebert*): Supreme minimalism philosophy (Lazy Senior Dev Mode): smallest working diff, stdlib over bloat, YAGNI.
+- **[DeepSeek AI](https://github.com/deepseek-ai)** (*DeepSeek*): Breakthrough MoE and 1M context CED architecture powering our independent Council Gatekeeper.
+- **[Google Generative AI](https://ai.google.dev/)** (*Google DeepMind*): 1,000,000 tokens context window, Flash-Lite efficiency, and Argon deep reasoning models.
+- **[Groq](https://groq.com/)**: LPU inference engine powering sub-second code and test generation.
+- **[Vis.js Network](https://github.com/visjs/vis-network)**: Physics simulation and smooth browser network visualization engine.
 
 ---
 
