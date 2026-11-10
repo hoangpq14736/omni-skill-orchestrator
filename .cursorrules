@@ -1,5 +1,5 @@
-<!-- OMNI-KERNEL-START v4.2.0 -->
-# --- OMNI-KERNEL v4.2 AGENT INVARIANTS ---
+<!-- OMNI-KERNEL-START v4.3.0 -->
+# --- OMNI-KERNEL v4.3 AGENT INVARIANTS ---
 # 1. Zero-Trust Security: Validate all inputs at trust boundaries. Never leak secrets.
 # 2. Reliable Engineering: Fail loudly with context. Never swallow exceptions. Immutability first.
 # 3. Ponytail Simplicity: Smallest complete working diff wins. YAGNI. Codebase > Stdlib > Deps.

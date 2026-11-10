@@ -3,7 +3,7 @@ name: skill-arbiter
 description: >-
   Arbitrates and resolves conflicts when multiple skills or plugins offer overlapping capabilities within Omni-Kernel v4.1. Ranks candidates by Kernel Alignment, SemVer freshness, domain specificity, scope priority, and quality score to select the single best skill and suppress obsolete duplicates.
 metadata:
-  version: 4.2.0
+  version: 4.3.0
 ---
 
 # Skill Arbiter Protocol v4.1

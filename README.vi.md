@@ -1,4 +1,4 @@
-# ⚡ Omni-Skill Orchestrator v4.2: Lớp Điều Phối Kỹ Năng JIT, Hạm Đội Tri-Worker & Bộ Nhớ Phản Xạ
+# ⚡ Omni-Skill Orchestrator v4.3: Lớp Điều Phối Kỹ Năng JIT, Hạm Đội Tri-Worker & Bộ Nhớ Phản Xạ
 
 [![Agent Plugins 1.0.0](https://img.shields.io/badge/Spec-Agent%20Plugins%201.0.0-blue.svg)](https://agent-plugins.org)
 [![Python 3.10+](https://img.shields.io/badge/Python-3.10%2B-green.svg)](https://python.org)

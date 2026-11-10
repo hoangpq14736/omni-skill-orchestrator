@@ -1,4 +1,4 @@
-# ⚡ Omni-Skill Orchestrator v4.2: Adaptive JIT Harness, Tri-Worker Fleet & Reflex Memory
+# ⚡ Omni-Skill Orchestrator v4.3: Adaptive JIT Harness, Tri-Worker Fleet & Reflex Memory
 
 [![Agent Plugins 1.0.0](https://img.shields.io/badge/Spec-Agent%20Plugins%201.0.0-blue.svg)](https://agent-plugins.org)
 [![Python 3.10+](https://img.shields.io/badge/Python-3.10%2B-green.svg)](https://python.org)
