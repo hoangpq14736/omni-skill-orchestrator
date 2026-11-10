@@ -35,7 +35,7 @@ CREATE TABLE IF NOT EXISTS system_capabilities (
     trigger_tokens      TEXT NOT NULL,               -- JSON array of keyword strings
     bilingual_tags      TEXT NOT NULL,               -- JSON array of EN/VI tags
     affinity_score      REAL NOT NULL DEFAULT 1.0,   -- Dynamic learned weight (0.1 - 5.0)
-    total_activations   INTEGER NOT NULL DEFAULT 0,
+    total_activations   INTEGER NOT NULL DEFAULT 0,  -- Monotonic L1 reflex hit count (bumped by hook_runner, read by reporter.py:297)
     created_at          TEXT NOT NULL,               -- ISO-8601 UTC
     updated_at          TEXT NOT NULL                -- ISO-8601 UTC
 );

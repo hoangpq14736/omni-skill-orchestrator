@@ -1,73 +1,26 @@
 {
   "version": "1.1.0",
   "affinities": {
-    "3d": {
-      "gcode": 15.0
+    "orca": {
+      "gcode": 30.0
     },
-    "in": {
-      "gcode": 15.0
+    "fdm": {
+      "gcode": 30.0
+    },
+    "slicer": {
+      "gcode": 30.0
     },
     "cắt": {
-      "gcode": 15.0
-    },
-    "hình": {
       "gcode": 15.0
     },
     "lát": {
       "gcode": 15.0
     },
-    "orca": {
-      "gcode": 15.0
-    },
-    "modeling": {
-      "gcode": 15.0
-    },
-    "stl": {
-      "gcode": 15.0
-    },
-    "de": {
-      "gcode": 15.0
-    },
-    "cad": {
-      "gcode": 15.0
-    },
-    "máy": {
-      "gcode": 15.0
-    },
-    "hinh": {
-      "gcode": 15.0
-    },
-    "fdm": {
-      "gcode": 15.0
-    },
-    "mo": {
-      "gcode": 15.0
-    },
     "cat": {
-      "gcode": 15.0
-    },
-    "mô": {
       "gcode": 15.0
     },
     "lat": {
       "gcode": 15.0
-    },
-    "may": {
-      "gcode": 15.0
-    },
-    "để": {
-      "gcode": 15.0
-    },
-    "step": {
-      "gcode": 15.0
     }
-  },
-  "skill_stats": {
-    "gcode": {
-      "chosen_count": 1,
-      "rejected_count": 0,
-      "last_chosen": "2026-11-10T15:31:44.038453+00:00"
-    }
-  },
-  "updated_at": "2026-11-10T15:31:44.038461+00:00"
+  }
 }

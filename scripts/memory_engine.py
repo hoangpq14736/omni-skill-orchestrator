@@ -792,27 +792,32 @@ def recall_episodic_memory(
     if not resolved_db or not os.path.isfile(resolved_db):
         return []
 
-    # 2. Resolve workspace hash
-    ws_hash = workspace_hash
-    if not ws_hash and workspace_dir:
-        from memory_utils import canonical_workspace_hash
-        ws_hash = canonical_workspace_hash(workspace_dir)
-
-    # 3. Compute query vector using fine-tuned EmbeddingGemma-2
-    query_vector = None
-    try:
-        from embedding_service import get_embedding
-        query_vector = get_embedding(query_text, is_query=True)
-    except Exception as emb_err:
-        import sys
-        sys.stderr.write(f"[!] Warning: embedding_service get_embedding failed: {emb_err}\n")
-
     conn = None
     try:
-        conn = sqlite3.connect(resolved_db, timeout=5.0)
-        conn.execute("PRAGMA busy_timeout = 5000;")
+        conn = sqlite3.connect(resolved_db, timeout=2.0)
+        conn.execute("PRAGMA busy_timeout = 2000;")
         conn.execute("PRAGMA journal_mode = WAL;")
         conn.execute("PRAGMA synchronous = NORMAL;")
+
+        # Fast Guard (<0.1ms): Never load 261MB ONNX model if dense_embeddings table has 0 rows
+        has_dense = conn.execute("SELECT 1 FROM dense_embeddings LIMIT 1;").fetchone()
+        if not has_dense:
+            return []
+
+        # 2. Resolve workspace hash
+        ws_hash = workspace_hash
+        if not ws_hash and workspace_dir:
+            from memory_utils import canonical_workspace_hash
+            ws_hash = canonical_workspace_hash(workspace_dir)
+
+        # 3. Compute query vector using fine-tuned EmbeddingGemma-2
+        query_vector = None
+        try:
+            from embedding_service import get_embedding
+            query_vector = get_embedding(query_text, is_query=True)
+        except Exception as emb_err:
+            import sys
+            sys.stderr.write(f"[!] Warning: embedding_service get_embedding failed: {emb_err}\n")
 
         # If ws_hash is not known, fetch all active workspace hashes to permit unscoped retrieval
         target_hashes = [ws_hash] if ws_hash else []

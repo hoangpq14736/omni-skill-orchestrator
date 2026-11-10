@@ -109,13 +109,13 @@ _REDACTION_PATTERNS = [
     (re.compile(r'\b(ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{36}\b'), '[REDACTED_GITHUB_TOKEN]'),
     (re.compile(r'\bxox[baprs]-[A-Za-z0-9\-]{10,}\b'), '[REDACTED_SLACK_TOKEN]'),
     (re.compile(r'\bAIza[0-9A-Za-z_\-]{30,45}\b'), '[REDACTED_GOOGLE_KEY]'),
-    (re.compile(r'(?i)(["\']?api[_-]?key["\']?\s*[:=]\s*["\']?)[^\s,;"\'\}\]]{8,}(?=["\',;\s\}\]]|$)'), r'\1[REDACTED_KEY]'),
-    (re.compile(r'(?i)(["\']?password["\']?\s*[:=]\s*["\']?)[^\s,;"\'\}\]]{6,}(?=["\',;\s\}\]]|$)'), r'\1[REDACTED_PASSWORD]'),
+    (re.compile(r'(?i)(["\']?api[_-]?key["\']?\s*[:=]\s*["\']?)(?!\[REDACTED)[^\s,;"\'\}\]\[]{8,}(?=["\',;\s\}\]]|$)'), r'\1[REDACTED_KEY]'),
+    (re.compile(r'(?i)(["\']?password["\']?\s*[:=]\s*["\']?)(?!\[REDACTED)[^\s,;"\'\}\]\[]{6,}(?=["\',;\s\}\]]|$)'), r'\1[REDACTED_PASSWORD]'),
     (re.compile(r'(?i)([a-z]+://[^:\s]+:)[^@\s]+(@)'), r'\1[REDACTED_PASS]\2'),
     (re.compile(r'-----BEGIN [A-Z ]+ PRIVATE KEY-----(?:(?!-----BEGIN)[\s\S])*?-----END [A-Z ]+ PRIVATE KEY-----'), '[REDACTED_PRIVATE_KEY]'),
     (re.compile(r'-----BEGIN PGP PRIVATE KEY BLOCK-----(?:(?!-----BEGIN)[\s\S])*?-----END PGP PRIVATE KEY BLOCK-----'), '[REDACTED_PGP_KEY]'),
     (re.compile(r'(?i)(Authorization:\s*Basic\s+)[A-Za-z0-9+/=]+'), r'\1[REDACTED_CREDENTIAL]'),
-    (re.compile(r'(?i)(["\']?(?:token|access_token|client_secret|api_secret|auth_token|secret_key|secret|private_key|credentials|auth|access_key|AWS_SECRET_ACCESS_KEY)["\']?\s*[:=]\s*["\']?)[^\s,;"\'\}\]]{6,}'), r'\1[REDACTED]'),
+    (re.compile(r'(?i)(["\']?(?:token|access_token|client_secret|api_secret|auth_token|secret_key|secret|private_key|credentials|auth|access_key|AWS_SECRET_ACCESS_KEY)["\']?\s*[:=]\s*["\']?)(?!\[REDACTED)[^\s,;"\'\}\]\[]{6,}'), r'\1[REDACTED]'),
 ]
 
 
