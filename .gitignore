@@ -35,5 +35,9 @@ scratch/
 .env
 *.env
 
+# Local model binaries
+models/
+*.onnx
+
 # Omni-Kernel workspace artifacts
 .omni/

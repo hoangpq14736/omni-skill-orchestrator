@@ -49,7 +49,7 @@ You have access to the **Omni-Kernel v4.1 Orchestrator**, a unified autonomous i
 
 7. **Omni-Memory v4.1 Tri-Tier Cognitive Hierarchy**:
    - **Tier 1 (L1 Reflex - <25ms subprocess turnaround, <0.3ms reflex)**: Ephemeral PreInvocation hook in `scripts/hook_runner.py` with 100% Python stdlib. Clamps input to 2,048 chars, suppresses fillers via boundary matching, queries in-memory cached traces in <0.02ms, and stages telemetry to `l1_staging_log`.
-   - **Tier 2 (L2 Hybrid Memory - <15ms retrieval)**: Local embedded SQLite (`omni_memory.db`) with WAL mode (`PRAGMA synchronous = NORMAL;`, `busy_timeout = 5000;`). Employs Dual-Column FTS5 BM25 search (`content_exact` 10.0 vs `content_folded` 1.0) paired with Topology A Host CPU ONNX embeddings (`intfloat/multilingual-e5-small` INT8) and Reciprocal Rank Fusion ($k=20$).
+   - **Tier 2 (L2 Hybrid Memory - <15ms retrieval)**: Local embedded SQLite (`omni_memory.db`) with WAL mode (`PRAGMA synchronous = NORMAL;`, `busy_timeout = 5000;`). Employs Dual-Column FTS5 BM25 search (`content_exact` 10.0 vs `content_folded` 1.0) paired with Topology A Host CPU ONNX embeddings (`google/embeddinggemma-2-omni` INT8 MRL 256d) and Reciprocal Rank Fusion ($k=20$).
    - **Tier 3 (L3 Background Consolidator)**: Out-of-band consolidation daemon in `scripts/consolidator.py`. Ingests pending logs, promotes multi-hit patterns ($\ge 2$ successes) with automated bilingual tags, applies bounded Ebbinghaus stability decay, soft-archives stale records (`status = 'Archived'`), and versions invariant rules (`status = 'Superseded'`, `superseded_by`).
 
 8. **Kernel Version & Skill Alignment Invariant**:

@@ -234,7 +234,7 @@ CREATE INDEX IF NOT EXISTS idx_mem_confidence ON workspace_episodic_memory(confi
 CREATE TABLE IF NOT EXISTS dense_embeddings (
     memory_id           TEXT PRIMARY KEY,            -- FK -> workspace_episodic_memory(memory_id)
     workspace_hash      TEXT NOT NULL,               -- Partition key for isolated workspace filtering
-    model_name          TEXT NOT NULL,               -- e.g. 'intfloat/multilingual-e5-small' (INT8 quantized, 384 dim)
+    model_name          TEXT NOT NULL,               -- e.g. 'google/embeddinggemma-2-omni' (INT8 quantized, 256 dim)
     dimensions          INTEGER NOT NULL DEFAULT 384,-- Dimension count: 384
     vector_blob         BLOB NOT NULL,               -- IEEE-754 float32 binary buffer (384 * 4 = 1536 bytes)
     norm                REAL NOT NULL,               -- Precomputed L2 Euclidean norm
@@ -360,16 +360,16 @@ LIMIT 30;
   * Strict Invariant: MUST NOT open multi-statement transactions or execute FTS5 writes.
   * Logging: Appends telemetry to unindexed staging table `l1_staging_log` with `PRAGMA synchronous = NORMAL;` or pushes non-blocking payload via loopback socket to Memory Daemon in <1.0ms.
 - **Process 2: Memory Daemon / MCP Worker (Long-Lived Persistent Process)**:
-  * Houses `intfloat/multilingual-e5-small` (INT8 quantized, 384 dim) permanently resident in ~120MB System RAM (0ms cold-start, 5–10ms inference for L2).
+  * Houses `google/embeddinggemma-2-omni` (INT8 quantized, MRL 256 dim) permanently resident in ~260MB System RAM (0ms cold-start, 70–95ms inference for L2).
   * Sole owner of the Single-Writer Queue (`queue.Queue`) and dedicated writer thread. Exclusively handles all database writes across `l1_staging_log` draining, L2 episodic memory insertion, and L3 consolidation batches using `BEGIN IMMEDIATE`.
   * Enforces `PRAGMA busy_timeout = 5000;`, `PRAGMA wal_autocheckpoint = 1000;`, `PRAGMA journal_mode = WAL;`.
 
 #### 4. Dense Vector Model Mandate & Asymmetric Prefixes
-- **Model Mandate**: Strictly locked to `intfloat/multilingual-e5-small` (Quantized INT8 ONNX, 384 dimensions).
-- **Prohibition**: `bge-small-en-v1.5` is STRICTLY PROHIBITED (English-only tokenizer destroys Vietnamese subword representations).
+- **Model Mandate**: Strictly locked to `google/embeddinggemma-2-omni` (Fine-Tuned Quantized INT8 ONNX, MRL 256 dimensions).
+- **Prohibition**: English-only models (including `bge-small-en-v1.5`) are STRICTLY PROHIBITED (subword fragmentation destroys Vietnamese semantic search).
 - **Asymmetric Prefix Invariant**:
-  * Document/Passage Ingestion: MUST prefix with `"passage: " + text`.
-  * Query Embedding: MUST prefix with `"query: " + user_prompt`.
+  * Document/Passage Ingestion: MUST prefix with `"title: none | text: " + text`.
+  * Query Embedding: MUST prefix with `"task: search result | query: " + user_prompt`.
   * Failure to attach prefixes causes 20%–30% drop in Recall@K due to vector manifold divergence.
 
 #### 5. Bounded Ebbinghaus Stability Decay & Soft-Archiving

@@ -77,9 +77,9 @@ CREATE INDEX IF NOT EXISTS idx_mem_confidence ON workspace_episodic_memory(confi
 CREATE TABLE IF NOT EXISTS dense_embeddings (
     memory_id           TEXT PRIMARY KEY,            -- FK -> workspace_episodic_memory(memory_id)
     workspace_hash      TEXT NOT NULL,               -- Partition key for isolated workspace filtering
-    model_name          TEXT NOT NULL,               -- e.g. 'intfloat/multilingual-e5-small' (INT8 quantized, 384 dim)
-    dimensions          INTEGER NOT NULL DEFAULT 384,-- Dimension count: 384
-    vector_blob         BLOB NOT NULL,               -- IEEE-754 float32 binary buffer (384 * 4 = 1536 bytes)
+    model_name          TEXT NOT NULL,               -- e.g. 'google/embeddinggemma-2-omni' (INT8 quantized, 256 dim)
+    dimensions          INTEGER NOT NULL DEFAULT 256,-- Dimension count: 256 (MRL truncated)
+    vector_blob         BLOB NOT NULL,               -- IEEE-754 float32 binary buffer (256 * 4 = 1024 bytes)
     norm                REAL NOT NULL,               -- Precomputed L2 Euclidean norm
     updated_at          TEXT NOT NULL,               -- ISO-8601 UTC timestamp
     FOREIGN KEY(memory_id) REFERENCES workspace_episodic_memory(memory_id) ON DELETE CASCADE

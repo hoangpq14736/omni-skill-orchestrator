@@ -68,7 +68,7 @@ Theo Kernel Ring 0 Invariants: Cloud Model trong chat chỉ đóng vai trò Ki�
 
 ### D. Spec 001: Tri-Tier Omni-Memory v4.1 (Episodic Memory Hierarchy)
 - **Tier 1 (L1 Reflex - <25ms Turnaround, <0.3ms Reflex)**: Ephemeral PreInvocation hook trong `scripts/hook_runner.py` (100% Python stdlib). Spool phi khóa `l1_staging_spool.jsonl`.
-- **Tier 2 (L2 Hybrid Memory - <15ms Retrieval)**: SQLite WAL (`omni_memory.db`), FTS5 BM25 + CPU ONNX Embeddings 384 chiều (`intfloat/multilingual-e5-small`) qua RRF ($k=20$).
+- **Tier 2 (L2 Hybrid Memory - <15ms Retrieval)**: SQLite WAL (`omni_memory.db`), FTS5 BM25 + CPU ONNX Embeddings 256 chiều (`google/embeddinggemma-2-omni` INT8 MRL) qua RRF ($k=20$).
 - **Tier 3 (L3 Background Consolidator)**: Daemon `scripts/consolidator.py` tiêu thụ log staging, thăng hạng tri thức ($\ge 2$ lần), tính độ suy giảm Ebbinghaus.
 
 ---
