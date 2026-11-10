@@ -103,6 +103,7 @@ redact_json_object = _redact_json_obj
 _REDACTION_PATTERNS = [
     (re.compile(r'(?i)(bearer\s+)[A-Za-z0-9_\-\.]{16,}'), r'\1[REDACTED_TOKEN]'),
     (re.compile(r'(?<![A-Za-z0-9])(sk-[a-zA-Z0-9_\-]{20,})\b'), '[REDACTED_API_KEY]'),
+    (re.compile(r'\bgsk_[A-Za-z0-9_\-]{20,}\b'), '[REDACTED_GROQ_KEY]'),
     (re.compile(r'\bAKIA[0-9A-Z]{16}\b'), '[REDACTED_AWS_KEY]'),
     (re.compile(r'\beyJ[A-Za-z0-9_\-]{10,}\.[A-Za-z0-9_\-]{10,}\.[A-Za-z0-9_\-]{10,}\b'), '[REDACTED_JWT]'),
     (re.compile(r'\b(ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{36}\b'), '[REDACTED_GITHUB_TOKEN]'),
