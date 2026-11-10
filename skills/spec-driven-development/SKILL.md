@@ -3,7 +3,7 @@ name: spec-driven-development
 description: >-
   Specification-First Software Engineering (GitHub Spec Kit SDD engine): Autonomously orchestrates the 10 SDD phases (constitution, specify, clarify, plan, tasks, implement, converge, checklist, analyze, taskstoissues) within Omni-Kernel v4.1 with Tri-Tier Omni-Memory persistence, Hard Architecture Gatekeeper, zero external dependencies, and native AppLocker-safe execution.
 metadata:
-  version: 4.1.0
+  version: 4.2.0
   author: GitHub & Omni-Kernel
   aliases: ["speckit", "sdd", "spec-kit"]
 ---

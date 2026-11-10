@@ -1,8 +1,8 @@
 {
   "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
   "name": "omni-skill-orchestrator",
-  "version": "4.1.0",
-  "description": "Universal Autonomous AI Cognitive Kernel v4.1: Tri-Tier Cognitive Hierarchy (L1 Reflex, L2 Hybrid SQLite-WAL with Dual-Column FTS5 BM25 & Host CPU ONNX Embeddings, L3 Ebbinghaus Background Consolidator), Omni-Auditor Council Gate, Omni-MCP Virtual Bus, workspace virtualization, and self-bootstrapping synthesis.",
+  "version": "4.2.0",
+  "description": "Universal Autonomous AI Cognitive Kernel v4.2: Tri-Tier Cognitive Hierarchy (L1 Reflex, L2 Hybrid SQLite-WAL with Dual-Column FTS5 BM25 & Host CPU ONNX Embeddings, L3 Ebbinghaus Background Consolidator), Tri-Worker Fleet, Omni-Auditor Council Gate, Omni-MCP Virtual Bus, workspace virtualization, and self-bootstrapping synthesis.",
   "author": {
     "name": "Antigravity Engineering Pair Programmer"
   },

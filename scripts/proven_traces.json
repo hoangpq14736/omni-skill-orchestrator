@@ -1,6 +1,6 @@
 {
   "version": "3.0.0",
-  "updated_at": "2026-11-10 14:25:05",
+  "updated_at": "2026-11-10 23:01:45",
   "traces": [
     {
       "id": "4c77aec4ac",
@@ -686,8 +686,8 @@
     {
       "id": "0f854997215d19a8c7bd454a",
       "workspace_hash": "dddddddddddddddddddddddddddddddd",
-      "problem_signature": "Fix error with token=[REDACTED]]]]]]",
-      "proven_solution": "# Verified Fix for: Fix error with token=[REDACTED]]]]]]",
+      "problem_signature": "Fix error with token=[REDACTED]]]]]]]]]]]]]]]]]]",
+      "proven_solution": "# Verified Fix for: Fix error with token=[REDACTED]]]]]]]]]]]]]]]]]]",
       "action_type": "command",
       "tags": [],
       "workspace_context": "dddddddddddddddddddddddddddddddd",
@@ -718,6 +718,167 @@
       "success_count": 1,
       "created_at": "2026-11-10 14:25:05",
       "last_recalled": "2026-11-10 14:25:05",
+      "last_outbox_id": 1,
+      "last_outbox_generation": 1
+    },
+    {
+      "id": "e0daf76edba1b60e4dcbd535",
+      "workspace_hash": "c77c98501a39fe7160fc6264a578a37e6610dd4ea3a08e55799749560684db81",
+      "problem_signature": "Fix python import path error",
+      "proven_solution": "# Verified Fix for: Fix python import path error",
+      "action_type": "command",
+      "tags": [
+        "port conflict",
+        "xung dot cong",
+        "bind address",
+        "loi cong dang dung"
+      ],
+      "workspace_context": "C:\\Users\\vuhuu\\AppData\\Local\\Temp\\tmp5ktnanch\\workspace_promo",
+      "tokens": [
+        "path",
+        "error",
+        "fix",
+        "python",
+        "xung",
+        "loi",
+        "import",
+        "address",
+        "port",
+        "conflict",
+        "cong",
+        "dang",
+        "dung",
+        "bind",
+        "dot"
+      ],
+      "success_count": 1,
+      "created_at": "2026-11-10 14:53:50",
+      "last_recalled": "2026-11-10 14:53:50",
+      "last_outbox_id": 1,
+      "last_outbox_generation": 1
+    },
+    {
+      "id": "49c6b9028db968fcf04e1ce8",
+      "workspace_hash": "ac8d8ff6c63484dfcdb38459f1d7bc8197380f7b957684aceca8511a06cebfb7",
+      "problem_signature": "fix sqlite database lock contention in personal cli",
+      "proven_solution": "Use WAL mode with append-only spool and single writer queue",
+      "action_type": "pattern",
+      "tags": [
+        "sqlite",
+        "lock",
+        "wal"
+      ],
+      "workspace_context": "C:\\Users\\vuhuu\\AppData\\Local\\Temp\\tmp2cgdaqz_",
+      "tokens": [
+        "wal",
+        "lock",
+        "fix",
+        "sqlite",
+        "contention",
+        "personal",
+        "in",
+        "cli",
+        "database"
+      ],
+      "success_count": 1,
+      "created_at": "2026-11-10 14:53:55",
+      "last_recalled": "2026-11-10 14:53:55"
+    },
+    {
+      "id": "9a0c87c1587b599b2243470a",
+      "workspace_hash": "bf1c335aa5ac471b05a55dc65f0ce4f5f14bd95c61dc3d3fa6f767f1001d6967",
+      "problem_signature": "fix docker port conflict 8080",
+      "proven_solution": "# Verified Fix for: fix docker port conflict 8080",
+      "action_type": "command",
+      "tags": [
+        "port conflict",
+        "xung dot cong",
+        "bind address",
+        "loi cong dang dung"
+      ],
+      "workspace_context": "C:\\Users\\vuhuu\\AppData\\Local\\Temp\\tmp3qbtigvu",
+      "tokens": [
+        "port",
+        "cong",
+        "fix",
+        "docker",
+        "conflict",
+        "loi",
+        "8080",
+        "address",
+        "bind",
+        "xung",
+        "dang",
+        "dot",
+        "dung"
+      ],
+      "success_count": 1,
+      "created_at": "2026-11-10 14:54:59",
+      "last_recalled": "2026-11-10 14:54:59",
+      "last_outbox_id": 1,
+      "last_outbox_generation": 1
+    },
+    {
+      "id": "5a5f70ac5de82280654106f5",
+      "workspace_hash": "fbe0edc27f8f25cbfc9f8f4ca7cee54b27e78608a4e835aa101f7f222a6b93a3",
+      "problem_signature": "docker port conflict 8080",
+      "proven_solution": "# Verified Fix for: docker port conflict 8080",
+      "action_type": "command",
+      "tags": [
+        "bind address",
+        "xung dot cong",
+        "loi cong dang dung",
+        "port conflict"
+      ],
+      "workspace_context": "C:\\Users\\vuhuu\\AppData\\Local\\Temp\\tmp30_kh52p",
+      "tokens": [
+        "conflict",
+        "dung",
+        "cong",
+        "dang",
+        "bind",
+        "xung",
+        "port",
+        "8080",
+        "dot",
+        "docker",
+        "address",
+        "loi"
+      ],
+      "success_count": 2,
+      "created_at": "2026-11-10 23:01:45",
+      "last_recalled": "2026-11-10 23:01:45",
+      "last_outbox_id": 1,
+      "last_outbox_generation": 2
+    },
+    {
+      "id": "0dcf41431d08beb66b5b8257",
+      "workspace_hash": "8b635782ac64090995c36d1b0129dcb2d58b8ec2f0a58699b9fe15600607672e",
+      "problem_signature": "cuda out of memory vram",
+      "proven_solution": "# Verified Fix for: cuda out of memory vram",
+      "action_type": "command",
+      "tags": [
+        "out of memory",
+        "het vram",
+        "tran bo nho",
+        "gpu memory"
+      ],
+      "workspace_context": "C:\\Users\\vuhuu\\AppData\\Local\\Temp\\tmp26kgr3ro",
+      "tokens": [
+        "tran",
+        "gpu",
+        "of",
+        "memory",
+        "het",
+        "vram",
+        "cuda",
+        "bo",
+        "nho",
+        "out"
+      ],
+      "success_count": 1,
+      "created_at": "2026-11-10 23:01:45",
+      "last_recalled": "2026-11-10 23:01:45",
       "last_outbox_id": 1,
       "last_outbox_generation": 1
     }

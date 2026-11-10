@@ -3,7 +3,7 @@ name: omni-skill-orchestrator
 description: >-
   Universal AI Skill & Plugin Intelligence: Automatically discovers, resolves, and auto-activates the optimal skill or agent for any project or task across 550+ (and up to 7,749+) installed plugins, active skills, library skills, and builtin tools with Tri-Tier Omni-Memory v4.1, Omni-Auditor Council Gate, and sub-millisecond pre-flight reflex without requiring the user to remember commands.
 metadata:
-  version: 4.1.0
+  version: 4.2.0
 ---
 
 # Omni-Kernel Orchestrator v4.1

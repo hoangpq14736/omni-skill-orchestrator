@@ -57,6 +57,8 @@ def cosine_similarity(v1: List[float], norm1: float, v2: List[float], norm2: flo
             raise ValueError(f"Non-finite vector norm detected: norm1={norm1}, norm2={norm2}")
         return 0.0
     if norm1 <= 0.0 or norm2 <= 0.0:
+        if strict:
+            raise ValueError(f"Zero vector norm detected: norm1={norm1}, norm2={norm2}")
         return 0.0
     if len(v1) != len(v2):
         if strict:

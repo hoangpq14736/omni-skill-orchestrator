@@ -1,8 +1,8 @@
-# Omni-Kernel & Omni-Memory v4.1 Constitution
+# Omni-Kernel & Omni-Memory v4.2 Constitution
 
 <!--
   Sync Impact Report:
-  - Version: 4.1.0 (Ratified Architectural Invariants)
+  - Version: 4.2.0 (Ratified Architectural Invariants)
   - Scope: Omni-Kernel Tri-Tier Cognitive Architecture, Hardware Fleet & Memory Management
   - Ratification Date: 2026-11-02
   - Principles Enshrined: Principles I through V, Governance & SemVer Policies

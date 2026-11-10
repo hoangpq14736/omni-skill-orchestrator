@@ -9,7 +9,7 @@
 [English](README.md) • [Tiếng Việt](README.vi.md)
 
 > **A lightweight, local-first orchestration harness for Google Antigravity, Claude Code, Cursor, and autonomous AI coding agents.**  
-> *Equipped with sub-millisecond JIT skill routing, Tri-Worker Fleet delegation (Local MI50 + Groq 120B LPU + Gemini Heavy Cloud 1M), Tri-Tier episodic memory (SQLite WAL + Dual-Column FTS5 BM25 + 384-dim CPU ONNX embeddings), Graphify-grade codebase topology (Omni-Graph), and decoupled DeepSeek-V4.1-Flash (1M context) architecture gatekeeping — with zero static prompt token bloat.*
+> *Equipped with sub-millisecond JIT skill routing, Tri-Worker Fleet delegation (Local MI50 + Groq 120B LPU + Gemini Heavy Cloud 1M), Tri-Tier episodic memory (SQLite WAL + Dual-Column FTS5 BM25 + 256-dim CPU ONNX embeddings), Graphify-grade codebase topology (Omni-Graph), and decoupled DeepSeek-V4.1-Flash (1M context) architecture gatekeeping — with zero static prompt token bloat.*
 
 > [!WARNING]
 > ### ⚠️ Personal Tailor-Made Project (Dự Án Cá Nhân Đo Ni Đóng Giày)

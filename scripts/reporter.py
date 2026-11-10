@@ -350,9 +350,9 @@ def format_markdown_report(data: dict) -> str:
     recent = data["recent_tasks"]
 
     lines = []
-    lines.append(f"# 📊 Omni-Kernel v4.1: Báo Cáo Tiến Trình & Trí Tuệ Tích Lũy")
+    lines.append(f"# 📊 Omni-Kernel v4.2: Báo Cáo Tiến Trình & Trí Tuệ Tích Lũy")
     lines.append(f"> **Khoảng thời gian khảo sát:** `{p['start_date']}` đến `{p['end_date']}` ({p['days']} ngày qua)  ")
-    lines.append(f"> **Thời điểm xuất báo cáo:** `{p['generated_at']}` | **Hệ điều hành:** `Omni-Kernel v4.1`\n")
+    lines.append(f"> **Thời điểm xuất báo cáo:** `{p['generated_at']}` | **Hệ điều hành:** `Omni-Kernel v4.2`\n")
 
     lines.append("---")
     lines.append("## ⚡ 1. Bảng Chỉ Số Điều Hành Cốt Lõi (Executive KPI Dashboard)\n")

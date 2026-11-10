@@ -79,8 +79,8 @@ Nếu các MCP Worker (`local_worker_mi50`, `groq_worker_cloud`, `gemini_worker_
 
 #### `TC-WRK-01`: Sửa đổi file mã nguồn cục bộ (In-place surgical edit)
 * **Prompt**: `"Cập nhật docstring hoặc comment giải thích trường total_activations trong file scripts/memory_schema.py."`
-* **Kỳ vọng (PASS)**: Ủy thác cho `local_worker_mi50` (`fast_edit`) để sửa trực tiếp trên file; nếu worker offline, giải thích rõ trạng thái và dùng surgical diff tối giản.
-* **Thất bại (FAIL)**: In toàn bộ 500 dòng code của file ra cửa sổ chat.
+* **Kỳ vọng (PASS)**: Kiểm tra file thật để phát hiện comment hiện có; ủy thác cho `local_worker_mi50` (`fast_edit`) để sửa trực tiếp trên file (nếu worker offline, giải thích rõ trạng thái và áp dụng surgical diff tối giản). Không phát sinh mã thừa hoặc dòng trống.
+* **Thất bại (FAIL)**: In toàn bộ 500 dòng code của file ra cửa sổ chat hoặc bịa đặt trường mới.
 
 #### `TC-WRK-02`: Sinh hàng loạt Unit Test tốc độ cao (Boilerplate Test Generation)
 * **Prompt**: `"Sinh 30 test cases kiểm thử các trường hợp edge cases cho hàm sanitize_fts5_query trong file scripts/memory_utils.py."`
@@ -118,7 +118,7 @@ Nếu các MCP Worker (`local_worker_mi50`, `groq_worker_cloud`, `gemini_worker_
 
 #### `TC-PNY-03`: Tối ưu hóa Codebase Helper có sẵn
 * **Prompt**: `"Trong dự án này đã có sẵn hàm nào chuyển đổi tiếng Việt có dấu sang không dấu chưa? Hãy dùng nó."`
-* **Kỳ vọng (PASS)**: Tìm và tái sử dụng `fold_vietnamese()` từ `scripts/memory_utils.py:198` (xử lý `đ/Đ` trước NFD) thay vì viết hàm mới hay cài thư viện ngoài.
+* **Kỳ vọng (PASS)**: Tìm và tái sử dụng `fold_vietnamese()` từ `scripts/memory_utils.py:199` (xử lý `đ/Đ` trước NFD) thay vì viết hàm mới hay cài thư viện ngoài.
 * **Thất bại (FAIL)**: Viết lại từ đầu hoặc đòi cài `unidecode`.
 
 #### `TC-PNY-04`: Ponytail Closing Line Invariant
@@ -128,8 +128,8 @@ Nếu các MCP Worker (`local_worker_mi50`, `groq_worker_cloud`, `gemini_worker_
 
 #### `TC-PNY-05`: Bug Fix Caller Grep Invariant
 * **Prompt**: `"Trước khi sửa hàm get_embedding(text, is_query=True), hãy kiểm tra xem những file nào đang gọi hàm này."`
-* **Kỳ vọng (PASS)**: Dùng grep/ast kiểm tra toàn bộ codebase: báo cáo đúng caller duy nhất trong runtime là `scripts/consolidator.py:1301` (`is_query=False`).
-* **Thất bại (FAIL)**: Sửa trực tiếp mà không kiểm tra callers.
+* **Kỳ vọng (PASS)**: Dùng grep/ast kiểm tra toàn bộ codebase: báo cáo đúng 2 callers trong runtime là `scripts/consolidator.py:1301` (`is_query=False`) và `scripts/memory_engine.py:817` (`is_query=True`) (cộng thêm scratch/test harness nếu có).
+* **Thất bại (FAIL)**: Sửa trực tiếp mà không kiểm tra callers, hoặc chỉ báo 1 caller mà bỏ sót caller đường query.
 
 ---
 
@@ -152,7 +152,7 @@ Nếu các MCP Worker (`local_worker_mi50`, `groq_worker_cloud`, `gemini_worker_
 
 #### `TC-BIL-04`: Chuẩn hóa nguyên âm đ/Đ và dấu thanh
 * **Prompt**: `"tìm tài liệu hướng dẫn về đường dẫn tương đối và đường dẫn tuyệt đối trong linux"`
-* **Kỳ vọng (PASS)**: Nhận diện chữ `đ/Đ` được chuẩn hóa thành `d/D` và tìm kiếm chính xác qua FTS5 diacritic folding.
+* **Kỳ vọng (PASS)**: Nhận diện chữ `đ/Đ` được chuẩn hóa thành `d/D` (`duong dan`) và tìm kiếm chính xác qua FTS5 diacritic folding (`scripts/memory_utils.py:fold_vietnamese`). Ở tầng resolver, chấp nhận các skill tài liệu tra cứu như `documentation-lookup` / `living-docs-governance` (hoặc tra cứu episodic memory).
 * **Thất bại (FAIL)**: Bị trượt do lỗi encoding hoặc subword splitting sai lệch.
 
 #### `TC-BIL-05`: Định tuyến quy tắc Kiến trúc Omni

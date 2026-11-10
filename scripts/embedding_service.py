@@ -7,7 +7,8 @@ Gracefully falls back to None if onnxruntime/tokenizers is not installed or mode
 
 import os
 import sys
-from typing import List, Optional
+from functools import lru_cache
+from typing import List, Optional, Tuple
 
 MODEL_NAME = "google/embeddinggemma-2-omni"
 DIMENSIONS = 256
@@ -78,27 +79,14 @@ def _get_engine():
         return None, None
 
 
-def get_embedding(text: str, is_query: bool = True) -> Optional[List[float]]:
-    """
-    Generate dense vector embedding using fine-tuned google/embeddinggemma-2-omni (INT8, MRL 256d) on Host CPU.
-
-    MANDATORY ASYMMETRIC PREFIXES:
-    - is_query=True: Prepends "task: search result | query: " (essential for query representation).
-    - is_query=False: Prepends "title: none | text: " for indexing document/episodic text.
-    - Returns 256-dimensional list of floats (L2 normalized), or None if embedding runtime is offline.
-    """
-    if not text:
-        return None
-
+@lru_cache(maxsize=512)
+def _cached_embedding(prefixed_text: str) -> Optional[Tuple[float, ...]]:
     session, tok = _get_engine()
     if session is None or tok is None:
         return None
 
     try:
         import numpy as np
-
-        prefix = "task: search result | query: " if is_query else "title: none | text: "
-        prefixed_text = prefix + text
 
         enc = tok.encode(prefixed_text)
         inputs = {
@@ -119,7 +107,24 @@ def get_embedding(text: str, is_query: bool = True) -> Optional[List[float]]:
         if norm > 0.0:
             vec = vec / norm
 
-        return vec.tolist()
+        return tuple(vec.tolist())
     except Exception as e:
         sys.stderr.write(f"[!] Warning: get_embedding failed: {e}\n")
         return None
+
+
+def get_embedding(text: str, is_query: bool = True) -> Optional[List[float]]:
+    """
+    Generate dense vector embedding using fine-tuned google/embeddinggemma-2-omni (INT8, MRL 256d) on Host CPU.
+
+    MANDATORY ASYMMETRIC PREFIXES:
+    - is_query=True: Prepends "task: search result | query: " (essential for query representation).
+    - is_query=False: Prepends "title: none | text: " for indexing document/episodic text.
+    - Returns 256-dimensional list of floats (L2 normalized), or None if embedding runtime is offline.
+    """
+    if not text:
+        return None
+
+    prefix = "task: search result | query: " if is_query else "title: none | text: "
+    res = _cached_embedding(prefix + text)
+    return list(res) if res is not None else None

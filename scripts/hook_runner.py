@@ -381,7 +381,7 @@ def verify_critic_artifact(workspace_dir: str, target_file: str = None, user_pro
 
 def build_preflight_message(resolution: dict, gatekeeper_text: str = None, drift_text: str = None) -> str:
     """Formats the cognitive pre-flight resolution into a clean, sanitized markdown block (VULN-004, VULN-202)."""
-    lines = ["[OMNI-KERNEL v4.1 PRE-FLIGHT ACTIVATION]"]
+    lines = ["[OMNI-KERNEL v4.2 PRE-FLIGHT ACTIVATION]"]
     
     # 1. Top Skills (Universal safe_field gatekeeper)
     skills = resolution.get("skills", [])

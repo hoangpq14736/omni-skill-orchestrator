@@ -37,8 +37,8 @@ if hasattr(sys.stderr, "reconfigure"):
 # ==============================================================================
 # CONSTANTS & CONFIGURATION
 # ==============================================================================
-KERNEL_VERSION = "4.1.0"
-KERNEL_SCHEMA_VERSION = 410  # SQLite user_version for v4.1.0
+KERNEL_VERSION = "4.2.0"
+KERNEL_SCHEMA_VERSION = 420  # SQLite user_version for v4.2.0
 DEBOUNCE_INTERVAL_SEC = 1800  # 30 minutes session-level cooldown
 
 HOME = os.path.expanduser("~")
