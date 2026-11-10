@@ -415,7 +415,7 @@ def hybrid_search(
     4. Hydrates and returns full dictionary records from workspace_episodic_memory.
     """
     lex_results = search_fts5(conn, query, workspace_hash, limit=50)
-    if not lex_results:
+    if not lex_results and (query_vector is None or len(query_vector) == 0):
         return []
 
     lex_ranked_ids = [row[0] for row in lex_results]
@@ -452,9 +452,13 @@ def hybrid_search(
         dense_scored.sort(key=lambda x: -x[1])
         dense_ranked_ids = [m_id for m_id, _ in dense_scored]
 
-        # Reciprocal Rank Fusion (k=20)
-        fused = reciprocal_rank_fusion(lex_ranked_ids, dense_ranked_ids, k=20, w_lex=0.5, w_dense=0.5)
-        target_ids = [doc_id for doc_id, _ in fused[:top_k]]
+        if lex_ranked_ids:
+            # Reciprocal Rank Fusion (k=20)
+            fused = reciprocal_rank_fusion(lex_ranked_ids, dense_ranked_ids, k=20, w_lex=0.5, w_dense=0.5)
+            target_ids = [doc_id for doc_id, _ in fused[:top_k]]
+        else:
+            # Dense-only when lexical FTS5 yields 0 hits
+            target_ids = dense_ranked_ids[:top_k]
 
     if not target_ids:
         return []
@@ -756,4 +760,95 @@ def recall_antipatterns(
     finally:
         if should_close:
             conn.close()
+
+
+def recall_episodic_memory(
+    query_text: str,
+    workspace_dir: Optional[str] = None,
+    workspace_hash: Optional[str] = None,
+    top_k: int = 2,
+    db_path: Optional[str] = None,
+) -> List[Dict[str, Any]]:
+    """
+    Tier 2 Dense Semantic & Episodic Retrieval (<15ms).
+    Uses fine-tuned google/embeddinggemma-2-omni (INT8 MRL 256d) with asymmetric prefixes
+    and fuses with dual-column FTS5 BM25 via Reciprocal Rank Fusion (k=20).
+    """
+    if not query_text:
+        return []
+
+    # 1. Resolve DB path
+    resolved_db = db_path
+    if not resolved_db:
+        candidate_paths = [
+            os.path.join(os.path.expanduser("~"), ".gemini", "config", "plugins", "omni-skill-orchestrator", "omni_memory.db"),
+            os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "omni_memory.db"),
+            r"D:\Antigravity\Skill management\omni_memory.db",
+        ]
+        for p in candidate_paths:
+            if os.path.isfile(p):
+                resolved_db = p
+                break
+    if not resolved_db or not os.path.isfile(resolved_db):
+        return []
+
+    # 2. Resolve workspace hash
+    ws_hash = workspace_hash
+    if not ws_hash and workspace_dir:
+        from memory_utils import canonical_workspace_hash
+        ws_hash = canonical_workspace_hash(workspace_dir)
+
+    # 3. Compute query vector using fine-tuned EmbeddingGemma-2
+    query_vector = None
+    try:
+        from embedding_service import get_embedding
+        query_vector = get_embedding(query_text, is_query=True)
+    except Exception as emb_err:
+        import sys
+        sys.stderr.write(f"[!] Warning: embedding_service get_embedding failed: {emb_err}\n")
+
+    conn = None
+    try:
+        conn = sqlite3.connect(resolved_db, timeout=5.0)
+        conn.execute("PRAGMA busy_timeout = 5000;")
+        conn.execute("PRAGMA journal_mode = WAL;")
+        conn.execute("PRAGMA synchronous = NORMAL;")
+
+        # If ws_hash is not known, fetch all active workspace hashes to permit unscoped retrieval
+        target_hashes = [ws_hash] if ws_hash else []
+        if not target_hashes:
+            cur = conn.cursor()
+            cur.execute("SELECT DISTINCT workspace_hash FROM workspace_episodic_memory WHERE status = 'Active';")
+            target_hashes = [r[0] for r in cur.fetchall()]
+
+        all_records = []
+        for h in target_hashes:
+            memories = hybrid_search(conn, query_text, h, query_vector=query_vector, top_k=top_k)
+            all_records.extend(memories)
+
+        # Format into trace dictionary
+        traces = []
+        for item in all_records[:top_k]:
+            traces.append({
+                "trace": {
+                    "id": item.get("memory_id", ""),
+                    "problem_signature": item.get("problem_signature") or item.get("title", ""),
+                    "proven_solution": item.get("solution_payload", ""),
+                    "memory_type": item.get("memory_type", "episodic"),
+                },
+                "score": round(float(item.get("confidence_score", 0.95)), 3),
+                "matched_tokens": [item.get("memory_type", "dense")],
+            })
+        return traces
+    except Exception as e:
+        import sys
+        sys.stderr.write(f"[!] Warning: recall_episodic_memory encountered error: {e}\n")
+        return []
+    finally:
+        if conn:
+            try:
+                conn.close()
+            except Exception:
+                pass
+
 

@@ -1049,6 +1049,19 @@ def resolve_skill(intent_text="", workspace_dir=None, registry=None, top_k=3, af
             proven_traces = recall_traces(intent_text, workspace_dir=workspace_dir, top_k=2, allow_unscoped=True)
         except Exception:
             proven_traces = []
+
+        # Tier 2 Episodic Memory Dense Fallback / Augmentation (EmbeddingGemma-2)
+        if len(proven_traces) < 2:
+            try:
+                from memory_engine import recall_episodic_memory
+                needed = 2 - len(proven_traces)
+                existing_ids = {t.get("trace", {}).get("id") for t in proven_traces}
+                tier2_memories = recall_episodic_memory(intent_text, workspace_dir=workspace_dir, top_k=needed)
+                for mem in tier2_memories:
+                    if mem.get("trace", {}).get("id") not in existing_ids:
+                        proven_traces.append(mem)
+            except Exception:
+                pass
         try:
             from mcp_gateway import route_mcp_tool
             dynamic_mcp_tools = route_mcp_tool(intent_text, top_k=2)
@@ -1111,6 +1124,23 @@ def resolve_skill(intent_text="", workspace_dir=None, registry=None, top_k=3, af
             pass
         sys.stderr.write(f"[!] Warning: resolver.recall_traces failed: {type(e).__name__}: {e}\n")
         proven_traces = []
+
+    # Tier 2 Episodic Memory Dense Fallback / Augmentation (EmbeddingGemma-2)
+    if len(proven_traces) < 2:
+        try:
+            from memory_engine import recall_episodic_memory
+            needed = 2 - len(proven_traces)
+            existing_ids = {t.get("trace", {}).get("id") for t in proven_traces}
+            tier2_memories = recall_episodic_memory(intent_text, workspace_dir=workspace_dir, top_k=needed)
+            for mem in tier2_memories:
+                if mem.get("trace", {}).get("id") not in existing_ids:
+                    proven_traces.append(mem)
+        except Exception as tier2_err:
+            try:
+                from memory_utils import persist_diag
+                persist_diag(f"resolver.recall_episodic_memory: {type(tier2_err).__name__}: {tier2_err}", 256)
+            except Exception:
+                pass
 
     # Dynamic MCP Tool Routing via Omni-MCP Virtual Bus (<0.3ms)
     try:
