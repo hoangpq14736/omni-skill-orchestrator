@@ -41,3 +41,7 @@ models/
 
 # Omni-Kernel workspace artifacts
 .omni/
+
+# DSH Empirical Auditor artifacts
+.dsh_audit.lock
+.agy_provenance.jsonl
