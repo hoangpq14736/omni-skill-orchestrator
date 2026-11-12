@@ -46,6 +46,9 @@ You have access to the **Omni-Kernel v4.3 Orchestrator**, a unified autonomous i
      Incorporate independent red-teaming critique and edge-case mitigations into the final blueprint before dispatching implementation tasks to worker fleet.
      Enforces strict POSIX exit codes (0=Approved, 1=Critique generated, 2=Auth/Quota, 3=Timeout/Network, 4=Usage/Config, 5=Strict rejection).
      Strictly prohibits internal self-review ("echo chamber") with duplicate Gemini subagents.
+   - **Empirical Peer Audit (DSH CLI):** When empirical runtime verification, bug reproduction, concurrency testing, or isolated refactor evaluation on a repository is needed (requires local `dsh` CLI):
+     Execute: `python "C:/Users/vuhuu/.gemini/config/plugins/omni-skill-orchestrator/scripts/dsh_auditor.py" --cwd "<current_workspace>" --category <STATIC_AUDIT|BUG_REPRODUCE|DB_CONCURRENCY|REFACTOR_EVAL> [--read-only] --task "<prompt>" --json`
+     Enforces Tier 1/2 snapshot-and-backup rollback and Tier 3 isolated shadow worktree patch harvesting; fails soft (`exit_code=-1`) if `dsh` is absent on the host.
 
 7. **Omni-Memory v4.3 Tri-Tier Cognitive Hierarchy**:
    - **Tier 1 (L1 Reflex - <25ms subprocess turnaround, <0.3ms reflex)**: Ephemeral PreInvocation hook in `scripts/hook_runner.py` with 100% Python stdlib. Clamps input to 2,048 chars, suppresses fillers via boundary matching, queries in-memory cached traces in <0.02ms, and stages telemetry to `l1_staging_log`.
