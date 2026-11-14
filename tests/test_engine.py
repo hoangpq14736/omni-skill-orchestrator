@@ -910,6 +910,60 @@ class TestOmniSkillOrchestrator(unittest.TestCase):
             })
             self.assertEqual(res_bom["decision"], "deny")
 
+        with tempfile.TemporaryDirectory() as tmp_dir_neg_en:
+            neg_prompt = "Do NOT implement anything yet; only explain the architecture"
+            res_neg1 = hook_runner.process_hook({
+                "hookEventName": "PreToolUse",
+                "workspacePaths": [tmp_dir_neg_en],
+                "lastUserInput": neg_prompt,
+                "toolCall": {"name": "edit_file", "args": {"Path": os.path.join(tmp_dir_neg_en, "service.py")}},
+            })
+            self.assertEqual(res_neg1["decision"], "deny")
+            res_neg2 = hook_runner.process_hook({
+                "hookEventName": "PreToolUse",
+                "workspacePaths": [tmp_dir_neg_en],
+                "lastUserInput": neg_prompt,
+                "toolCall": {"name": "edit_file", "args": {"Path": os.path.join(tmp_dir_neg_en, "service.py")}},
+            })
+            self.assertEqual(res_neg2["decision"], "allow")
+
+        with tempfile.TemporaryDirectory() as tmp_dir_bom_tail:
+            tx_tail = os.path.join(tmp_dir_bom_tail, "transcript.jsonl")
+            vi_prompt = "Thiết kế kiến trúc hệ thống mới tinh cho dịch vụ thanh toán đa luồng"
+            long_prompt = ("A" * 9000) + " " + vi_prompt
+            with open(tx_tail, "wb") as tf:
+                tf.write(( "\ufeff" + json.dumps({"type": "USER_INPUT", "content": long_prompt}, ensure_ascii=False) + "\n").encode("utf-8"))
+            res_t1 = hook_runner.process_hook({
+                "hookEventName": "PreToolUse",
+                "workspacePaths": [],
+                "transcriptPath": tx_tail,
+                "lastUserInput": "",
+                "toolCall": {"name": "write_file", "args": {"Path": os.path.join(tmp_dir_bom_tail, "core.py")}},
+            })
+            self.assertEqual(res_t1["decision"], "deny")
+            res_t2 = hook_runner.process_hook({
+                "hookEventName": "PreToolUse",
+                "workspacePaths": [],
+                "transcriptPath": tx_tail,
+                "lastUserInput": "",
+                "toolCall": {"name": "write_file", "args": {"Path": os.path.join(tmp_dir_bom_tail, "core.py")}},
+            })
+            self.assertEqual(res_t2["decision"], "allow")
+
+        with tempfile.TemporaryDirectory() as tmp_dir_parts:
+            tx_parts = os.path.join(tmp_dir_parts, "transcript.jsonl")
+            vi_prompt = "Thiết kế kiến trúc hệ thống mới tinh cho dịch vụ thanh toán đa luồng"
+            with open(tx_parts, "w", encoding="utf-8") as tf:
+                tf.write(json.dumps({"role": "user", "parts": [{"text": vi_prompt}]}, ensure_ascii=False) + "\n")
+            res_parts = hook_runner.process_hook({
+                "hookEventName": "PreToolUse",
+                "workspacePaths": [],
+                "transcriptPath": tx_parts,
+                "lastUserInput": "",
+                "toolCall": {"name": "write_file", "args": {"Path": os.path.join(tmp_dir_parts, "handler.py")}},
+            })
+            self.assertEqual(res_parts["decision"], "deny")
+
 
 if __name__ == "__main__":
     unittest.main()

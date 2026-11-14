@@ -65,7 +65,7 @@ class ComplexityRouter:
         r'consensus|byzantine|gossip|eventual consistency|idempotency|idempotent|'
         r'atomic|cas|compare-and-swap|actor model|goroutine|coroutine|semaphore|'
         r'thread pool|heap corruption|heisenbug|'
-        r'kiến trúc|kien truc|thiết kế hệ thống|thiet ke he thong|design system|microservices)\b',
+        r'kiến trúc|kien truc|thiết kế hệ thống|thiet ke he thong|design system|architecture|architectural|microservices)\b',
         re.IGNORECASE
     )
 

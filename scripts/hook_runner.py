@@ -551,6 +551,8 @@ def process_pre_tool_use(payload: dict) -> dict:
             return {"decision": "allow"}
 
         last_input = str(payload.get("lastUserInput") or payload.get("prompt") or "").strip()
+        if len(last_input) > 2048:
+            last_input = last_input[:1024] + " " + last_input[-1023:]
         tail_text = ""
         transcript_path = payload.get("transcriptPath")
         if isinstance(transcript_path, str) and transcript_path.strip() and os.path.isfile(transcript_path.strip()):
@@ -575,8 +577,21 @@ def process_pre_tool_use(payload: dict) -> dict:
                     tail_text = tf.read(32768).decode("utf-8", errors="replace")
                 if not last_input and first_json_line:
                     step0 = json.loads(first_json_line)
-                    if isinstance(step0.get("content"), str):
-                        last_input = step0["content"].strip()[:2048]
+                    s0_text = ""
+                    if isinstance(step0.get("content"), str) and step0["content"].strip():
+                        s0_text = step0["content"].strip()
+                    elif isinstance(step0.get("parts"), list):
+                        s0_text = " ".join(
+                            p.get("text", "")
+                            for p in step0["parts"]
+                            if isinstance(p, dict) and isinstance(p.get("text"), str)
+                        ).strip()
+                    if s0_text:
+                        last_input = (
+                            (s0_text[:1024] + " " + s0_text[-1023:])
+                            if len(s0_text) > 2048
+                            else s0_text
+                        )
             except Exception:
                 pass
 
