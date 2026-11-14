@@ -1,6 +1,6 @@
 {
   "version": "3.0.0",
-  "updated_at": "2026-11-10 23:01:45",
+  "updated_at": "2026-11-05 03:36:45",
   "traces": [
     {
       "id": "4c77aec4ac",
@@ -209,7 +209,7 @@
       ],
       "success_count": 3,
       "created_at": "2026-11-03 13:02:46",
-      "last_recalled": "2026-11-04 02:30:33"
+      "last_recalled": "2026-11-04 15:28:51"
     },
     {
       "id": "e6693777d3",
@@ -361,7 +361,7 @@
       ],
       "success_count": 3,
       "created_at": "2026-11-03 19:11:34",
-      "last_recalled": "2026-11-04 00:39:13"
+      "last_recalled": "2026-11-04 16:16:43"
     },
     {
       "id": "a30b825614",
@@ -426,7 +426,7 @@
     {
       "id": "404786cca2",
       "problem_signature": "dual worker fleet delegation and transparency card badge invariant",
-      "proven_solution": "Always render Omni-Kernel badge at top and delegate code/test gen to groq_worker_cloud and in-place edits to local_worker_mi50",
+      "proven_solution": "Always render Omni-Kernel badge at top and delegate code gen, fast edits, test suites, and self-healing verification loops to gemini_worker_cloud (Flash-Lite / 3.8 Flash / 4 Argon), with deepseek_worker_cloud for critical spec/diff audits",
       "action_type": "command",
       "tags": [
         "worker",
@@ -453,76 +453,38 @@
       "last_recalled": "2026-11-04 02:56:01"
     },
     {
-      "id": "89949b27e5751a79b945c6fb",
-      "workspace_hash": "b76dd220cdd0e5a1a6985e0c41b25231f2881e752a5420e4b5c790402b649e50",
+      "id": "76b74b5de5",
       "problem_signature": "debug out of memory error in cuda",
       "proven_solution": "# Verified Fix for: debug out of memory error in cuda",
       "action_type": "command",
       "tags": [
-        "out of memory",
         "het vram",
         "tran bo nho",
-        "gpu memory"
-      ],
-      "workspace_context": "d:/workspace_alpha",
-      "tokens": [
-        "of",
-        "nho",
-        "bo",
-        "tran",
-        "het",
-        "out",
-        "in",
-        "cuda",
-        "error",
-        "memory",
-        "gpu",
-        "vram",
-        "debug"
-      ],
-      "success_count": 1,
-      "created_at": "2026-11-10 14:24:30",
-      "last_recalled": "2026-11-10 14:24:30",
-      "last_outbox_id": 1,
-      "last_outbox_generation": 1
-    },
-    {
-      "id": "c735ff8cfffe09eabb74eb90",
-      "workspace_hash": "e6f66b368f31276c6383e8efb264fc6774c34b26cc7b24fd76e2e45d2e33c821",
-      "problem_signature": "debug out of memory error in cuda",
-      "proven_solution": "# Verified Fix for: debug out of memory error in cuda",
-      "action_type": "command",
-      "tags": [
-        "out of memory",
-        "het vram",
-        "tran bo nho",
-        "gpu memory"
+        "gpu memory",
+        "out of memory"
       ],
       "workspace_context": "d:/workspace_beta",
       "tokens": [
         "of",
-        "nho",
-        "bo",
         "tran",
-        "het",
-        "out",
-        "in",
-        "cuda",
-        "error",
-        "memory",
-        "gpu",
         "vram",
-        "debug"
+        "in",
+        "nho",
+        "debug",
+        "het",
+        "error",
+        "cuda",
+        "out",
+        "memory",
+        "bo",
+        "gpu"
       ],
-      "success_count": 1,
-      "created_at": "2026-11-10 14:24:30",
-      "last_recalled": "2026-11-10 14:24:30",
-      "last_outbox_id": 2,
-      "last_outbox_generation": 1
+      "success_count": 70,
+      "created_at": "2026-11-04 13:02:45",
+      "last_recalled": "2026-11-04 15:28:12"
     },
     {
-      "id": "9fa830be7f81f481a1999978",
-      "workspace_hash": "c88c816c61119edcb5809fb8aee685b5ddd5e4f6d44cb9809ae6a112eeb6f913",
+      "id": "f94724369a",
       "problem_signature": "positive task query",
       "proven_solution": "# Verified Fix for: positive task query",
       "action_type": "command",
@@ -530,18 +492,15 @@
       "workspace_context": "ws-test-feed",
       "tokens": [
         "positive",
-        "task",
-        "query"
+        "query",
+        "task"
       ],
-      "success_count": 1,
-      "created_at": "2026-11-10 14:24:35",
-      "last_recalled": "2026-11-10 14:24:35",
-      "last_outbox_id": 1,
-      "last_outbox_generation": 1
+      "success_count": 31,
+      "created_at": "2026-11-04 13:03:01",
+      "last_recalled": "2026-11-04 14:49:03"
     },
     {
-      "id": "2bade6c6ea7c5bebb8160695",
-      "workspace_hash": "ded8915244371ea2e4799db71c0acfbb65a9663b18d2cab1aec48d7663579b0c",
+      "id": "d605394186",
       "problem_signature": "valid fix query",
       "proven_solution": "# Verified Fix for: valid fix query",
       "action_type": "command",
@@ -552,241 +511,86 @@
         "valid",
         "query"
       ],
-      "success_count": 1,
-      "created_at": "2026-11-10 14:24:35",
-      "last_recalled": "2026-11-10 14:24:35",
-      "last_outbox_id": 1,
-      "last_outbox_generation": 1
+      "success_count": 24,
+      "created_at": "2026-11-04 13:26:04",
+      "last_recalled": "2026-11-04 16:16:43"
     },
     {
-      "id": "53203ab56bde53e2f79b1333",
-      "workspace_hash": "4334f7765d08b4ce5fd0991b04ab8bad90a6061ff996109d609a8cb916477123",
+      "id": "756ad4efa7",
+      "problem_signature": "caller query 1",
+      "proven_solution": "Verified fix for caller query 1",
+      "action_type": "command",
+      "tags": [],
+      "workspace_context": "d:/ws_caller",
+      "tokens": [
+        "caller",
+        "query"
+      ],
+      "success_count": 14,
+      "created_at": "2026-11-04 13:35:07",
+      "last_recalled": "2026-11-04 14:15:16"
+    },
+    {
+      "id": "e6c8e9c70b",
       "problem_signature": "docker port conflict 8080",
       "proven_solution": "# Verified Fix for: docker port conflict 8080",
       "action_type": "command",
       "tags": [
+        "bind address",
         "port conflict",
         "xung dot cong",
-        "bind address",
         "loi cong dang dung"
       ],
-      "workspace_context": "C:\\Users\\vuhuu\\AppData\\Local\\Temp\\tmp5icl193j",
+      "workspace_context": "C:\\Users\\vuhuu\\AppData\\Local\\Temp\\tmp3j8yed91",
       "tokens": [
-        "address",
-        "conflict",
-        "xung",
-        "dang",
-        "bind",
-        "dot",
-        "loi",
         "dung",
+        "dot",
+        "xung",
         "docker",
+        "bind",
+        "dang",
         "cong",
+        "conflict",
+        "loi",
         "port",
-        "8080"
+        "8080",
+        "address"
       ],
-      "success_count": 2,
-      "created_at": "2026-11-10 14:24:35",
-      "last_recalled": "2026-11-10 14:24:35",
-      "last_outbox_id": 1,
-      "last_outbox_generation": 2
+      "success_count": 21,
+      "created_at": "2026-11-04 14:14:37",
+      "last_recalled": "2026-11-04 15:56:56"
     },
     {
-      "id": "7170d4abd61299fef25001a0",
-      "workspace_hash": "c42b8ba8697625afbe72ddff0d98c9b7518cefafb572f30bcdc30816e8ae28a3",
+      "id": "05d81a80c0",
       "problem_signature": "cuda out of memory vram",
       "proven_solution": "# Verified Fix for: cuda out of memory vram",
       "action_type": "command",
       "tags": [
-        "out of memory",
         "het vram",
         "tran bo nho",
-        "gpu memory"
+        "gpu memory",
+        "out of memory"
       ],
-      "workspace_context": "C:\\Users\\vuhuu\\AppData\\Local\\Temp\\tmpu8sg_u49",
+      "workspace_context": "C:\\Users\\vuhuu\\AppData\\Local\\Temp\\tmp3m2vafvv",
       "tokens": [
         "of",
-        "nho",
-        "bo",
         "tran",
+        "vram",
+        "nho",
         "het",
-        "out",
         "cuda",
+        "out",
         "memory",
-        "gpu",
-        "vram"
+        "bo",
+        "gpu"
       ],
-      "success_count": 1,
-      "created_at": "2026-11-10 14:24:35",
-      "last_recalled": "2026-11-10 14:24:35",
-      "last_outbox_id": 1,
-      "last_outbox_generation": 1
+      "success_count": 7,
+      "created_at": "2026-11-04 14:27:47",
+      "last_recalled": "2026-11-04 15:28:12"
     },
     {
-      "id": "a7f853418dfb2ec6e677f663",
-      "workspace_hash": "ws-iso",
-      "problem_signature": "sig test",
-      "proven_solution": "sol test",
-      "action_type": "command",
-      "tags": [
-        "tag1",
-        "tag2"
-      ],
-      "workspace_context": "",
-      "tokens": [
-        "sig",
-        "tag1",
-        "test",
-        "tag2"
-      ],
-      "success_count": 1,
-      "created_at": "2026-11-10 14:24:36",
-      "last_recalled": "2026-11-10 14:24:36",
-      "last_outbox_id": 1,
-      "last_outbox_generation": 1
-    },
-    {
-      "id": "b3090e3dca6ca8de46273c36",
-      "workspace_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-      "problem_signature": "solve tenant a issue",
-      "proven_solution": "# Verified Fix for: solve tenant a issue",
-      "action_type": "command",
-      "tags": [],
-      "workspace_context": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-      "tokens": [
-        "issue",
-        "solve",
-        "tenant"
-      ],
-      "success_count": 1,
-      "created_at": "2026-11-10 14:24:36",
-      "last_recalled": "2026-11-10 14:24:36",
-      "last_outbox_id": 1,
-      "last_outbox_generation": 1
-    },
-    {
-      "id": "098e4932c6e2bdfdec183e30",
-      "workspace_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-      "problem_signature": "clean valid command",
-      "proven_solution": "# Verified Fix for: clean valid command",
-      "action_type": "command",
-      "tags": [],
-      "workspace_context": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-      "tokens": [
-        "clean",
-        "valid",
-        "command"
-      ],
-      "success_count": 1,
-      "created_at": "2026-11-10 14:25:04",
-      "last_recalled": "2026-11-10 14:25:04",
-      "last_outbox_id": 1,
-      "last_outbox_generation": 1
-    },
-    {
-      "id": "0f854997215d19a8c7bd454a",
-      "workspace_hash": "dddddddddddddddddddddddddddddddd",
-      "problem_signature": "Fix error with token=[REDACTED]]]]]]]]]]]]]]]]]]",
-      "proven_solution": "# Verified Fix for: Fix error with token=[REDACTED]]]]]]]]]]]]]]]]]]",
-      "action_type": "command",
-      "tags": [],
-      "workspace_context": "dddddddddddddddddddddddddddddddd",
-      "tokens": [
-        "redacted",
-        "token",
-        "fix",
-        "error",
-        "with"
-      ],
-      "success_count": 1,
-      "created_at": "2026-11-10 14:25:05",
-      "last_recalled": "2026-11-10 14:25:05",
-      "last_outbox_id": 1,
-      "last_outbox_generation": 1
-    },
-    {
-      "id": "48eedb2accfc57ac8d2c3c7e",
-      "workspace_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-      "problem_signature": "sig",
-      "proven_solution": "sol",
-      "action_type": "command",
-      "tags": [],
-      "workspace_context": "",
-      "tokens": [
-        "sig"
-      ],
-      "success_count": 1,
-      "created_at": "2026-11-10 14:25:05",
-      "last_recalled": "2026-11-10 14:25:05",
-      "last_outbox_id": 1,
-      "last_outbox_generation": 1
-    },
-    {
-      "id": "e0daf76edba1b60e4dcbd535",
-      "workspace_hash": "c77c98501a39fe7160fc6264a578a37e6610dd4ea3a08e55799749560684db81",
-      "problem_signature": "Fix python import path error",
-      "proven_solution": "# Verified Fix for: Fix python import path error",
-      "action_type": "command",
-      "tags": [
-        "port conflict",
-        "xung dot cong",
-        "bind address",
-        "loi cong dang dung"
-      ],
-      "workspace_context": "C:\\Users\\vuhuu\\AppData\\Local\\Temp\\tmp5ktnanch\\workspace_promo",
-      "tokens": [
-        "path",
-        "error",
-        "fix",
-        "python",
-        "xung",
-        "loi",
-        "import",
-        "address",
-        "port",
-        "conflict",
-        "cong",
-        "dang",
-        "dung",
-        "bind",
-        "dot"
-      ],
-      "success_count": 1,
-      "created_at": "2026-11-10 14:53:50",
-      "last_recalled": "2026-11-10 14:53:50",
-      "last_outbox_id": 1,
-      "last_outbox_generation": 1
-    },
-    {
-      "id": "49c6b9028db968fcf04e1ce8",
-      "workspace_hash": "ac8d8ff6c63484dfcdb38459f1d7bc8197380f7b957684aceca8511a06cebfb7",
-      "problem_signature": "fix sqlite database lock contention in personal cli",
-      "proven_solution": "Use WAL mode with append-only spool and single writer queue",
-      "action_type": "pattern",
-      "tags": [
-        "sqlite",
-        "lock",
-        "wal"
-      ],
-      "workspace_context": "C:\\Users\\vuhuu\\AppData\\Local\\Temp\\tmp2cgdaqz_",
-      "tokens": [
-        "wal",
-        "lock",
-        "fix",
-        "sqlite",
-        "contention",
-        "personal",
-        "in",
-        "cli",
-        "database"
-      ],
-      "success_count": 1,
-      "created_at": "2026-11-10 14:53:55",
-      "last_recalled": "2026-11-10 14:53:55"
-    },
-    {
-      "id": "9a0c87c1587b599b2243470a",
-      "workspace_hash": "bf1c335aa5ac471b05a55dc65f0ce4f5f14bd95c61dc3d3fa6f767f1001d6967",
+      "id": "bd4ea109b2c946b20825196a",
+      "workspace_hash": "dfec524cd1cc1f4d8ba2d0bc09430791aa39f8f503f2a828f3109546b67038e8",
       "problem_signature": "fix docker port conflict 8080",
       "proven_solution": "# Verified Fix for: fix docker port conflict 8080",
       "action_type": "command",
@@ -796,89 +600,25 @@
         "bind address",
         "loi cong dang dung"
       ],
-      "workspace_context": "C:\\Users\\vuhuu\\AppData\\Local\\Temp\\tmp3qbtigvu",
+      "workspace_context": "C:\\Users\\vuhuu\\AppData\\Local\\Temp\\tmpwhkrc4d0",
       "tokens": [
-        "port",
-        "cong",
-        "fix",
-        "docker",
-        "conflict",
         "loi",
-        "8080",
-        "address",
-        "bind",
         "xung",
-        "dang",
-        "dot",
-        "dung"
-      ],
-      "success_count": 1,
-      "created_at": "2026-11-10 14:54:59",
-      "last_recalled": "2026-11-10 14:54:59",
-      "last_outbox_id": 1,
-      "last_outbox_generation": 1
-    },
-    {
-      "id": "5a5f70ac5de82280654106f5",
-      "workspace_hash": "fbe0edc27f8f25cbfc9f8f4ca7cee54b27e78608a4e835aa101f7f222a6b93a3",
-      "problem_signature": "docker port conflict 8080",
-      "proven_solution": "# Verified Fix for: docker port conflict 8080",
-      "action_type": "command",
-      "tags": [
-        "bind address",
-        "xung dot cong",
-        "loi cong dang dung",
-        "port conflict"
-      ],
-      "workspace_context": "C:\\Users\\vuhuu\\AppData\\Local\\Temp\\tmp30_kh52p",
-      "tokens": [
         "conflict",
-        "dung",
-        "cong",
-        "dang",
-        "bind",
-        "xung",
         "port",
+        "cong",
+        "bind",
         "8080",
+        "dang",
         "dot",
-        "docker",
+        "dung",
         "address",
-        "loi"
-      ],
-      "success_count": 2,
-      "created_at": "2026-11-10 23:01:45",
-      "last_recalled": "2026-11-10 23:01:45",
-      "last_outbox_id": 1,
-      "last_outbox_generation": 2
-    },
-    {
-      "id": "0dcf41431d08beb66b5b8257",
-      "workspace_hash": "8b635782ac64090995c36d1b0129dcb2d58b8ec2f0a58699b9fe15600607672e",
-      "problem_signature": "cuda out of memory vram",
-      "proven_solution": "# Verified Fix for: cuda out of memory vram",
-      "action_type": "command",
-      "tags": [
-        "out of memory",
-        "het vram",
-        "tran bo nho",
-        "gpu memory"
-      ],
-      "workspace_context": "C:\\Users\\vuhuu\\AppData\\Local\\Temp\\tmp26kgr3ro",
-      "tokens": [
-        "tran",
-        "gpu",
-        "of",
-        "memory",
-        "het",
-        "vram",
-        "cuda",
-        "bo",
-        "nho",
-        "out"
+        "docker",
+        "fix"
       ],
       "success_count": 1,
-      "created_at": "2026-11-10 23:01:45",
-      "last_recalled": "2026-11-10 23:01:45",
+      "created_at": "2026-11-05 03:36:45",
+      "last_recalled": "2026-11-05 03:36:45",
       "last_outbox_id": 1,
       "last_outbox_generation": 1
     }

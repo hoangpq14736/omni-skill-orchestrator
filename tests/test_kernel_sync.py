@@ -28,6 +28,7 @@ from kernel_sync import (
     KERNEL_VERSION,
     KERNEL_SCHEMA_VERSION,
     _PAT_BOUNDARY,
+    CANONICAL_KERNEL_RULES_V43,
     CANONICAL_KERNEL_RULES_V41
 )
 
@@ -72,10 +73,10 @@ class TestKernelSynchronizer(unittest.TestCase):
         self.assertFalse(is_missing)
         self.assertEqual(drift_v, "3.8.0")
 
-        # 4. Aligned v4.1.0 block
+        # 4. Aligned block
         aligned_block = (
-            "<!-- OMNI-KERNEL-START v4.1.0 -->\n"
-            "# Current invariants\n"
+            f"<!-- OMNI-KERNEL-START v{KERNEL_VERSION} -->\n"
+            f"{CANONICAL_KERNEL_RULES_V43}\n"
             "<!-- OMNI-KERNEL-END -->"
         )
         with open(rule_file, "w", encoding="utf-8") as f:
@@ -167,7 +168,7 @@ class TestKernelSynchronizer(unittest.TestCase):
 
         migrated, msg = KernelSynchronizer.sync_tier2_schema_migration(db_file)
         self.assertTrue(migrated)
-        self.assertIn("Migrated schema v0 -> v410", msg)
+        self.assertIn(f"Migrated schema v0 -> v{KERNEL_SCHEMA_VERSION}", msg)
 
         # Second run is idempotent
         migrated2, msg2 = KernelSynchronizer.sync_tier2_schema_migration(db_file)

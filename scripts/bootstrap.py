@@ -25,7 +25,6 @@ from memory_utils import (
     resolve_git_remote_url,
 )
 from memory_schema import init_database, CURRENT_SCHEMA_VERSION
-from backend_client import is_local_worker_available
 
 
 def setup_plugin_link() -> bool:
@@ -118,7 +117,7 @@ def setup_omni_graph() -> bool:
 
 def main():
     print("=" * 68)
-    print("⚡ OMNI-KERNEL v4.1: UNIVERSAL ENVIRONMENT BOOTSTRAPPER")
+    print("⚡ OMNI-KERNEL v4.3: UNIVERSAL ENVIRONMENT BOOTSTRAPPER")
     print("=" * 68)
     print(f"• Python Runtime : {sys.executable}")
     print(f"• Project Root   : {_PROJECT_ROOT}")
@@ -142,12 +141,10 @@ def main():
     print("-" * 68)
 
     # Worker fleet probe
-    mi50_online = is_local_worker_available()
-    worker_status = "Online (AMD MI50 16GB)" if mi50_online else "Offline (Auto-Routing to Groq LPU 120B Cloud)"
-    print(f"• Worker Fleet   : {worker_status}")
+    print("• Worker Fleet   : Unified Cloud Fleet Active (Gemini 3.5/3.8/4 Argon + DeepSeek Audit Gate)")
 
     print("=" * 68)
-    print("✔ Omni-Kernel v4.1 Environment Bootstrap Complete! Ready for Pair Programming.")
+    print("✔ Omni-Kernel v4.3 Environment Bootstrap Complete! Ready for Pair Programming.")
     print("=" * 68)
 
 

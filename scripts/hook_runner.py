@@ -457,12 +457,11 @@ def build_preflight_message(resolution: dict, gatekeeper_text: str = None, drift
             lines.append(f"  * Proven Fix: {sol}")
             lines.append(f"    (Verified fix for '{sig}', Match: {score}%)")
 
-    # 6. Active Hardware & Worker Fleet Directives
-    lines.append("\n🤖 Active Hardware & Worker Fleet Directives (MANDATORY DELEGATION INVARIANT):")
-    lines.append("  * local_worker_mi50: AMD Instinct MI50 (Vega 20, 16GB HBM2 @ 1024 GB/s) via http://127.0.0.1:8080/v1 (48.5 tok/s, 16k context, SQLite/IPC/FastEdit)")
-    lines.append("  * groq_worker_cloud: Groq LPU (openai/gpt-oss-120b) via Cloud API (300-800+ tok/s, pure algorithmic/transformation tasks)")
-    lines.append("  * gemini_worker_cloud: Google Gemini 3.5 Flash-Lite / 3.8 Flash (1M context, heavy code generation, multimodal vision, Argon deep reasoning via 10$/month API credits)")
-    lines.append("  * DELEGATION MANDATE: Do NOT generate large code or tests in Cloud context. Delegate fast code/tests to 'groq_worker_cloud' (groq_code_gen, groq_generate_tests), heavy/multimodal tasks to 'gemini_worker_cloud' (gemini_heavy_code_gen, gemini_multimodal_vision), and local edits to 'local_worker_mi50' (fast_edit, execute_code_task). Cloud agent acts strictly as Architect & Gatekeeper.")
+    # 6. Active Cloud Worker Fleet Directives
+    lines.append("\n🤖 Active Cloud Worker Fleet Directives (MANDATORY DELEGATION INVARIANT):")
+    lines.append("  * gemini_worker_cloud: Google Gemini 3.5 Flash-Lite / 3.8 Flash / 4 Argon (1M context; rapid in-place edits, test synthesis, self-healing verification loops, heavy generation, multimodal vision, Argon deep reasoning)")
+    lines.append("  * deepseek_worker_cloud: Independent spec & diff audit gatekeeper (deepseek_audit_spec, deepseek_audit_diff)")
+    lines.append("  * DELEGATION MANDATE: Do NOT generate large code, boilerplate edits, or test suites in primary Cloud context. Delegate implementation, fast edits, test generation, and self-healing verification loops to 'gemini_worker_cloud' (gemini_heavy_code_gen, gemini_fast_edit, gemini_generate_tests, gemini_autonomous_loop, gemini_multimodal_vision, gemini_argon_solve), and run 'deepseek_worker_cloud' for critical spec/diff audits. Primary agent acts strictly as Architect & Gatekeeper.")
 
     # 7. Dual-Tier Cognitive Routing & Quota Guard
     tier_info = resolution.get("tier_assessment", {})

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Gemini worker for Omni‑Kernel v4.2.0.
+Gemini worker for Omni‑Kernel v4.3.0.
 
 - Loads GEMINI_API_KEY from the environment or a .env file (searched up to 5 parent dirs).
 - Calls the Gemini REST API via urllib (no external dependencies).

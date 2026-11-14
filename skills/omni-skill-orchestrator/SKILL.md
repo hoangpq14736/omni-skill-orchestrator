@@ -22,10 +22,9 @@ The **Omni-Kernel Orchestrator** is an autonomous AI cognitive kernel and unifie
 3. **Unified Resource Retrieval**: Matches user intent and stack markers against skills, domain rules, and MCP tool drivers in under 2ms.
 4. **Cognitive Pre-Flight Assessment**: Implements the 4-axis deliberation matrix (**Lợi - Hại - Đủ - Thiếu**) before generating any code.
 5. **Omni-Auditor Council Gate & Hard Gatekeeper**: Enforces strict architectural review via independent critic model (DeepSeek-V4.1-Flash) to eliminate echo chambers and blind spots before executing SDD task implementation.
-6. **Worker Fleet Protocol**:
-   - `local_worker_mi50` (AMD Instinct MI50 16GB HBM2 @ 1024 GB/s): Dedicated to SQLite WAL data access, IPC mutex locking, in-place `fast_edit`, and hardware telemetry.
-   - `groq_worker_cloud` (Groq LPU @ 300-800+ tok/s): Dedicated to pure algorithmic calculations, string parsing, tokenization, and rapid unit test generation.
-   - `gemini_worker_cloud` (Google Gemini 3.5 Flash-Lite / 3.8 Flash / 4 Argon): Dedicated to large-context codebase synthesis (>32K context), cross-module refactoring with 1M tokens context, multimodal vision (UI/diagrams), and deep mathematical/reasoning solutions via 10$/month API credits.
+6. **Cloud Worker Fleet Protocol**:
+   - `gemini_worker_cloud` (Google Gemini 3.5 Flash-Lite / 3.8 Flash / 4 Argon): Unified execution engine for atomic fast edits (`gemini_fast_edit`), unit test synthesis (`gemini_generate_tests`), closed-loop self-healing verification (`gemini_autonomous_loop`), large-context codebase synthesis (`gemini_heavy_code_gen`, 1M context), multimodal vision (`gemini_multimodal_vision`), and deep reasoning (`gemini_argon_solve`).
+   - `deepseek_worker_cloud` (DeepSeek-V4.1-Flash): Independent spec and diff red-teaming audit gatekeeper (`deepseek_audit_spec`, `deepseek_audit_diff`).
 
 ---
 

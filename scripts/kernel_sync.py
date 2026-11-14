@@ -83,14 +83,17 @@ _PAT_BOUNDARY = re.compile(
     re.DOTALL | re.IGNORECASE
 )
 
-CANONICAL_KERNEL_RULES_V41 = """# --- OMNI-KERNEL v4.1 AGENT INVARIANTS ---
+CANONICAL_KERNEL_RULES_V43 = """# --- OMNI-KERNEL v4.3 AGENT INVARIANTS ---
 # 1. Zero-Trust Security: Validate all inputs at trust boundaries. Never leak secrets.
 # 2. Reliable Engineering: Fail loudly with context. Never swallow exceptions. Immutability first.
 # 3. Ponytail Simplicity: Smallest complete working diff wins. YAGNI. Codebase > Stdlib > Deps.
 # 4. Bilingual Native Parity: First-class English & Tiếng Việt reasoning and indexing.
-# 5. Tri-Worker Fleet: Mandatory delegation to local_worker_mi50 (AMD MI50), groq_worker_cloud (Groq LPU), and gemini_worker_cloud (Google Gemini).
+# 5. Cloud Worker Fleet: Mandatory delegation to gemini_worker_cloud (Flash-Lite / 3.8 Flash / 4 Argon) and deepseek_worker_cloud (Audit Gate).
 # 6. Tri-Tier Memory: L1 Reflex (<0.3ms), L2 WAL FTS5+ONNX (<15ms), L3 Consolidator.
 # 7. Mandatory Transparency: Always render Omni-Kernel badge at the head of every response."""
+
+# Backward compatibility alias
+CANONICAL_KERNEL_RULES_V41 = CANONICAL_KERNEL_RULES_V43
 
 
 # ==============================================================================
@@ -231,11 +234,18 @@ class KernelSynchronizer:
             local_version = match.group(2) or "unknown"
             if local_version != KERNEL_VERSION:
                 return local_version, False  # Drifted!
+            inner = match.group(3).strip()
+            # Normalize text for semantic parity check
+            def _norm(t: str) -> str:
+                return "\n".join(line.strip() for line in t.replace("\r\n", "\n").replace("\r", "\n").split("\n") if line.strip())
+            # Detect decommissioned worker or stale invariants
+            if "tri-worker" in inner.lower() or _norm(inner) != _norm(CANONICAL_KERNEL_RULES_V43):
+                return f"{local_version}-stale", False
             return None, False  # Up to date
         return None, True  # Missing block
 
     @classmethod
-    def patch_workspace_rules(cls, filepath: str, new_rules: str = CANONICAL_KERNEL_RULES_V41, force: bool = False) -> Dict:
+    def patch_workspace_rules(cls, filepath: str, new_rules: str = CANONICAL_KERNEL_RULES_V43, force: bool = False) -> Dict:
         """
         Boundary-Aware Patching: Replaces ONLY the core rules within anchor tags.
         Preserves 100% of user custom rules located outside the markers.
@@ -341,16 +351,16 @@ class KernelSynchronizer:
                 return False, f"Schema aligned at v{current_ver}"
 
             cursor.execute("BEGIN IMMEDIATE;")
-            if current_ver < 410:
+            if current_ver < KERNEL_SCHEMA_VERSION:
                 cursor.execute("""
                     CREATE TABLE IF NOT EXISTS schema_migrations (
                         version INTEGER PRIMARY KEY,
                         applied_at TEXT NOT NULL
                     );
                 """)
-                cursor.execute("PRAGMA user_version = 410;")
+                cursor.execute(f"PRAGMA user_version = {KERNEL_SCHEMA_VERSION};")
                 cursor.execute(
-                    "INSERT OR REPLACE INTO schema_migrations VALUES (410, datetime('now'));"
+                    f"INSERT OR REPLACE INTO schema_migrations VALUES ({KERNEL_SCHEMA_VERSION}, datetime('now'));"
                 )
 
             conn.commit()
