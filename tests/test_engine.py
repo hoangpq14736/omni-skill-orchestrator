@@ -861,6 +861,30 @@ class TestOmniSkillOrchestrator(unittest.TestCase):
             })
             self.assertEqual(res_sdd["decision"], "allow")
 
+        with tempfile.TemporaryDirectory() as tmp_dir_vi:
+            tx_file = os.path.join(tmp_dir_vi, "transcript.jsonl")
+            vi_prompt = "Thiết kế kiến trúc hệ thống mới tinh cho dịch vụ thanh toán, không dùng exit_plan_mode"
+            with open(tx_file, "w", encoding="utf-8") as tf:
+                tf.write(json.dumps({"type": "USER_INPUT", "content": vi_prompt}, ensure_ascii=False) + "\n")
+            res_vi_deny = hook_runner.process_hook({
+                "hookEventName": "PreToolUse",
+                "workspacePaths": [],
+                "transcriptPath": tx_file,
+                "lastUserInput": vi_prompt,
+                "toolCall": {"name": "write_file", "args": {"Path": os.path.join(tmp_dir_vi, "gateway.py")}},
+            })
+            self.assertEqual(res_vi_deny["decision"], "deny")
+            self.assertTrue(os.path.isfile(os.path.join(tmp_dir_vi, ".omni", "plan_unlocked.json")))
+
+            res_vi_allow = hook_runner.process_hook({
+                "hookEventName": "PreToolUse",
+                "workspacePaths": [],
+                "transcriptPath": tx_file,
+                "lastUserInput": vi_prompt,
+                "toolCall": {"name": "write_file", "args": {"Path": os.path.join(tmp_dir_vi, "gateway.py")}},
+            })
+            self.assertEqual(res_vi_allow["decision"], "allow")
+
 
 if __name__ == "__main__":
     unittest.main()

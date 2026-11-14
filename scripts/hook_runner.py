@@ -505,12 +505,17 @@ def process_pre_tool_use(payload: dict) -> dict:
         tool_name = str(tool_call.get("name", "")).strip()
         args = tool_call.get("args") if isinstance(tool_call.get("args"), dict) else {}
 
+        target_path = args.get("Path") or args.get("file_path") or args.get("target_file") or ""
+        target_parent = os.path.dirname(os.path.normpath(str(target_path).strip())) if str(target_path).strip() and os.path.isabs(str(target_path).strip()) else ""
+
         workspace_paths = payload.get("workspacePaths")
         workspace_dir = None
         if isinstance(workspace_paths, list) and workspace_paths and isinstance(workspace_paths[0], str) and workspace_paths[0].strip():
             workspace_dir = os.path.realpath(os.path.normpath(workspace_paths[0].strip()))
         elif isinstance(payload.get("workspacePath"), str) and payload["workspacePath"].strip():
             workspace_dir = os.path.realpath(os.path.normpath(payload["workspacePath"].strip()))
+        elif target_parent and os.path.isdir(target_parent):
+            workspace_dir = os.path.realpath(target_parent)
         elif isinstance(payload.get("cwd"), str) and payload["cwd"].strip():
             workspace_dir = os.path.realpath(os.path.normpath(payload["cwd"].strip()))
         if not workspace_dir or not os.path.isdir(workspace_dir):
@@ -533,7 +538,6 @@ def process_pre_tool_use(payload: dict) -> dict:
                 pass
 
         # Rule A: Auto-unlock on plan, spec, doc, scratch, or test writes
-        target_path = args.get("Path") or args.get("file_path") or args.get("target_file") or ""
         norm_target = str(target_path).replace("\\", "/").lower()
         if norm_target and (
             norm_target.endswith(".md")
@@ -575,7 +579,7 @@ def process_pre_tool_use(payload: dict) -> dict:
                     if t_size > 32768:
                         tf.seek(t_size - 32768)
                     tail_text = tf.read(32768).decode("utf-8", errors="replace")
-                if "exit_plan_mode" in tail_text:
+                if re.search(r'"name"\s*:\s*"exit_plan_mode"', tail_text):
                     _write_unlock("exit_plan_mode")
                     return {"decision": "allow"}
             except Exception:
