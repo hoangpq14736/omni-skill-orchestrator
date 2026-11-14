@@ -13,14 +13,15 @@
 - **Trạng thái Git**: Đồng bộ 100% tuyệt đối giữa Local Workspace (`D:\Antigravity\Skill management\`) và Global Plugin (`C:\Users\vuhuu\.gemini\config\plugins\omni-skill-orchestrator\`).
 - **Tổng số Skill trong thư viện**: **517+ skills** (Đã đồng bộ và đánh chỉ mục trong `scripts/registry.json`).
 - **Hệ thống Kiểm thử tự động**:
-  - Full Unit Test Discovery (`tests/test_*.py`): `53/53 PASS (100% OK across all 14 test modules)`
-  - Test Engine Suite (`test_engine.py`): `31/31 PASS (100% OK)`
+  - Full Unit Test Discovery (`tests/test_*.py`): `54/54 PASS (100% OK across all 14 test modules)`
+  - Test Engine Suite (`test_engine.py`): `32/32 PASS (100% OK, bao gồm PreToolUse Warn-Once Gate)`
+  - Internal Scripts Suite (`scripts/test_*.py`): `91/91 PASS (100% OK)`
   - Kernel Synchronizer Suite (`test_kernel_sync.py`): `5/5 PASS (100% OK)`
   - Universal Portability Suite (`test_portability.py`): `7/7 PASS (100% OK, including Git Worktree .git pointer resolution)`
   - WAL Multi-Process Concurrency Test (NT/Windows): `PASS 100% (0 database is locked)`
   - Kernel Sync Immune System: `100% ALIGNED [✔ ALIGNED]`
-  - Gemini Cloud Worker Live Test: `PASS (2.0s turnaround)`
-  - Gemini Worker JSON-RPC 2.0 Stdio Handshake: `PASS`
+  - Gemini Cloud Worker Live Test: `PASS (2.0s turnaround, 9/9 unit tests + gemini_execute_plan live PASS)`
+  - Gemini Worker JSON-RPC 2.0 Stdio Handshake: `PASS (7 tools registered)`
 
 ---
 
@@ -34,29 +35,30 @@ Worker cục bộ `local_worker_mi50` (AMD Instinct MI50 16GB) và worker rate-l
 ### Các thành viên Hạm đội hoạt động:
 1. **`gemini_worker_cloud` (Google Gemini Cloud Unified Worker - Quỹ 10$/tháng)**:
    - Backend: Server stdio JSON-RPC MCP tại `D:\Antigravity\Gemini Worker\gemini_worker_mcp.py` (`io_helpers.py`, `autonomous_tools.py`, `loop_runner.py`, `maxOutputTokens=32768`) và CLI `scripts/gemini_worker.py`.
-   - Tác vụ (6 công cụ MCP):
+   - Tác vụ (7 công cụ MCP):
      - `gemini_fast_edit`: Sửa file tại chỗ an toàn (atomic write + lockfile + bảo toàn UTF-8 BOM/CRLF + `.bak`, hỗ trợ `dry_run` và `audit_diff`).
      - `gemini_generate_tests`: Sinh bộ kiểm thử tự động (`pytest` / `unittest`) có thể lưu thẳng xuống đĩa (`save_to_path`).
      - `gemini_autonomous_loop`: Vòng lặp khép kín Write -> Verify command -> Capture failure -> Tự leo thang model (`gemini-3.5-flash-lite` -> `gemini-3.8-flash`) -> Self-heal (tối đa 5 vòng, hỗ trợ `rollback_on_failure` & DeepSeek audit).
+     - `gemini_execute_plan`: Thực thi kế hoạch đa bước Plan-Execute-Handback với cầu dao `replan_if` và tùy chọn `auto_replan_with_argon`.
      - `gemini_heavy_code_gen`: Sinh mã module lớn (>32K context), refactor đa file với cửa sổ **1.000.000 tokens** (`gemini-3.5-flash-lite` / `gemini-3.8-flash`).
      - `gemini_multimodal_vision`: Đọc và bóc tách trực tiếp mockup UI, screenshot lỗi, sơ đồ kiến trúc, PCB layout.
      - `gemini_argon_solve`: Chuyên trị bài toán hóc búa, chứng minh thuật toán phức tạp qua `gemini-4-argon` suy luận sâu (`thinking: true`).
 2. **`deepseek_worker_cloud` (DeepSeek-V4.1-Flash Gatekeeper - 1M Context)**:
-   - Backend: Cloud REST API qua `scripts/consult_critic.py` & `deepseek_worker_mcp.py` (HMAC-SHA256 verified).
+   - Backend: Cloud REST API qua `scripts/consult_critic.py` & `d:\Antigravity\DeepSeek Worker\deepseek_worker_mcp.py` (HMAC-SHA256 verified, bắt `SystemExit` trả về JSON-RPC `-32000` không sập server, timeout mặc định `120s` cho `deepseek_audit_spec` và `60s` cho `deepseek_audit_diff`).
    - Tác vụ: **Hội đồng Phản biện Độc lập Tối cao (Council Protocol)**, red-teaming RFC/FRC specifications và diff (`deepseek_audit_spec`, `deepseek_audit_diff`). Giữ nguyên 100% để chống "Echo Chamber" (Gemini tự review Gemini).
 
 ---
 
 ## ✅ 3. Những Gì Đã Hoàn Thành (Milestones Reached)
 
-### A. Spec 004 & 005: Unified Gemini Autonomous Worker Fleet & Groq Decommission (HOÀN TẤT)
-- **Nâng cấp MCP Server (`D:\Antigravity\Gemini Worker\gemini_worker_mcp.py`)**: Tách module gọn sạch (`io_helpers.py`, `autonomous_tools.py`, `loop_runner.py`), nâng `maxOutputTokens=32768`, sửa `_extract_code_block` không cắt nhầm fence lồng nhau, đăng ký đủ 6 công cụ MCP: `gemini_heavy_code_gen`, `gemini_multimodal_vision`, `gemini_argon_solve`, `gemini_fast_edit`, `gemini_generate_tests`, `gemini_autonomous_loop` (8/8 unit tests + JSON-RPC handshake PASS).
-- **Loại bỏ `groq_worker_cloud`**: Gỡ khỏi `mcp_config.json`, xóa MCP cache `groq_worker_cloud`, cập nhật `gemini_worker_cloud` autoApprove cho đủ 6 tools, archive `D:\Antigravity\Groq Worker`.
+### A. Spec 004 & 005: Unified Gemini Autonomous Worker Fleet, Plan Gate & Groq Decommission (HOÀN TẤT)
+- **Nâng cấp MCP Server (`D:\Antigravity\Gemini Worker\gemini_worker_mcp.py`)**: Tách module gọn sạch (`io_helpers.py`, `autonomous_tools.py`, `loop_runner.py`), nâng `maxOutputTokens=32768`, sửa `_extract_code_block` không cắt nhầm fence lồng nhau, đăng ký đủ 7 công cụ MCP: `gemini_heavy_code_gen`, `gemini_multimodal_vision`, `gemini_argon_solve`, `gemini_fast_edit`, `gemini_generate_tests`, `gemini_autonomous_loop`, và `gemini_execute_plan` (9/9 unit tests + JSON-RPC handshake + live verification PASS).
+- **Loại bỏ `groq_worker_cloud`**: Gỡ khỏi `mcp_config.json`, xóa MCP cache `groq_worker_cloud`, cập nhật `gemini_worker_cloud` autoApprove cho đủ 7 tools, archive `D:\Antigravity\Groq Worker`.
 - **Động cơ CLI Worker (`scripts/gemini_worker.py`)**: 100% Python Standard Library, không phụ thuộc pip, tải `GEMINI_API_KEY` an toàn từ `.env`, tự động exponential backoff + jitter, hỗ trợ tham số `--out` để chống tràn context (Zero-Context Leaking).
-- **Tối ưu L1 Reflex Hook (`scripts/hook_runner.py`)**: Tự động nhận diện và phân luồng Unified Cloud Worker Fleet ngay trong Pre-Flight Reflex (<0.3ms).
+- **L1 Reflex & `PreToolUse` Plan Gate (`hooks.json`, `scripts/hook_runner.py`)**: Tự động nhận diện và phân luồng Unified Cloud Worker Fleet ngay trong Pre-Flight Reflex (<0.3ms), đồng thời bật hook `PreToolUse` trên `write_file|edit_file` với cơ chế Warn-Once Auto-Unlock (`score >= 95`, hỗ trợ từ khóa kiến trúc tiếng Việt, fallback Step 0 từ `transcriptPath` cho subagent, nhận diện `specs/`/`.specify/`/`exit_plan_mode`, và từ khóa bypass `--no-plan`/`làm luôn`).
 - **Nâng cấp Spec-Driven Development (`skills/spec-driven-development/SKILL.md`)**:
   - Phase 5 (`council_gate`): Mở rộng tiếp nhận toàn bộ dự án với 1.000.000 tokens context của DeepSeek-V4.1-Flash.
-  - Phase 7 (`implement`): Phân quyền ủy thác hợp nhất về `gemini_worker_cloud` (6 công cụ) + `deepseek_worker_cloud` audit gate, phá vỡ điểm nghẽn token limit khi triển khai module lớn.
+  - Phase 7 (`implement`): Phân quyền ủy thác hợp nhất về `gemini_worker_cloud` (7 công cụ) + `deepseek_worker_cloud` audit gate, phá vỡ điểm nghẽn token limit khi triển khai module lớn.
 - **Đồng bộ Hiến pháp v4.3.0 (`rules/AGENTS.md`, `GEMINI.md`, `.cursorrules`, `scripts/kernel_sync.py`)**: 100% các file quy tắc và kỹ năng đã được gắn kết đồng nhất.
 
 ### B. Spec 003: Omni-Graph (Graphify-Grade Codebase Topology & Contract Guard)
@@ -84,7 +86,7 @@ Worker cục bộ `local_worker_mi50` (AMD Instinct MI50 16GB) và worker rate-l
 ### Trạng Thái Hiện Tại:
 - **Lõi Omni-Kernel v4.3 Unified Cloud Worker Fleet**: Đã triển khai, đồng bộ bit-for-bit và kiểm thử thành công 100% trên cả 2 môi trường.
 - **Decommission Hoàn Tất**: Đã chính thức decommission và loại bỏ hoàn toàn `local_worker_mi50` và `groq_worker_cloud` khỏi active worker fleet.
-- **Sẵn sàng Nhận việc**: Worker hợp nhất `gemini_worker_cloud` (6 tools bao gồm `gemini_autonomous_loop`) và Gatekeeper `deepseek_worker_cloud` đang hoạt động 100% ở vị trí sẵn sàng.
+- **Sẵn sàng Nhận việc**: Worker hợp nhất `gemini_worker_cloud` (7 tools bao gồm `gemini_autonomous_loop` và `gemini_execute_plan`) và Gatekeeper `deepseek_worker_cloud` (timeout `120s`/`60s`, chống sập `SystemExit`) cùng cổng `PreToolUse` Warn-Once Auto-Unlock đang hoạt động 100% ở vị trí sẵn sàng.
 
 ### Các Đề Mục Sẵn Sàng Thực Hiện Tiếp Theo:
 1. Thực hiện các dự án lập trình thực tế sử dụng quy trình SDD 10 pha với Cloud Worker Fleet.

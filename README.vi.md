@@ -23,7 +23,7 @@ Omni **không phải** là một tác tử lập trình độc lập (như Aider
 
 1. **Chống phình to ngữ cảnh (Context Bloat)**: Thay vì nhồi 50–120 kỹ năng và quy tắc tĩnh vào System Prompt (ngốn 15.000–25.000 token mỗi lượt chat), Omni quét hơn 500 kỹ năng trong **0.12s** và chỉ tiêm 1–3 kỹ năng/quy tắc phù hợp nhất **Đúng Lúc (Just-In-Time, < 300 token)**.
 2. **Giao thức Hạm Đội Cloud Worker (Cloud Worker Fleet Protocol)**: Tự động phân luồng tác vụ ngầm phía sau hậu trường để bảo tồn ngữ cảnh đám mây:
-   - **`gemini_worker_cloud`** (Google Gemini 3.5 Flash-Lite / 3.8 Flash / 4 Argon): Động cơ thực thi hợp nhất cung cấp sửa file nguyên tử (`gemini_fast_edit`), sinh unit test (`gemini_generate_tests`), vòng lặp tự chạy test & tự sửa lỗi (`gemini_autonomous_loop`), sinh mã module quy mô lớn **1.000.000 tokens** (`gemini_heavy_code_gen`), đọc ảnh giao diện/sơ đồ (`gemini_multimodal_vision`), và giải toán/thuật toán chuyên sâu (`gemini_argon_solve`).
+   - **`gemini_worker_cloud`** (Google Gemini 3.5 Flash-Lite / 3.8 Flash / 4 Argon): Động cơ thực thi hợp nhất cung cấp sửa file nguyên tử (`gemini_fast_edit`), sinh unit test (`gemini_generate_tests`), vòng lặp tự chạy test & tự sửa lỗi (`gemini_autonomous_loop`), thực thi kế hoạch đa bước Plan-Execute-Handback (`gemini_execute_plan` kèm cầu dao `replan_if` và `auto_replan_with_argon`), sinh mã module quy mô lớn **1.000.000 tokens** (`gemini_heavy_code_gen`), đọc ảnh giao diện/sơ đồ (`gemini_multimodal_vision`), và giải toán/thuật toán chuyên sâu (`gemini_argon_solve`).
    - **`deepseek_worker_cloud`** (DeepSeek-V4.1-Flash): Cổng kiểm duyệt độc lập đặc tả và diff (`deepseek_audit_spec`, `deepseek_audit_diff`).
 3. **Cổng kiểm duyệt kiến trúc độc lập (DeepSeek-V4.1-Flash 1M Context)**: Triệt tiêu hoàn toàn hiện tượng "buồng vang tự kỷ" (Gemini tự sinh subagent Gemini để tự khen nhau). Soát xét RFC, SDD bundle và diff qua mô hình MoE 552B độc lập sở hữu **1.000.000 tokens context** cùng kỹ thuật nén FP4 KV cache.
 4. **Trí nhớ phản xạ đa phiên (Cross-Session Memory)**: Tự động ghi nhận các giải pháp sửa lỗi thành công, đánh chỉ mục vào SQLite WAL với FTS5 BM25 và vector đặc ONNX CPU 256 chiều (`google/embeddinggemma-2-omni` INT8 MRL), gợi ý lại giải pháp đã kiểm chứng trong **< 0.3ms**.
@@ -58,7 +58,7 @@ Omni **không phải** là một tác tử lập trình độc lập (như Aider
                                    ▼
 ┌────────────────────────────────────────────────────────────────────────┐
 │                   OMNI-KERNEL v4.3 ENGINE                              │
-│   • L1 Reflex Hook (scripts/hook_runner.py)                           │
+│   • L1 Reflex & PreToolUse Plan Gate (scripts/hook_runner.py)         │
 │   • JIT Skill & Rule Resolver (scripts/resolver.py)                    │
 │   • Tri-Tier Omni-Memory (scripts/memory_engine.py - SQLite WAL FTS5)   │
 │   • Omni-Graph Topology Guard (scripts/omni_graph.py - Blast Radius)   │
@@ -68,7 +68,7 @@ Omni **không phải** là một tác tử lập trình độc lập (như Aider
                    ┌───────────────────────┴──────────────────────────┐
                    ▼                                                  ▼
 ┌────────────────────────────────────────┐   ┌──────────────────────────────────────┐
-│      GEMINI WORKER CLOUD (6 Tools)     │   │       COUNCIL PROTOCOL GATE          │
+│      GEMINI WORKER CLOUD (7 Tools)     │   │       COUNCIL PROTOCOL GATE          │
 │   3.5 Lite / 3.8 Flash / 4 Argon (1M)  │   │   DeepSeek-V4.1-Flash (1M Context)   │
 │ • Sửa file, Test & Vòng lặp tự sửa lỗi │   │   • Chống buồng vang (Anti-Echo)     │
 │ • Sinh mã lớn & Multimodal Vision      │   │   • Chữ ký số bảo mật HMAC-SHA256    │
@@ -81,10 +81,10 @@ Omni **không phải** là một tác tử lập trình độc lập (như Aider
 
 | Thành phần | Đường dẫn | Chức năng |
 |---|---|---|
-| **PreInvocation Hook** | `scripts/hook_runner.py` | Bộ chặn tiền khởi chạy tiêm kỹ năng JIT, quy tắc và chỉ thị hạm đội worker (<25ms). |
+| **PreInvocation & PreToolUse Hook** | `scripts/hook_runner.py` | Bộ chặn tiền khởi chạy tiêm kỹ năng JIT & Cổng kiểm soát kế hoạch Warn-Once Auto-Unlock (<25ms). |
 | **JIT Skill Resolver** | `scripts/resolver.py` | Bộ máy định tuyến kỹ năng và quy tắc theo phân đoạn (<5ms). |
 | **Gemini Cloud Worker** | `scripts/gemini_worker.py` | Driver 100% Python stdlib kết nối Google Gemini 3.5/3.8/Argon (ngữ cảnh 1M, multimodal, reasoning). |
-| **Gemini Worker MCP** | `D:\Antigravity\Gemini Worker\gemini_worker_mcp.py` | Server stdio JSON-RPC MCP (`io_helpers`, `autonomous_tools`, `loop_runner`) cung cấp `gemini_heavy_code_gen`, `gemini_multimodal_vision`, `gemini_argon_solve`, `gemini_fast_edit`, `gemini_generate_tests`, và `gemini_autonomous_loop`. |
+| **Gemini Worker MCP** | `D:\Antigravity\Gemini Worker\gemini_worker_mcp.py` | Server stdio JSON-RPC MCP (`io_helpers`, `autonomous_tools`, `loop_runner`) cung cấp `gemini_heavy_code_gen`, `gemini_multimodal_vision`, `gemini_argon_solve`, `gemini_fast_edit`, `gemini_generate_tests`, `gemini_autonomous_loop`, và `gemini_execute_plan`. |
 | **Architecture Auditor** | `scripts/consult_critic.py` | Client Hội đồng Phản biện Độc lập kết nối DeepSeek-V4.1-Flash với cửa sổ 1.000.000 tokens context. |
 | **Omni-Graph CLI** | `scripts/omni_graph.py` | Trình điều khiển quét mã nguồn, kiểm tra hợp đồng chữ ký và xuất đồ thị tương tác. |
 | **Memory Engine** | `scripts/memory_engine.py` | Tìm kiếm lai kết hợp SQLite FTS5 BM25 và vector đặc CPU ONNX qua RRF. |

@@ -15,7 +15,7 @@ The **Omni-Kernel Orchestrator** is an autonomous AI cognitive kernel and unifie
 ## Core Capabilities & Architecture
 
 1. **Tri-Tier Cognitive Hierarchy (Omni-Memory v4.1)**:
-   - **Tier 1 (L1 Reflex, <0.3ms reflex, <25ms subprocess turnaround)**: Ephemeral PreInvocation lifecycle hook in `hook_runner.py` with 100% Python stdlib. Clamps input to 2,048 chars, suppresses fillers, queries cached traces in <0.02ms, stages telemetry to `l1_staging_log`.
+   - **Tier 1 (L1 Reflex, <0.3ms reflex, <25ms subprocess turnaround)**: Ephemeral PreInvocation & PreToolUse lifecycle hook in `hook_runner.py` with 100% Python stdlib. Clamps input to 2,048 chars, suppresses fillers, queries cached traces in <0.02ms, stages telemetry to `l1_staging_log`, and enforces the Warn-Once Auto-Unlock Plan Gate (`score >= 95` architectural intents).
    - **Tier 2 (L2 Hybrid Memory, <15ms retrieval)**: Local embedded SQLite (`omni_memory.db`) with WAL mode (`PRAGMA synchronous = NORMAL;`, `busy_timeout = 5000;`). Employs Dual-Column FTS5 BM25 search (`content_exact` 10.0 vs `content_folded` 1.0) paired with Host CPU ONNX embeddings (`intfloat/multilingual-e5-small` INT8) and Reciprocal Rank Fusion ($k=20$).
    - **Tier 3 (L3 Background Consolidator)**: Out-of-band consolidation daemon in `consolidator.py`. Promotes multi-hit patterns ($\ge 2$ successes) with automated bilingual tags, applies bounded Ebbinghaus stability decay, soft-archives stale records (`status = 'Archived'`), and versions invariant rules (`status = 'Superseded'`).
 2. **Autonomous Stack & Marker Detection**: Automatically inspects workspace marker files (`package.json`, `Cargo.toml`, `go.mod`, `pubspec.yaml`, `pom.xml`, `requirements.txt`, `pyproject.toml`, `Dockerfile`, `*.prisma`, `index.html`, etc.) to determine active tech stacks.
@@ -23,7 +23,7 @@ The **Omni-Kernel Orchestrator** is an autonomous AI cognitive kernel and unifie
 4. **Cognitive Pre-Flight Assessment**: Implements the 4-axis deliberation matrix (**Lợi - Hại - Đủ - Thiếu**) before generating any code.
 5. **Omni-Auditor Council Gate & Hard Gatekeeper**: Enforces strict architectural review via independent critic model (DeepSeek-V4.1-Flash) to eliminate echo chambers and blind spots before executing SDD task implementation.
 6. **Cloud Worker Fleet Protocol**:
-   - `gemini_worker_cloud` (Google Gemini 3.5 Flash-Lite / 3.8 Flash / 4 Argon): Unified execution engine for atomic fast edits (`gemini_fast_edit`), unit test synthesis (`gemini_generate_tests`), closed-loop self-healing verification (`gemini_autonomous_loop`), large-context codebase synthesis (`gemini_heavy_code_gen`, 1M context), multimodal vision (`gemini_multimodal_vision`), and deep reasoning (`gemini_argon_solve`).
+   - `gemini_worker_cloud` (Google Gemini 3.5 Flash-Lite / 3.8 Flash / 4 Argon): Unified execution engine for atomic fast edits (`gemini_fast_edit`), unit test synthesis (`gemini_generate_tests`), closed-loop self-healing verification (`gemini_autonomous_loop`), multi-step Plan-Execute-Handback orchestration (`gemini_execute_plan`), large-context codebase synthesis (`gemini_heavy_code_gen`, 1M context), multimodal vision (`gemini_multimodal_vision`), and deep reasoning (`gemini_argon_solve`).
    - `deepseek_worker_cloud` (DeepSeek-V4.1-Flash): Independent spec and diff red-teaming audit gatekeeper (`deepseek_audit_spec`, `deepseek_audit_diff`).
 
 ---

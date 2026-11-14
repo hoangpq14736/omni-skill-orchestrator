@@ -114,7 +114,7 @@ SDD is deeply integrated with the **Omni-Memory v4.1 Tri-Tier Cognitive Hierarch
 ### 7. `implement` (Step-by-Step Task Execution & Worker Fleet)
 - **Purpose**: Execute tasks sequentially following `tasks.md`.
 - **Fleet Allocation**:
-  - `gemini_worker_cloud` (Google Gemini 3.5 Flash-Lite / 3.8 Flash / 4 Argon): Generates large-context modules (1M context via `gemini_heavy_code_gen`), applies atomic in-place edits (`gemini_fast_edit`), synthesizes unit tests (`gemini_generate_tests`), executes autonomous self-healing test-and-fix loops (`gemini_autonomous_loop`), handles multimodal specs (`gemini_multimodal_vision`), and solves deep algorithmic problems (`gemini_argon_solve`).
+  - `gemini_worker_cloud` (Google Gemini 3.5 Flash-Lite / 3.8 Flash / 4 Argon): Generates large-context modules (1M context via `gemini_heavy_code_gen`), applies atomic in-place edits (`gemini_fast_edit`), synthesizes unit tests (`gemini_generate_tests`), executes autonomous self-healing test-and-fix loops (`gemini_autonomous_loop`), orchestrates multi-step Plan-Execute-Handback pipelines (`gemini_execute_plan` with `replan_if` & `auto_replan_with_argon`), handles multimodal specs (`gemini_multimodal_vision`), and solves deep algorithmic problems (`gemini_argon_solve`).
   - `deepseek_worker_cloud` (DeepSeek-V4.1-Flash): Independent diff & spec verification audit (`deepseek_audit_spec`, `deepseek_audit_diff`).
 - **Rules**:
   - Complete tasks one at a time or in small atomic batches.

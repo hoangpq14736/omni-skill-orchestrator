@@ -23,7 +23,7 @@ Omni is **not** a standalone autonomous coding agent (like Aider, OpenCode, or O
 
 1. **Stops System Prompt Bloat**: Rather than injecting 50–120 static skills and rules (costing 15,000–25,000 tokens per chat turn), Omni indexes 500+ skills in **0.12s** and injects only the top 1–3 relevant skills and rules **Just-In-Time (< 300 tokens)**.
 2. **Cloud Worker Fleet Protocol**: Autonomous behind-the-scenes workload dispatching to conserve cloud context:
-   - **`gemini_worker_cloud`** (Google Gemini 3.5 Flash-Lite / 3.8 Flash / 4 Argon): Unified execution engine providing atomic in-place edits (`gemini_fast_edit`), unit test generation (`gemini_generate_tests`), closed-loop self-healing test-and-fix execution (`gemini_autonomous_loop`), **1,000,000-token** heavy codebase synthesis (`gemini_heavy_code_gen`), multimodal vision (`gemini_multimodal_vision`), and deep reasoning (`gemini_argon_solve`).
+   - **`gemini_worker_cloud`** (Google Gemini 3.5 Flash-Lite / 3.8 Flash / 4 Argon): Unified execution engine providing atomic in-place edits (`gemini_fast_edit`), unit test generation (`gemini_generate_tests`), closed-loop self-healing test-and-fix execution (`gemini_autonomous_loop`), multi-step Plan-Execute-Handback orchestration (`gemini_execute_plan` with `replan_if` circuit breaker & `auto_replan_with_argon`), **1,000,000-token** heavy codebase synthesis (`gemini_heavy_code_gen`), multimodal vision (`gemini_multimodal_vision`), and deep reasoning (`gemini_argon_solve`).
    - **`deepseek_worker_cloud`** (DeepSeek-V4.1-Flash): Independent spec and diff verification audit gate (`deepseek_audit_spec`, `deepseek_audit_diff`).
 3. **Decoupled Architecture Gatekeeper (DeepSeek-V4.1-Flash 1M Context)**: Protects against the "Echo Chamber" anti-pattern (Gemini subagents reviewing Gemini). Inspects RFCs, SDD bundles, and patches via an independent 552B MoE model natively supporting **1,000,000 tokens context** and FP4 KV cache compression.
 4. **Cross-Session Reflex Memory**: Automatically captures successful fixes, indexes them into SQLite WAL with Dual-Column FTS5 BM25 and custom fine-tuned 256-dim CPU ONNX dense vectors (`google/embeddinggemma-2-omni` INT8 MRL), and recalls matching proven solutions in **< 0.3ms**.
@@ -58,7 +58,7 @@ Omni is **not** a standalone autonomous coding agent (like Aider, OpenCode, or O
                                    ▼
 ┌────────────────────────────────────────────────────────────────────────┐
 │                   OMNI-KERNEL v4.3 ENGINE                              │
-│   • L1 Reflex Hook (scripts/hook_runner.py)                           │
+│   • L1 Reflex & PreToolUse Plan Gate (scripts/hook_runner.py)         │
 │   • JIT Skill & Rule Resolver (scripts/resolver.py)                    │
 │   • Tri-Tier Omni-Memory (scripts/memory_engine.py - SQLite WAL FTS5)   │
 │   • Omni-Graph Topology Guard (scripts/omni_graph.py - Blast Radius)   │
@@ -68,7 +68,7 @@ Omni is **not** a standalone autonomous coding agent (like Aider, OpenCode, or O
                    ┌───────────────────────┴──────────────────────────┐
                    ▼                                                  ▼
 ┌────────────────────────────────────────┐   ┌──────────────────────────────────────┐
-│      GEMINI WORKER CLOUD (6 Tools)     │   │       COUNCIL PROTOCOL GATE          │
+│      GEMINI WORKER CLOUD (7 Tools)     │   │       COUNCIL PROTOCOL GATE          │
 │   3.5 Lite / 3.8 Flash / 4 Argon (1M)  │   │   DeepSeek-V4.1-Flash (1M Context)   │
 │ • Fast Edits, Tests & Autonomous Loop  │   │   • Anti-Echo-Chamber Verification   │
 │ • Heavy Code Gen & Multimodal Vision   │   │   • HMAC-SHA256 Spec & Diff Audit    │
@@ -81,10 +81,10 @@ Omni is **not** a standalone autonomous coding agent (like Aider, OpenCode, or O
 
 | Component | Path | Description |
 |---|---|---|
-| **PreInvocation Hook** | `scripts/hook_runner.py` | Sub-millisecond pre-flight interceptor injecting JIT skills, rules, and hardware fleet directives (<25ms). |
+| **PreInvocation & PreToolUse Hook** | `scripts/hook_runner.py` | Sub-millisecond pre-flight interceptor injecting JIT skills/rules & Warn-Once Auto-Unlock Plan Gate (<25ms). |
 | **JIT Skill Resolver** | `scripts/resolver.py` | Segment-aware skill and rule matching engine (<5ms). |
 | **Gemini Cloud Worker** | `scripts/gemini_worker.py` | 100% Python stdlib driver for Google Gemini 3.5/3.8/Argon (1M context, multimodal, deep reasoning). |
-| **Gemini Worker MCP** | `D:\Antigravity\Gemini Worker\gemini_worker_mcp.py` | JSON-RPC 2.0 stdio MCP server (`io_helpers`, `autonomous_tools`, `loop_runner`) exposing `gemini_heavy_code_gen`, `gemini_multimodal_vision`, `gemini_argon_solve`, `gemini_fast_edit`, `gemini_generate_tests`, and `gemini_autonomous_loop`. |
+| **Gemini Worker MCP** | `D:\Antigravity\Gemini Worker\gemini_worker_mcp.py` | JSON-RPC 2.0 stdio MCP server (`io_helpers`, `autonomous_tools`, `loop_runner`) exposing `gemini_heavy_code_gen`, `gemini_multimodal_vision`, `gemini_argon_solve`, `gemini_fast_edit`, `gemini_generate_tests`, `gemini_autonomous_loop`, and `gemini_execute_plan`. |
 | **Architecture Auditor** | `scripts/consult_critic.py` | Decoupled Council Gatekeeper client connecting to DeepSeek-V4.1-Flash with 1,000,000 tokens context. |
 | **Omni-Graph CLI** | `scripts/omni_graph.py` | CLI driver for scanning codebases, validating signature contracts, and generating visual graphs. |
 | **Memory Engine** | `scripts/memory_engine.py` | Hybrid search engine combining SQLite FTS5 BM25 and CPU ONNX dense vectors via RRF. |
