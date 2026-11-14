@@ -17,6 +17,7 @@ import os
 import sys
 import json
 import re
+import time
 import uuid
 import stat
 import sqlite3
@@ -497,8 +498,107 @@ def build_preflight_message(resolution: dict, gatekeeper_text: str = None, drift
     return "\n".join(lines)
 
 
+def process_pre_tool_use(payload: dict) -> dict:
+    """Zero-friction PreToolUse Plan Gate: never blocks medium tasks and auto-unlocks on plan/doc writes or fast-bypass."""
+    try:
+        tool_call = payload.get("toolCall") if isinstance(payload.get("toolCall"), dict) else {}
+        tool_name = str(tool_call.get("name", "")).strip()
+        args = tool_call.get("args") if isinstance(tool_call.get("args"), dict) else {}
+
+        workspace_paths = payload.get("workspacePaths")
+        workspace_dir = None
+        if isinstance(workspace_paths, list) and workspace_paths and isinstance(workspace_paths[0], str) and workspace_paths[0].strip():
+            workspace_dir = os.path.realpath(os.path.normpath(workspace_paths[0].strip()))
+        elif isinstance(payload.get("workspacePath"), str) and payload["workspacePath"].strip():
+            workspace_dir = os.path.realpath(os.path.normpath(payload["workspacePath"].strip()))
+        elif isinstance(payload.get("cwd"), str) and payload["cwd"].strip():
+            workspace_dir = os.path.realpath(os.path.normpath(payload["cwd"].strip()))
+        if not workspace_dir or not os.path.isdir(workspace_dir):
+            workspace_dir = os.path.realpath(os.getcwd())
+
+        unlock_marker = os.path.join(workspace_dir, ".omni", "plan_unlocked.json")
+
+        def _write_unlock(source: str) -> None:
+            if not os.path.isdir(workspace_dir):
+                return
+            try:
+                os.makedirs(os.path.dirname(unlock_marker), exist_ok=True)
+                with open(unlock_marker, "w", encoding="utf-8") as uf:
+                    json.dump({
+                        "unlocked_at": time.time(),
+                        "conversation_id": str(payload.get("conversationId", "")),
+                        "source": source,
+                    }, uf, ensure_ascii=False)
+            except Exception:
+                pass
+
+        # Rule A: Auto-unlock on plan, spec, doc, scratch, or test writes
+        target_path = args.get("Path") or args.get("file_path") or args.get("target_file") or ""
+        norm_target = str(target_path).replace("\\", "/").lower()
+        if norm_target and (
+            norm_target.endswith(".md")
+            or any(tok in norm_target for tok in ("plan", "spec", "tasks", "constitution", "state.md", ".omni/", "/scratch/", "/brain/", "test_"))
+        ):
+            _write_unlock(norm_target[-120:])
+            return {"decision": "allow"}
+
+        # Rule B: Fast-bypass keywords in user prompt
+        last_input = str(payload.get("lastUserInput") or payload.get("prompt") or "").strip()
+        if re.search(
+            r"(--no-plan|\bskip plan\b|\bbỏ qua plan\b|\blàm luôn\b|\bsửa luôn\b|\bcode luôn\b|\btriển khai\b|\bimplement\b|\bexecute\b|\bproceed\b|\btiếp tục\b)",
+            last_input,
+            re.IGNORECASE,
+        ):
+            _write_unlock("bypass_keyword")
+            return {"decision": "allow"}
+
+        # Rule C: Active unlock marker, recent plan file (< 7200s), SDD repo dirs, or native exit_plan_mode hand-off
+        now = time.time()
+        for candidate in (
+            unlock_marker,
+            os.path.join(workspace_dir, ".omni", "active_plan.json"),
+            os.path.join(workspace_dir, "plan.md"),
+        ):
+            if os.path.isfile(candidate) and (now - os.path.getmtime(candidate)) < 7200:
+                return {"decision": "allow"}
+
+        if os.path.isdir(os.path.join(workspace_dir, "specs")) or os.path.isdir(os.path.join(workspace_dir, ".specify")):
+            _write_unlock("sdd_workspace_present")
+            return {"decision": "allow"}
+
+        transcript_path = payload.get("transcriptPath")
+        if isinstance(transcript_path, str) and transcript_path.strip() and os.path.isfile(transcript_path.strip()):
+            try:
+                t_path = transcript_path.strip()
+                t_size = os.path.getsize(t_path)
+                with open(t_path, "rb") as tf:
+                    if t_size > 32768:
+                        tf.seek(t_size - 32768)
+                    tail_text = tf.read(32768).decode("utf-8", errors="replace")
+                if "exit_plan_mode" in tail_text:
+                    _write_unlock("exit_plan_mode")
+                    return {"decision": "allow"}
+            except Exception:
+                pass
+
+        # Rule D: Warn-Once Auto-Unlock — only gate score >= 95 architectural intent once, then auto-unlock for next attempt
+        from dual_tier import calculate_task_complexity
+        tier_info = calculate_task_complexity(last_input, workspace_dir)
+        if tier_info.get("score", 0) >= 95 and is_architecture_intent(last_input) and tool_name in ("write_file", "edit_file"):
+            _write_unlock("warn_once_auto_unlock")
+            return {
+                "decision": "deny",
+                "reason": "[Omni Plan Gate - Warn Once] High-complexity architectural task detected without an active plan. Consider creating plan.md or using gemini_execute_plan; subsequent edit is now auto-unlocked."
+            }
+        return {"decision": "allow"}
+    except Exception:
+        return {"decision": "allow"}
+
+
 def process_hook(payload: dict) -> dict:
     """Core hook processing logic with robust type coercion and schema validation (VULN-006)."""
+    if payload.get("hookEventName") == "PreToolUse" or "toolCall" in payload:
+        return process_pre_tool_use(payload)
     raw_input_obj = payload.get("lastUserInput") if payload.get("lastUserInput") is not None else (
         payload.get("prompt") if payload.get("prompt") is not None else payload.get("userInput")
     )

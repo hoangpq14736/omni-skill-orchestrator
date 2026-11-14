@@ -771,6 +771,96 @@ class TestOmniSkillOrchestrator(unittest.TestCase):
         drifted = [r for r in report if r.get("is_drifted")]
         self.assertEqual(len(drifted), 0, f"Found drifted skills: {drifted}")
 
+    def test_32_pre_tool_use_auto_unlock_and_medium_bypass(self):
+        """Verify PreToolUse never blocks medium tasks and auto-unlocks on plan.md write or bypass keyword."""
+        import tempfile
+        root_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+        scripts_dir = os.path.join(root_dir, "scripts")
+        if scripts_dir not in sys.path:
+            sys.path.insert(0, scripts_dir)
+        import hook_runner
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            res_med = hook_runner.process_hook({
+                "hookEventName": "PreToolUse",
+                "workspacePaths": [tmp_dir],
+                "lastUserInput": "Thêm field age vào form user và validate email",
+                "toolCall": {"name": "edit_file", "args": {"Path": os.path.join(tmp_dir, "app.py")}},
+            })
+            self.assertEqual(res_med["decision"], "allow")
+
+            arch_prompt = "rearchitect and rewrite the entire distributed consensus spec.md architecture"
+            res_deny = hook_runner.process_hook({
+                "hookEventName": "PreToolUse",
+                "workspacePaths": [tmp_dir],
+                "lastUserInput": arch_prompt,
+                "toolCall": {"name": "edit_file", "args": {"Path": os.path.join(tmp_dir, "core.py")}},
+            })
+            self.assertEqual(res_deny["decision"], "deny")
+            self.assertIn("[Omni Plan Gate", res_deny["reason"])
+            self.assertTrue(os.path.isfile(os.path.join(tmp_dir, ".omni", "plan_unlocked.json")))
+
+            # Subsequent edit in the brand-new workspace auto-unlocks without forcing dummy .md or bypass flag
+            res_warn_once_retry = hook_runner.process_hook({
+                "hookEventName": "PreToolUse",
+                "workspacePaths": [tmp_dir],
+                "lastUserInput": arch_prompt,
+                "toolCall": {"name": "edit_file", "args": {"Path": os.path.join(tmp_dir, "core.py")}},
+            })
+            self.assertEqual(res_warn_once_retry["decision"], "allow")
+
+        with tempfile.TemporaryDirectory() as tmp_dir_plan:
+            arch_prompt = "rearchitect and rewrite the entire distributed consensus spec.md architecture"
+            res_plan = hook_runner.process_hook({
+                "hookEventName": "PreToolUse",
+                "workspacePaths": [tmp_dir_plan],
+                "lastUserInput": arch_prompt,
+                "toolCall": {"name": "write_file", "args": {"Path": os.path.join(tmp_dir_plan, "plan.md")}},
+            })
+            self.assertEqual(res_plan["decision"], "allow")
+            self.assertTrue(os.path.isfile(os.path.join(tmp_dir_plan, ".omni", "plan_unlocked.json")))
+
+            res_after = hook_runner.process_hook({
+                "hookEventName": "PreToolUse",
+                "workspacePaths": [tmp_dir_plan],
+                "lastUserInput": arch_prompt,
+                "toolCall": {"name": "edit_file", "args": {"Path": os.path.join(tmp_dir_plan, "core.py")}},
+            })
+            self.assertEqual(res_after["decision"], "allow")
+
+        with tempfile.TemporaryDirectory() as tmp_dir_bypass:
+            res_bypass = hook_runner.process_hook({
+                "hookEventName": "PreToolUse",
+                "workspacePaths": [tmp_dir_bypass],
+                "lastUserInput": "rearchitect distributed consensus spec.md --no-plan",
+                "toolCall": {"name": "edit_file", "args": {"Path": os.path.join(tmp_dir_bypass, "core.py")}},
+            })
+            self.assertEqual(res_bypass["decision"], "allow")
+
+        with tempfile.TemporaryDirectory() as tmp_dir_tx:
+            tx_file = os.path.join(tmp_dir_tx, "transcript.jsonl")
+            with open(tx_file, "w", encoding="utf-8") as tf:
+                tf.write('{"type":"tool_call","name":"exit_plan_mode"}\n')
+            res_tx = hook_runner.process_hook({
+                "hookEventName": "PreToolUse",
+                "workspacePaths": [tmp_dir_tx],
+                "transcriptPath": tx_file,
+                "lastUserInput": "rearchitect and rewrite the entire distributed consensus spec.md architecture",
+                "toolCall": {"name": "edit_file", "args": {"Path": os.path.join(tmp_dir_tx, "core.py")}},
+            })
+            self.assertEqual(res_tx["decision"], "allow")
+            self.assertTrue(os.path.isfile(os.path.join(tmp_dir_tx, ".omni", "plan_unlocked.json")))
+
+        with tempfile.TemporaryDirectory() as tmp_dir_sdd:
+            os.makedirs(os.path.join(tmp_dir_sdd, "specs"), exist_ok=True)
+            res_sdd = hook_runner.process_hook({
+                "hookEventName": "PreToolUse",
+                "workspacePaths": [tmp_dir_sdd],
+                "lastUserInput": "rearchitect and rewrite the entire distributed consensus spec.md architecture",
+                "toolCall": {"name": "edit_file", "args": {"Path": os.path.join(tmp_dir_sdd, "core.py")}},
+            })
+            self.assertEqual(res_sdd["decision"], "allow")
+
 
 if __name__ == "__main__":
     unittest.main()

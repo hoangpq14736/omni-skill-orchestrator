@@ -6,6 +6,18 @@
         "command": "python scripts/hook_runner.py",
         "timeout": 3
       }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "write_file|edit_file",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python scripts/hook_runner.py",
+            "timeout": 3
+          }
+        ]
+      }
     ]
   }
 }
