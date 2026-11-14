@@ -93,7 +93,7 @@ SDD is deeply integrated with the **Omni-Memory v4.1 Tri-Tier Cognitive Hierarch
   - **Tech Stack & Dependencies**: Evaluate standard library first before adding dependencies (Ponytail Simplicity).
   - **API Contracts / Schemas**: Endpoint definitions, parameter validation schemas, type definitions.
   - **Data Model & Migrations**: Schema alterations, index requirements, state transitions.
-  - **Hardware & Resource Limits**: Memory boundaries, compute quotas (e.g. MI50 VRAM, Groq rate limits).
+  - **Hardware & Resource Limits**: Memory boundaries, compute quotas (e.g. rate limits, token budgets).
   - **Security & Trust Boundaries**: Zero-trust input sanitization, parameterized SQL.
 
 ### 5. `council_gate` (Strict Architecture Gatekeeper / Red-Teaming)
@@ -114,9 +114,8 @@ SDD is deeply integrated with the **Omni-Memory v4.1 Tri-Tier Cognitive Hierarch
 ### 7. `implement` (Step-by-Step Task Execution & Worker Fleet)
 - **Purpose**: Execute tasks sequentially following `tasks.md`.
 - **Fleet Allocation**:
-  - `groq_worker_cloud` (Groq LPU): Generates boilerplate, AST parsing, and rapid unit test suites (<1s turnaround).
-  - `local_worker_mi50` (AMD Instinct MI50): In-place file edits (`fast_edit`), SQLite WAL transactions, 100% offline Ring 0 security.
-  - `gemini_worker_cloud` (Google Gemini 3.5 Lite / 3.8 Flash): Generates large-context modules (>32K context), multi-file refactoring with 1M tokens context, and multimodal vision specs; calls `gemini-4-argon` for deep algorithmic/reasoning problems.
+  - `gemini_worker_cloud` (Google Gemini 3.5 Flash-Lite / 3.8 Flash / 4 Argon): Generates large-context modules (1M context via `gemini_heavy_code_gen`), applies atomic in-place edits (`gemini_fast_edit`), synthesizes unit tests (`gemini_generate_tests`), executes autonomous self-healing test-and-fix loops (`gemini_autonomous_loop`), handles multimodal specs (`gemini_multimodal_vision`), and solves deep algorithmic problems (`gemini_argon_solve`).
+  - `deepseek_worker_cloud` (DeepSeek-V4.1-Flash): Independent diff & spec verification audit (`deepseek_audit_spec`, `deepseek_audit_diff`).
 - **Rules**:
   - Complete tasks one at a time or in small atomic batches.
   - Mark finished tasks as `- [x] T001: Description`.

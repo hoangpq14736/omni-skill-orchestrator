@@ -24,7 +24,7 @@
 1. **Mandatory Parameterized SQL Invariant**: All SQLite database queries, inserts, and updates across all tiers MUST use parameterized SQL (`?` placeholders in Python `sqlite3`). String formatting (`f"..."`, `format()`, `%s`) on database cursors is strictly prohibited.
 2. **Hardened Credential Redaction**: All prompts, code snippets, stack traces, and metadata MUST pass through an automated regex sanitization filter prior to entering SQLite persistence (`omni_memory.db`) or procedural cache (`proven_traces.json`). Redaction targets include Bearer tokens, GitHub PATs (`ghp_`, `github_pat_`), AI provider keys (`gsk_`, `sk-proj-`, `sk-ant-`), private keys (RSA/EC/OPENSSH/PKCS#8), and unquoted `.env` secrets.
 3. **Local-Only Storage Boundary**: Under no circumstances may episodic memory records, workspace decisions, or traces be transmitted to external cloud databases. All state remains strictly on local storage.
-4. **Transparent Cloud Fallback Telemetry**: When cloud fallback workers are invoked (e.g. Groq LPU on MI50 timeout), the response payload MUST transparently report `model_used` and `fallback_active = true`. Masking cloud model identities as local models is strictly prohibited.
+4. **Transparent Cloud Worker Telemetry**: When Cloud Worker Fleet members are invoked (`gemini_worker_cloud`, `deepseek_worker_cloud`), the response payload MUST transparently report `model_used` and execution metadata. Masking cloud model identities or silently failing is strictly prohibited.
 
 ### Principle III: Dual-Language Parity (Vietnamese & English) & Model Mandate
 1. **Dual-Column FTS5 Architecture**: SQLite FTS5 table tokenization MUST use `tokenize = 'unicode61 remove_diacritics 0'` to preserve 100% Vietnamese tonal precision. Diacritic folding MUST occur at the application layer via `fold_vietnamese()`, storing unaccented text in `content_folded` and raw text in `content_exact`. BM25 queries MUST weight exact matches 10x over folded matches (`bm25(episodic_fts, 10.0, 1.0) ORDER BY rank_score ASC`).
@@ -33,12 +33,14 @@
 4. **Asymmetric Embedding Prefixes**: Embeddings MUST strictly enforce asymmetric prefixes: `"title: none | text: " + text` for stored memories and `"task: search result | query: " + prompt` for search queries. Omitting prefixes is an architectural violation.
 5. **Automated Bilingual Tag Generation**: Tier 3 consolidation MUST automatically extract dual-language keyword pairs into `bilingual_tags` for all promoted traces.
 
-### Principle IV: Physical Hardware Realism (AMD Instinct MI50 Limits)
-1. **Serving Topology Mandate (Topology A CPU/ONNX)**: Dense vector generation for Tier 2 MUST execute on the host CPU using ONNX Runtime (`onnxruntime` + `tokenizers`), consuming 0 MB GPU VRAM. Topology B (auxiliary GPU `llama-server` on port 8081) consumes ~2,500 MB VRAM, exceeds safe headroom, and is strictly prohibited.
-2. **VRAM Headroom Guardrail**: The physical AMD Instinct MI50 16GB HBM2 GPU has a measured baseline consumption of **12,643 MB** (~77.2% full), leaving **3,741 MB** of headroom for prompt prefill batches and WDDM compositing. No background service may allocate GPU memory that reduces this headroom.
-3. **Prompt Prefill Math & 16,000-Token Cap**: AMD Vega 20 prompt ingestion runs at ~60.6–66.5 tokens/sec (~16.4 ms/tok). Evaluating 32,768 tokens requires ~492 seconds, exceeding HTTP client timeouts (300s). Tactical code prompts dispatched to `local_worker_mi50` MUST be capped at **16,000 tokens** (~246s max prefill).
-4. **Micro-Batch Size Invariant (`-ub 2048`)**: Launching `llama-server.exe` MUST enforce `-ub 2048` to limit discrete compute bursts to ~30.8 seconds, remaining strictly inside the Windows WDDM 60-second `TdrDelay` boundary.
-5. **Autostart Process Mutex & Polling**: Cold-starting `llama-server.exe` requires 12–20 seconds. Backend clients MUST acquire an inter-process file lock (`llama_autostart.lock`) and poll the health socket for at least **25 seconds** to eliminate process stampedes and duplicate instances.
+### Principle IV: Cloud Worker Fleet & System Resource Invariants
+1. **Serving Topology Mandate (Topology A CPU/ONNX)**: Dense vector generation for Tier 2 MUST execute on the host CPU using ONNX Runtime (`onnxruntime` + `tokenizers`), consuming 0 MB GPU VRAM.
+2. **Cloud Worker Fleet Division of Labor**:
+   - Fast edits, unit test synthesis, closed-loop self-healing verification, large-context codebase generation (1M context), multimodal vision, and deep reasoning: `gemini_worker_cloud` (Google Gemini 3.5 Flash-Lite / 3.8 Flash / 4 Argon).
+   - Independent specification & diff verification gatekeeping: `deepseek_worker_cloud` (DeepSeek-V4.1-Flash).
+   - Zero-Context Leaking: Always pass `save_to_path` / `file_path` for file generation and edits.
+3. **Decommissioning of Legacy Local & Groq Workers**: Legacy local GPU workers (`local_worker_mi50`) and rate-limited `groq_worker_cloud` are permanently decommissioned. All code/test synthesis, edits, and autonomous verification loops run through `gemini_worker_cloud` + `deepseek_worker_cloud`.
+4. **Process Mutex & AppLocker Compliance**: Background daemons and CLI workers MUST adhere to Windows AppLocker and Software Restriction Policies without spawning unmonitored external server processes.
 
 ### Principle V: Mathematically Bounded Memory Consolidation & Soft-Archiving
 1. **Reciprocal Rank Fusion Smoothing ($k=20$)**: Multi-channel hybrid retrieval combining BM25 lexical rank and dense vector cosine similarity MUST use RRF with smoothing constant $k=20$:
@@ -79,4 +81,4 @@
 
 ---
 
-**Version**: 4.1.0 | **Ratified**: 2026-11-02 | **Last Amended**: 2026-11-02
+**Version**: 4.3.0 | **Ratified**: 2026-11-02 | **Last Amended**: 2026-11-13

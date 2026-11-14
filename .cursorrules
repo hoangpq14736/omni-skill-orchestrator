@@ -4,7 +4,7 @@
 # 2. Reliable Engineering: Fail loudly with context. Never swallow exceptions. Immutability first.
 # 3. Ponytail Simplicity: Smallest complete working diff wins. YAGNI. Codebase > Stdlib > Deps.
 # 4. Bilingual Native Parity: First-class English & Tiếng Việt reasoning and indexing.
-# 5. Tri-Worker Fleet: Mandatory delegation to local_worker_mi50, groq_worker_cloud, & gemini_worker_cloud.
+# 5. Cloud Worker Fleet: Mandatory delegation to gemini_worker_cloud (Flash-Lite / 3.8 Flash / 4 Argon) and deepseek_worker_cloud (Audit Gate).
 # 6. Tri-Tier Memory: L1 Reflex (<0.3ms), L2 WAL FTS5+ONNX (<15ms), L3 Consolidator.
 # 7. Mandatory Transparency: Always render Omni-Kernel badge at the head of every response.
 <!-- OMNI-KERNEL-END -->

@@ -299,9 +299,35 @@ def legacy_workspace_hash(path: Optional[str]) -> str:
     return hashlib.md5(canonical.encode("utf-8")).hexdigest()
 
 
+def _resolve_git_config_file(git_entry: Path) -> Optional[Path]:
+    """Resolve the git config file from a .git directory or worktree/submodule .git file."""
+    if git_entry.is_dir():
+        cfg = git_entry / "config"
+        return cfg if cfg.is_file() else None
+    if git_entry.is_file():
+        content = git_entry.read_text(encoding="utf-8", errors="ignore").strip()
+        if content.lower().startswith("gitdir:"):
+            raw_ref = content.split(":", 1)[1].strip()
+            git_dir = Path(raw_ref)
+            if not git_dir.is_absolute():
+                git_dir = (git_entry.parent / git_dir).resolve()
+            commondir_file = git_dir / "commondir"
+            if commondir_file.is_file():
+                common_rel = commondir_file.read_text(encoding="utf-8", errors="ignore").strip()
+                common_dir = Path(common_rel)
+                if not common_dir.is_absolute():
+                    common_dir = (git_dir / common_dir).resolve()
+                common_cfg = common_dir / "config"
+                if common_cfg.is_file():
+                    return common_cfg
+            cfg = git_dir / "config"
+            return cfg if cfg.is_file() else None
+    return None
+
+
 def resolve_git_remote_url(path: Optional[str]) -> Optional[str]:
     """
-    Locates the nearest .git directory from path and extracts normalized origin URL.
+    Locates the nearest .git directory or worktree pointer from path and extracts normalized origin URL.
     100% pure Python standard library, zero subprocess overhead.
     """
     if not path or is_valid_hex_hash(path, length=64) or is_valid_hex_hash(path, length=32):
@@ -309,10 +335,10 @@ def resolve_git_remote_url(path: Optional[str]) -> Optional[str]:
     try:
         cur = Path(os.path.normcase(os.path.realpath(os.path.abspath(path))))
         while cur and cur != cur.parent:
-            git_dir = cur / ".git"
-            if git_dir.is_dir():
-                cfg_file = git_dir / "config"
-                if cfg_file.is_file():
+            git_entry = cur / ".git"
+            if git_entry.exists():
+                cfg_file = _resolve_git_config_file(git_entry)
+                if cfg_file:
                     content = cfg_file.read_text(encoding="utf-8", errors="ignore")
                     m = re.search(r'\[remote\s+"origin"\][^\[]*?url\s*=\s*([^\r\n]+)', content, re.IGNORECASE)
                     if m:

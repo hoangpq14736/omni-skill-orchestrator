@@ -1,10 +1,10 @@
 @echo off
 setlocal enabledelayedexpansion
 
-title Omni-Kernel v4.1 - One-Click Machine Setup
+title Omni-Kernel v4.3 - One-Click Machine Setup
 
 echo ====================================================================
-echo ⚡ OMNI-KERNEL v4.1: ONE-CLICK ENVIRONMENT SETUP ^& BOOTSTRAPPER
+echo ⚡ OMNI-KERNEL v4.3: ONE-CLICK ENVIRONMENT SETUP ^& BOOTSTRAPPER
 echo ====================================================================
 echo.
 

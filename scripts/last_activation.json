@@ -1,5 +1,5 @@
 {
-  "timestamp": "2026-11-11 01:01:06",
+  "timestamp": "2026-11-14 10:00:22",
   "user_input": "sửa lỗi docker container port 8080 conflict",
   "workspace_dir": "D:\\Antigravity\\Skill management",
   "top_skill": "docker-patterns",
@@ -38,7 +38,8 @@
     "Workspace Rule (.specify/constitution.md): Omni-Kernel & Omni-Memory v4.3 Constitution | <! | Sync Impact Report:",
     "Workspace Rule (specs/001-omni-memory-v4/spec.md): Feature Specification: Omni-Memory v4.0 Production Upgrade | Feature Branch**: `001-omni-memory-v4`",
     "Workspace Rule (specs/002-deepseek-v41-auditor/spec.md): Feature Specification: DeepSeek-V4.1-Flash Strict Architecture Gatekeeper (Omni-Auditor v4.1) | Feature Branch**: `002-deepseek-v41-auditor`",
-    "Workspace Rule (specs/003-omni-graph/spec.md): Feature Specification: Omni-Graph (Graphify) - Deterministic Codebase Topology & Semantic Call-Graph Guard | Feature Branch**: `003-omni-graph`"
+    "Workspace Rule (specs/003-omni-graph/spec.md): Feature Specification: Omni-Graph (Graphify) - Deterministic Codebase Topology & Semantic Call-Graph Guard | Feature Branch**: `003-omni-graph`",
+    "Workspace Rule (specs/004-dsh-empirical-auditor/spec.md): Feature Specification: DSH Empirical Peer Auditor (Omni-Auditor v4.2) | Feature Branch**: `004-dsh-empirical-auditor`"
   ],
   "suggested_mcp": [],
   "cognitive_pre_flight": {
@@ -107,17 +108,17 @@
         ],
         "success_count": 4,
         "created_at": "2026-11-03 19:11:34",
-        "last_recalled": "2026-11-11 01:01:06"
+        "last_recalled": "2026-11-14 10:00:22"
       },
       "score": 0.987,
       "matched_tokens": [
-        "container",
-        "port",
-        "sửa",
-        "conflict",
-        "8080",
         "lỗi",
-        "docker"
+        "8080",
+        "docker",
+        "container",
+        "conflict",
+        "port",
+        "sửa"
       ]
     },
     {
@@ -161,16 +162,16 @@
         ],
         "success_count": 3,
         "created_at": "2026-11-03 13:02:46",
-        "last_recalled": "2026-11-11 01:01:06"
+        "last_recalled": "2026-11-14 10:00:22"
       },
       "score": 0.76,
       "matched_tokens": [
-        "container",
-        "port",
-        "conflict",
-        "8080",
         "lỗi",
-        "docker"
+        "8080",
+        "docker",
+        "container",
+        "conflict",
+        "port"
       ]
     }
   ]
