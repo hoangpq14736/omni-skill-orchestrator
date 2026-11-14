@@ -274,7 +274,7 @@ def get_mcp_index(force_refresh: bool = False, base_dirs: list = None) -> dict:
                     disk_idx = json.load(cf)
                 if isinstance(disk_idx, dict) and not is_mcp_stale(disk_idx, base_dirs):
                     _CACHED_MCP_INDEX = disk_idx
-                    _CACHED_MCP_TIME = disk_idx.get("indexed_at", now)
+                    _CACHED_MCP_TIME = now
                     _LAST_STALE_CHECK = now
                     return _CACHED_MCP_INDEX
             except Exception:
@@ -286,7 +286,7 @@ def get_mcp_index(force_refresh: bool = False, base_dirs: list = None) -> dict:
                 need_refresh = is_mcp_stale(curr_idx, base_dirs)
             elif now - _LAST_STALE_CHECK > 1.5:
                 _LAST_STALE_CHECK = now
-                need_refresh = is_mcp_stale(curr_idx, base_dirs) or (now - _CACHED_MCP_TIME > 120)
+                need_refresh = is_mcp_stale(curr_idx, base_dirs)
 
         if not need_refresh:
             return curr_idx
@@ -303,7 +303,7 @@ def get_mcp_index(force_refresh: bool = False, base_dirs: list = None) -> dict:
         servers = discover_mcp_servers(base_dirs)
         new_index = index_mcp_tools(servers)
         finish_time = time.time()
-        if base_dirs is None:
+        if base_dirs is None and os.environ.get("OMNI_READ_ONLY") != "1":
             try:
                 tmp_mcp = f"{MCP_INDEX_CACHE_PATH}.{os.getpid()}.tmp"
                 with open(tmp_mcp, "w", encoding="utf-8") as cf:

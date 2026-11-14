@@ -851,8 +851,21 @@ class TestOmniSkillOrchestrator(unittest.TestCase):
             self.assertEqual(res_tx["decision"], "allow")
             self.assertTrue(os.path.isfile(os.path.join(tmp_dir_tx, ".omni", "plan_unlocked.json")))
 
+        with tempfile.TemporaryDirectory() as tmp_dir_sdd_empty:
+            os.makedirs(os.path.join(tmp_dir_sdd_empty, "specs"), exist_ok=True)
+            res_empty_sdd = hook_runner.process_hook({
+                "hookEventName": "PreToolUse",
+                "workspacePaths": [tmp_dir_sdd_empty],
+                "lastUserInput": "rearchitect and rewrite the entire distributed consensus spec.md architecture",
+                "toolCall": {"name": "edit_file", "args": {"Path": os.path.join(tmp_dir_sdd_empty, "core.py")}},
+            })
+            self.assertEqual(res_empty_sdd["decision"], "deny")
+
         with tempfile.TemporaryDirectory() as tmp_dir_sdd:
-            os.makedirs(os.path.join(tmp_dir_sdd, "specs"), exist_ok=True)
+            spec_sub = os.path.join(tmp_dir_sdd, "specs", "001-payment")
+            os.makedirs(spec_sub, exist_ok=True)
+            with open(os.path.join(spec_sub, "plan.md"), "w", encoding="utf-8") as pf:
+                pf.write("# Active Plan\n- Step 1\n")
             res_sdd = hook_runner.process_hook({
                 "hookEventName": "PreToolUse",
                 "workspacePaths": [tmp_dir_sdd],
@@ -860,6 +873,31 @@ class TestOmniSkillOrchestrator(unittest.TestCase):
                 "toolCall": {"name": "edit_file", "args": {"Path": os.path.join(tmp_dir_sdd, "core.py")}},
             })
             self.assertEqual(res_sdd["decision"], "allow")
+
+        with tempfile.TemporaryDirectory() as tmp_dir_rfc:
+            res_rfc_deny = hook_runner.process_hook({
+                "hookEventName": "PreToolUse",
+                "workspacePaths": [tmp_dir_rfc],
+                "lastUserInput": "rearchitect and rewrite the entire distributed consensus spec.md architecture",
+                "toolCall": {"name": "replace_file_content", "args": {"TargetFile": os.path.join(tmp_dir_rfc, "core.py")}},
+            })
+            self.assertEqual(res_rfc_deny["decision"], "deny")
+            res_rfc_allow = hook_runner.process_hook({
+                "hookEventName": "PreToolUse",
+                "workspacePaths": [tmp_dir_rfc],
+                "lastUserInput": "rearchitect and rewrite the entire distributed consensus spec.md architecture",
+                "toolCall": {"name": "replace_file_content", "args": {"TargetFile": os.path.join(tmp_dir_rfc, "core.py")}},
+            })
+            self.assertEqual(res_rfc_allow["decision"], "allow")
+
+        with tempfile.TemporaryDirectory() as tmp_dir_rfc_plan:
+            res_rfc_plan = hook_runner.process_hook({
+                "hookEventName": "PreToolUse",
+                "workspacePaths": [tmp_dir_rfc_plan],
+                "lastUserInput": "rearchitect and rewrite the entire distributed consensus spec.md architecture",
+                "toolCall": {"name": "replace_file_content", "args": {"TargetFile": os.path.join(tmp_dir_rfc_plan, "plan.md")}},
+            })
+            self.assertEqual(res_rfc_plan["decision"], "allow")
 
         with tempfile.TemporaryDirectory() as tmp_dir_vi:
             tx_file = os.path.join(tmp_dir_vi, "transcript.jsonl")

@@ -9,11 +9,11 @@
     ],
     "PreToolUse": [
       {
-        "matcher": "write_file|edit_file",
+        "matcher": "write_file|edit_file|replace_file_content|multi_replace_file_content|write_to_file",
         "hooks": [
           {
             "type": "command",
-            "command": "python scripts/hook_runner.py",
+            "command": "python -S scripts/hook_runner.py",
             "timeout": 3
           }
         ]

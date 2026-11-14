@@ -8,9 +8,12 @@ import os
 import sys
 import json
 import time
+import subprocess
 import tempfile
 import threading
 from concurrent.futures import ThreadPoolExecutor
+
+os.environ.setdefault("OMNI_READ_ONLY", "1")
 
 SCRIPTS_DIR = os.path.join(os.path.dirname(__file__), "..", "scripts")
 if SCRIPTS_DIR not in sys.path:
@@ -40,6 +43,11 @@ def benchmark_latency_and_throughput(reg, iterations=300):
         ("kiểm tra mã độc xss csrf và audit bảo mật", None),
     ]
 
+    # One untimed warm-up so cold ONNX/model initialization is measured separately from sustained resolution
+    t_warm = time.perf_counter()
+    resolve_skill(test_queries[0][0], test_queries[0][1], registry=reg, top_k=3, unified=True)
+    warm_up_ms = (time.perf_counter() - t_warm) * 1000.0
+
     latencies = []
     start_all = time.perf_counter()
 
@@ -61,6 +69,7 @@ def benchmark_latency_and_throughput(reg, iterations=300):
 
     return {
         "iterations": iterations,
+        "warm_up_ms": round(warm_up_ms, 3),
         "total_time_sec": round(total_time, 3),
         "avg_ms": round(avg, 3),
         "p50_ms": round(p50, 3),
@@ -214,6 +223,43 @@ time.sleep(10)
     return chaos_results
 
 
+def benchmark_subprocess_hook(iterations=10):
+    """Measures real OS subprocess turnaround of python -S scripts/hook_runner.py for PreToolUse."""
+    hook_script = os.path.join(SCRIPTS_DIR, "hook_runner.py")
+    latencies = []
+    with tempfile.TemporaryDirectory() as tmp_ws:
+        payload = json.dumps({
+            "hookEventName": "PreToolUse",
+            "workspacePaths": [tmp_ws],
+            "lastUserInput": "fix typo in helper function",
+            "toolCall": {"name": "edit_file", "args": {"Path": os.path.join(tmp_ws, "helper.py")}},
+        })
+        for _ in range(iterations):
+            t0 = time.perf_counter()
+            proc = subprocess.run(
+                [sys.executable, "-S", hook_script],
+                input=payload,
+                text=True,
+                capture_output=True,
+                timeout=5,
+            )
+            t1 = time.perf_counter()
+            if proc.returncode != 0 or '"allow"' not in proc.stdout:
+                raise RuntimeError(f"hook_runner subprocess failed ({proc.returncode}): {proc.stderr or proc.stdout}")
+            latencies.append((t1 - t0) * 1000.0)
+    latencies.sort()
+    p50 = latencies[int(len(latencies) * 0.50)]
+    p95 = latencies[min(len(latencies) - 1, int(len(latencies) * 0.95))]
+    avg = sum(latencies) / len(latencies)
+    return {
+        "iterations": iterations,
+        "avg_ms": round(avg, 3),
+        "p50_ms": round(p50, 3),
+        "p95_ms": round(p95, 3),
+        "max_ms": round(latencies[-1], 3),
+    }
+
+
 if __name__ == "__main__":
     print("=" * 70)
     print("🔬 OMNI-KERNEL v3.0 PRE-RELEASE COMPREHENSIVE BENCHMARK")
@@ -223,8 +269,9 @@ if __name__ == "__main__":
     print(f"Loaded registry: {len(reg.get('skills', []))} skills in index.\n")
 
     # 1. Latency & Throughput
-    print("[1/3] Benchmarking Latency & Throughput (300 queries)...")
+    print("[1/4] Benchmarking In-Process Latency & Throughput (300 queries)...")
     lat_res = benchmark_latency_and_throughput(reg, iterations=300)
+    print(f"  * Warm-up Call:    {lat_res['warm_up_ms']} ms")
     print(f"  * Average Latency: {lat_res['avg_ms']} ms")
     print(f"  * P50 Latency:     {lat_res['p50_ms']} ms")
     print(f"  * P95 Latency:     {lat_res['p95_ms']} ms")
@@ -232,19 +279,51 @@ if __name__ == "__main__":
     print(f"  * Throughput:      {lat_res['throughput_qps']} Queries/Sec\n")
 
     # 2. Accuracy Matrix
-    print("[2/3] Benchmarking Accuracy Across 20 Technical Domains...")
+    print("[2/4] Benchmarking Accuracy Across 20 Technical Domains...")
     acc_res = benchmark_accuracy_matrix(reg)
     print(f"  * Top-1 Accuracy:            {acc_res['top1_accuracy']}%")
     print(f"  * Top-3 Accuracy:            {acc_res['top3_accuracy']}%")
     print(f"  * Inferred Rules Alignment:  {acc_res['inferred_rule_accuracy']}%\n")
 
     # 3. Security, Chaos & Sandbox Resilience
-    print("[3/3] Benchmarking Security, Chaos & Sandbox Hardening...")
+    print("[3/4] Benchmarking Security, Chaos & Sandbox Hardening...")
     chaos_res = benchmark_security_and_chaos(reg)
     for k, v in chaos_res.items():
         status_icon = "✅" if v else "❌"
         print(f"  * {status_icon} {k}: {v}")
 
+    # 4. Real OS Subprocess Turnaround
+    print("\n[4/4] Benchmarking OS Subprocess PreToolUse Turnaround (10 spawns)...")
+    subproc_res = benchmark_subprocess_hook(iterations=10)
+    print(f"  * Subprocess Avg:  {subproc_res['avg_ms']} ms")
+    print(f"  * Subprocess P50:  {subproc_res['p50_ms']} ms")
+    print(f"  * Subprocess P95:  {subproc_res['p95_ms']} ms")
+    print(f"  * Subprocess Max:  {subproc_res['max_ms']} ms")
+
+    sla_failures = []
+    if lat_res["p99_ms"] > 25.0:
+        sla_failures.append(f"In-process P99 {lat_res['p99_ms']} ms > 25.0 ms SLA")
+    if subproc_res["p50_ms"] > 50.0:
+        sla_failures.append(f"Subprocess P50 {subproc_res['p50_ms']} ms > 50.0 ms SLA")
+    if subproc_res["p95_ms"] > 75.0:
+        sla_failures.append(f"Subprocess P95 {subproc_res['p95_ms']} ms > 75.0 ms SLA")
+    if acc_res["top1_accuracy"] < 70.0:
+        sla_failures.append(f"Top-1 accuracy {acc_res['top1_accuracy']}% < 70.0%")
+    if acc_res["top3_accuracy"] < 90.0:
+        sla_failures.append(f"Top-3 accuracy {acc_res['top3_accuracy']}% < 90.0%")
+    if acc_res["inferred_rule_accuracy"] < 95.0:
+        sla_failures.append(f"Inferred rules {acc_res['inferred_rule_accuracy']}% < 95.0%")
+    for k, v in chaos_res.items():
+        if not v:
+            sla_failures.append(f"Chaos check failed: {k}")
+
     print("\n" + "=" * 70)
-    print("🎯 BENCHMARK SUMMARY REPORT COMPLETE")
+    if sla_failures:
+        print("❌ SLA BREACH DETECTED:")
+        for err in sla_failures:
+            print(f"  - {err}")
+        print("=" * 70)
+        sys.exit(1)
+
+    print("🎯 BENCHMARK SUMMARY REPORT COMPLETE (ALL SLA GATES PASSED)")
     print("=" * 70)

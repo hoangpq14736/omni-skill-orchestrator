@@ -18,13 +18,6 @@ import sys
 import json
 import re
 import time
-import uuid
-import stat
-import sqlite3
-import subprocess
-import datetime
-import hashlib
-import unicodedata
 from typing import Any, Optional, Dict, List, Tuple
 
 # Ensure scripts directory is on sys.path
@@ -32,16 +25,55 @@ _SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 if _SCRIPT_DIR not in sys.path:
     sys.path.insert(0, _SCRIPT_DIR)
 
-from memory_utils import (
-    canonical_workspace_hash,
-    legacy_workspace_hash,
-    find_workspace_root,
-    redact_secrets,
-    persist_diag,
-    verify_audit_meta,
-    hash_prompt,
-)
-from workspace_sanitizer import AssimilatorGuard, TrustFileLock
+_DEPS_LOADED = False
+
+
+def _ensure_runtime_deps() -> None:
+    """Lazy-loads heavy modules only on PreInvocation/diagnostic paths to keep PreToolUse subprocess <25ms."""
+    global _DEPS_LOADED, uuid, stat, subprocess, datetime, hashlib
+    global canonical_workspace_hash, legacy_workspace_hash, find_workspace_root
+    global redact_secrets, persist_diag, verify_audit_meta, hash_prompt
+    global AssimilatorGuard, TrustFileLock
+    if _DEPS_LOADED:
+        return
+    import uuid as _uuid
+    import stat as _stat
+    import subprocess as _subprocess
+    import datetime as _datetime
+    import hashlib as _hashlib
+    from memory_utils import (
+        canonical_workspace_hash as _cwh,
+        legacy_workspace_hash as _lwh,
+        find_workspace_root as _fwr,
+        redact_secrets as _rs,
+        persist_diag as _pd,
+        verify_audit_meta as _vam,
+        hash_prompt as _hp,
+    )
+    from workspace_sanitizer import AssimilatorGuard as _AG, TrustFileLock as _TFL
+    uuid = _uuid
+    stat = _stat
+    subprocess = _subprocess
+    datetime = _datetime
+    hashlib = _hashlib
+    canonical_workspace_hash = _cwh
+    legacy_workspace_hash = _lwh
+    find_workspace_root = _fwr
+    redact_secrets = _rs
+    persist_diag = _pd
+    verify_audit_meta = _vam
+    hash_prompt = _hp
+    AssimilatorGuard = _AG
+    TrustFileLock = _TFL
+    _DEPS_LOADED = True
+
+
+def _safe_persist_diag(err: Any, limit: int = 256) -> None:
+    try:
+        _ensure_runtime_deps()
+        persist_diag(err, limit)
+    except Exception:
+        pass
 
 LAST_ACTIVATION_PATH = os.path.join(_SCRIPT_DIR, "last_activation.json")
 ACTIVATIONS_HISTORY_PATH = os.path.join(_SCRIPT_DIR, "activations_history.jsonl")
@@ -106,6 +138,7 @@ def safe_field(val: Any, max_len: int = 250, single_line: bool = True) -> str:
     Pre-truncates input, applies secret redaction, and runs AssimilatorGuard cognitive injection scanning.
     Does not blank benign descriptive words (e.g. 'curl', 'base64', URLs).
     """
+    _ensure_runtime_deps()
     clean = sanitize_injected_text(val, max_len=max_len, single_line=single_line)
     # Redact credentials and API keys before scanning and output injection (VULN-001)
     clean = redact_secrets(clean) or ""
@@ -123,6 +156,7 @@ def verify_critic_artifact(workspace_dir: str, target_file: str = None, user_pro
     Reads candidate review files with O_NONBLOCK and S_ISREG check (VULN-203).
     Enforces HMAC-SHA256 authenticity signature (VULN-201) and canonical input_hash matching (VULN-003).
     """
+    _ensure_runtime_deps()
     candidate_names = ["CRITIC_REVIEW.md", "AUDIT_REVIEW.md", "DEEPSEEK_REVIEW.md"]
     candidate_paths = [os.path.join(workspace_dir, name) for name in candidate_names]
 
@@ -498,6 +532,39 @@ def build_preflight_message(resolution: dict, gatekeeper_text: str = None, drift
     return "\n".join(lines)
 
 
+def _has_active_sdd_plan(workspace_dir: str, now: float) -> bool:
+    """Returns True only if specs/ or .specify/ contains a non-empty plan/spec/tasks markdown file modified < 7200s."""
+    for sdd_root in (os.path.join(workspace_dir, "specs"), os.path.join(workspace_dir, ".specify")):
+        if not os.path.isdir(sdd_root):
+            continue
+        try:
+            with os.scandir(sdd_root) as it:
+                for entry in it:
+                    if entry.is_file() and entry.name.lower() in ("plan.md", "spec.md", "tasks.md"):
+                        st = entry.stat(follow_symlinks=False)
+                        if st.st_size > 0 and (now - st.st_mtime) < 7200:
+                            return True
+                    elif entry.is_dir():
+                        for fname in ("plan.md", "spec.md", "tasks.md"):
+                            fpath = os.path.join(entry.path, fname)
+                            if os.path.isfile(fpath):
+                                st = os.stat(fpath, follow_symlinks=False)
+                                if st.st_size > 0 and (now - st.st_mtime) < 7200:
+                                    return True
+        except OSError:
+            pass
+    return False
+
+
+GATEKEEPER_MUTATING_TOOLS = (
+    "write_file",
+    "edit_file",
+    "replace_file_content",
+    "multi_replace_file_content",
+    "write_to_file",
+)
+
+
 def process_pre_tool_use(payload: dict) -> dict:
     """Zero-friction PreToolUse Plan Gate: never blocks medium tasks and auto-unlocks on plan/doc writes or fast-bypass."""
     try:
@@ -505,7 +572,7 @@ def process_pre_tool_use(payload: dict) -> dict:
         tool_name = str(tool_call.get("name", "")).strip()
         args = tool_call.get("args") if isinstance(tool_call.get("args"), dict) else {}
 
-        target_path = args.get("Path") or args.get("file_path") or args.get("target_file") or ""
+        target_path = args.get("Path") or args.get("TargetFile") or args.get("file_path") or args.get("target_file") or ""
         target_parent = os.path.dirname(os.path.normpath(str(target_path).strip())) if str(target_path).strip() and os.path.isabs(str(target_path).strip()) else ""
 
         workspace_paths = payload.get("workspacePaths")
@@ -625,8 +692,8 @@ def process_pre_tool_use(payload: dict) -> dict:
             if os.path.isfile(candidate) and (now - os.path.getmtime(candidate)) < 7200:
                 return {"decision": "allow"}
 
-        if os.path.isdir(os.path.join(workspace_dir, "specs")) or os.path.isdir(os.path.join(workspace_dir, ".specify")):
-            _write_unlock("sdd_workspace_present")
+        if _has_active_sdd_plan(workspace_dir, now):
+            _write_unlock("sdd_active_plan")
             return {"decision": "allow"}
 
         if tail_text and re.search(r'"name"\s*:\s*"exit_plan_mode"', tail_text):
@@ -636,7 +703,7 @@ def process_pre_tool_use(payload: dict) -> dict:
         # Rule D: Warn-Once Auto-Unlock — only gate score >= 95 architectural intent once, then auto-unlock for next attempt
         from dual_tier import calculate_task_complexity
         tier_info = calculate_task_complexity(last_input, workspace_dir)
-        if tier_info.get("score", 0) >= 95 and is_architecture_intent(last_input) and tool_name in ("write_file", "edit_file"):
+        if tier_info.get("score", 0) >= 95 and is_architecture_intent(last_input) and tool_name in GATEKEEPER_MUTATING_TOOLS:
             _write_unlock("warn_once_auto_unlock")
             return {
                 "decision": "deny",
@@ -651,6 +718,7 @@ def process_hook(payload: dict) -> dict:
     """Core hook processing logic with robust type coercion and schema validation (VULN-006)."""
     if payload.get("hookEventName") == "PreToolUse" or "toolCall" in payload:
         return process_pre_tool_use(payload)
+    _ensure_runtime_deps()
     raw_input_obj = payload.get("lastUserInput") if payload.get("lastUserInput") is not None else (
         payload.get("prompt") if payload.get("prompt") is not None else payload.get("userInput")
     )
@@ -899,7 +967,7 @@ def main():
         if raw_input.strip():
             payload = json.loads(raw_input)
     except json.JSONDecodeError as e:
-        persist_diag(e, 256)
+        _safe_persist_diag(e, 256)
         output = {
             "injectSteps": [
                 {
@@ -910,13 +978,13 @@ def main():
         print(json.dumps(output, ensure_ascii=True))
         return
     except Exception as e:
-        persist_diag(e, 256)
+        _safe_persist_diag(e, 256)
         payload = {}
         
     try:
         output = process_hook(payload)
     except Exception as e:
-        persist_diag(e, 256)
+        _safe_persist_diag(e, 256)
         output = {"injectSteps": []}
         
     # VULN-008: ensure_ascii=True guarantees safe stdout encoding across all platforms and surrogates
