@@ -885,6 +885,31 @@ class TestOmniSkillOrchestrator(unittest.TestCase):
             })
             self.assertEqual(res_vi_allow["decision"], "allow")
 
+        with tempfile.TemporaryDirectory() as tmp_dir_edge:
+            res_neg = hook_runner.process_hook({
+                "hookEventName": "PreToolUse",
+                "workspacePaths": [tmp_dir_edge],
+                "lastUserInput": "Do NOT implement; rearchitect and rewrite the entire distributed consensus architecture",
+                "toolCall": {"name": "write_file", "args": {"Path": os.path.join(tmp_dir_edge, "explanation.py")}},
+            })
+            self.assertEqual(res_neg["decision"], "deny")
+            self.assertTrue(os.path.isfile(os.path.join(tmp_dir_edge, ".omni", "plan_unlocked.json")))
+
+        with tempfile.TemporaryDirectory() as tmp_dir_bom:
+            tx_bom = os.path.join(tmp_dir_bom, "transcript.jsonl")
+            vi_prompt = "Thiết kế kiến trúc hệ thống mới tinh cho dịch vụ thanh toán đa luồng"
+            with open(tx_bom, "wb") as tf:
+                tf.write(b"\xef\xbb\xbf\n")
+                tf.write((json.dumps({"type": "SYSTEM_MESSAGE", "pad": "x" * 9000, "content": vi_prompt}, ensure_ascii=False) + "\n").encode("utf-8"))
+            res_bom = hook_runner.process_hook({
+                "hookEventName": "PreToolUse",
+                "workspacePaths": [],
+                "transcriptPath": tx_bom,
+                "lastUserInput": "",
+                "toolCall": {"name": "write_file", "args": {"Path": os.path.join(tmp_dir_bom, "inspect.py")}},
+            })
+            self.assertEqual(res_bom["decision"], "deny")
+
 
 if __name__ == "__main__":
     unittest.main()

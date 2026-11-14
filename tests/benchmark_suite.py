@@ -180,7 +180,7 @@ import sys
 while False: pass
 assert True
 """
-    success, out, err = run_sandbox_validation(sandbox_escape_code, timeout_sec=2)
+    success, out, err = run_sandbox_validation(sandbox_escape_code, timeout_sec=2, allow_exec=True)
     chaos_results["sandbox_execution_safe"] = success
 
     # Test timeout containment
@@ -188,7 +188,7 @@ assert True
 import time
 time.sleep(10)
 """
-    success_timeout, _, err_timeout = run_sandbox_validation(timeout_code, timeout_sec=1)
+    success_timeout, _, err_timeout = run_sandbox_validation(timeout_code, timeout_sec=1, allow_exec=True)
     chaos_results["sandbox_timeout_containment"] = (not success_timeout and "timed out" in err_timeout)
 
     # Test 4: Concurrency and Race Conditions

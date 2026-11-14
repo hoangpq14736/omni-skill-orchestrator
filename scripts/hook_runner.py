@@ -539,9 +539,13 @@ def process_pre_tool_use(payload: dict) -> dict:
 
         # Rule A: Auto-unlock on plan, spec, doc, scratch, or test writes
         norm_target = str(target_path).replace("\\", "/").lower()
+        base_target = os.path.basename(norm_target)
+        norm_with_slash = f"/{norm_target.lstrip('/')}"
         if norm_target and (
             norm_target.endswith(".md")
-            or any(tok in norm_target for tok in ("plan", "spec", "tasks", "constitution", "state.md", ".omni/", "/scratch/", "/brain/", "test_"))
+            or any(seg in norm_with_slash for seg in ("/.omni/", "/scratch/", "/brain/", "/specs/", "/.specify/", "/tests/"))
+            or base_target.startswith("test_")
+            or bool(re.search(r"(?:^|[._\-])(plan|spec|tasks|constitution)(?:$|[._\-])", base_target))
         ):
             _write_unlock(norm_target[-120:])
             return {"decision": "allow"}
@@ -553,28 +557,46 @@ def process_pre_tool_use(payload: dict) -> dict:
             try:
                 t_path = transcript_path.strip()
                 t_size = os.path.getsize(t_path)
+                first_json_line = ""
                 with open(t_path, "rb") as tf:
-                    head_bytes = tf.read(8192) if not last_input else b""
+                    if not last_input:
+                        for _ in range(5):
+                            raw_ln = tf.readline(65536)
+                            if not raw_ln:
+                                break
+                            cand_ln = raw_ln.decode("utf-8-sig", errors="replace").strip()
+                            if cand_ln.startswith("{"):
+                                first_json_line = cand_ln
+                                break
                     if t_size > 32768:
                         tf.seek(t_size - 32768)
                     else:
                         tf.seek(0)
                     tail_text = tf.read(32768).decode("utf-8", errors="replace")
-                if not last_input and head_bytes:
-                    first_line = head_bytes.decode("utf-8", errors="replace").splitlines()[0].strip()
-                    if first_line.startswith("{"):
-                        step0 = json.loads(first_line)
-                        if isinstance(step0.get("content"), str):
-                            last_input = step0["content"].strip()[:2048]
+                if not last_input and first_json_line:
+                    step0 = json.loads(first_json_line)
+                    if isinstance(step0.get("content"), str):
+                        last_input = step0["content"].strip()[:2048]
             except Exception:
                 pass
 
-        # Rule B: Fast-bypass keywords in user prompt
-        if re.search(
-            r"(--no-plan|\bskip plan\b|\bbỏ qua plan\b|\blàm luôn\b|\bsửa luôn\b|\bcode luôn\b|\btriển khai\b|\bimplement\b|\bexecute\b|\bproceed\b|\btiếp tục\b)",
-            last_input,
-            re.IGNORECASE,
-        ):
+        # Rule B: Fast-bypass keywords in user prompt (guarded against negated phrases like 'Do NOT implement')
+        has_explicit_bypass = bool(
+            re.search(
+                r"(--no-plan|\bskip plan\b|\bbỏ qua plan\b|\blàm luôn\b|\bsửa luôn\b|\bcode luôn\b|\btriển khai luôn\b|\bproceed\b|\btiếp tục\b)",
+                last_input,
+                re.IGNORECASE,
+            )
+        )
+        has_action_bypass = bool(
+            re.search(r"\b(implement|execute|triển khai)\b", last_input, re.IGNORECASE)
+            and not re.search(
+                r"\b(?:do\s+not|don't|not|never|without|không|chưa|đừng)\s+(?:\w+\s+){0,2}(?:implement|execute|triển khai)\b",
+                last_input,
+                re.IGNORECASE,
+            )
+        )
+        if has_explicit_bypass or has_action_bypass:
             _write_unlock("bypass_keyword")
             return {"decision": "allow"}
 
