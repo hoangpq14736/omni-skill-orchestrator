@@ -870,7 +870,7 @@ class TestOmniSkillOrchestrator(unittest.TestCase):
                 "hookEventName": "PreToolUse",
                 "workspacePaths": [],
                 "transcriptPath": tx_file,
-                "lastUserInput": vi_prompt,
+                "lastUserInput": "",
                 "toolCall": {"name": "write_file", "args": {"Path": os.path.join(tmp_dir_vi, "gateway.py")}},
             })
             self.assertEqual(res_vi_deny["decision"], "deny")
@@ -880,7 +880,7 @@ class TestOmniSkillOrchestrator(unittest.TestCase):
                 "hookEventName": "PreToolUse",
                 "workspacePaths": [],
                 "transcriptPath": tx_file,
-                "lastUserInput": vi_prompt,
+                "lastUserInput": "",
                 "toolCall": {"name": "write_file", "args": {"Path": os.path.join(tmp_dir_vi, "gateway.py")}},
             })
             self.assertEqual(res_vi_allow["decision"], "allow")

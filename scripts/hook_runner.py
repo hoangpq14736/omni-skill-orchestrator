@@ -546,8 +546,30 @@ def process_pre_tool_use(payload: dict) -> dict:
             _write_unlock(norm_target[-120:])
             return {"decision": "allow"}
 
-        # Rule B: Fast-bypass keywords in user prompt
         last_input = str(payload.get("lastUserInput") or payload.get("prompt") or "").strip()
+        tail_text = ""
+        transcript_path = payload.get("transcriptPath")
+        if isinstance(transcript_path, str) and transcript_path.strip() and os.path.isfile(transcript_path.strip()):
+            try:
+                t_path = transcript_path.strip()
+                t_size = os.path.getsize(t_path)
+                with open(t_path, "rb") as tf:
+                    head_bytes = tf.read(8192) if not last_input else b""
+                    if t_size > 32768:
+                        tf.seek(t_size - 32768)
+                    else:
+                        tf.seek(0)
+                    tail_text = tf.read(32768).decode("utf-8", errors="replace")
+                if not last_input and head_bytes:
+                    first_line = head_bytes.decode("utf-8", errors="replace").splitlines()[0].strip()
+                    if first_line.startswith("{"):
+                        step0 = json.loads(first_line)
+                        if isinstance(step0.get("content"), str):
+                            last_input = step0["content"].strip()[:2048]
+            except Exception:
+                pass
+
+        # Rule B: Fast-bypass keywords in user prompt
         if re.search(
             r"(--no-plan|\bskip plan\b|\bbỏ qua plan\b|\blàm luôn\b|\bsửa luôn\b|\bcode luôn\b|\btriển khai\b|\bimplement\b|\bexecute\b|\bproceed\b|\btiếp tục\b)",
             last_input,
@@ -570,20 +592,9 @@ def process_pre_tool_use(payload: dict) -> dict:
             _write_unlock("sdd_workspace_present")
             return {"decision": "allow"}
 
-        transcript_path = payload.get("transcriptPath")
-        if isinstance(transcript_path, str) and transcript_path.strip() and os.path.isfile(transcript_path.strip()):
-            try:
-                t_path = transcript_path.strip()
-                t_size = os.path.getsize(t_path)
-                with open(t_path, "rb") as tf:
-                    if t_size > 32768:
-                        tf.seek(t_size - 32768)
-                    tail_text = tf.read(32768).decode("utf-8", errors="replace")
-                if re.search(r'"name"\s*:\s*"exit_plan_mode"', tail_text):
-                    _write_unlock("exit_plan_mode")
-                    return {"decision": "allow"}
-            except Exception:
-                pass
+        if tail_text and re.search(r'"name"\s*:\s*"exit_plan_mode"', tail_text):
+            _write_unlock("exit_plan_mode")
+            return {"decision": "allow"}
 
         # Rule D: Warn-Once Auto-Unlock — only gate score >= 95 architectural intent once, then auto-unlock for next attempt
         from dual_tier import calculate_task_complexity
