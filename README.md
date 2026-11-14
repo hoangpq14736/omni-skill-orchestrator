@@ -81,7 +81,7 @@ Omni is **not** a standalone autonomous coding agent (like Aider, OpenCode, or O
 
 | Component | Path | Description |
 |---|---|---|
-| **PreInvocation & PreToolUse Hook** | `scripts/hook_runner.py` | Sub-millisecond pre-flight interceptor injecting JIT skills/rules & Warn-Once Auto-Unlock Plan Gate (<25ms). |
+| **PreInvocation & PreToolUse Hook** | `scripts/hook_runner.py` | Sub-millisecond pre-flight interceptor injecting JIT skills/rules & Warn-Once Auto-Unlock Plan Gate (`<25ms` in-process SLA, `~34ms` Windows `python -S` subprocess). |
 | **JIT Skill Resolver** | `scripts/resolver.py` | Segment-aware skill and rule matching engine (<5ms). |
 | **Gemini Cloud Worker** | `scripts/gemini_worker.py` | 100% Python stdlib driver for Google Gemini 3.5/3.8/Argon (1M context, multimodal, deep reasoning). |
 | **Gemini Worker MCP** | `D:\Antigravity\Gemini Worker\gemini_worker_mcp.py` | JSON-RPC 2.0 stdio MCP server (`io_helpers`, `autonomous_tools`, `loop_runner`) exposing `gemini_heavy_code_gen`, `gemini_multimodal_vision`, `gemini_argon_solve`, `gemini_fast_edit`, `gemini_generate_tests`, `gemini_autonomous_loop`, and `gemini_execute_plan`. |

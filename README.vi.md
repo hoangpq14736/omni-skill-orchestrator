@@ -81,7 +81,7 @@ Omni **không phải** là một tác tử lập trình độc lập (như Aider
 
 | Thành phần | Đường dẫn | Chức năng |
 |---|---|---|
-| **PreInvocation & PreToolUse Hook** | `scripts/hook_runner.py` | Bộ chặn tiền khởi chạy tiêm kỹ năng JIT & Cổng kiểm soát kế hoạch Warn-Once Auto-Unlock (<25ms). |
+| **PreInvocation & PreToolUse Hook** | `scripts/hook_runner.py` | Bộ chặn tiền khởi chạy tiêm kỹ năng JIT & Cổng kiểm soát kế hoạch Warn-Once Auto-Unlock (`<25ms` in-process SLA, `~34ms` Windows `python -S` subprocess). |
 | **JIT Skill Resolver** | `scripts/resolver.py` | Bộ máy định tuyến kỹ năng và quy tắc theo phân đoạn (<5ms). |
 | **Gemini Cloud Worker** | `scripts/gemini_worker.py` | Driver 100% Python stdlib kết nối Google Gemini 3.5/3.8/Argon (ngữ cảnh 1M, multimodal, reasoning). |
 | **Gemini Worker MCP** | `D:\Antigravity\Gemini Worker\gemini_worker_mcp.py` | Server stdio JSON-RPC MCP (`io_helpers`, `autonomous_tools`, `loop_runner`) cung cấp `gemini_heavy_code_gen`, `gemini_multimodal_vision`, `gemini_argon_solve`, `gemini_fast_edit`, `gemini_generate_tests`, `gemini_autonomous_loop`, và `gemini_execute_plan`. |

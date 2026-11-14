@@ -14,7 +14,9 @@
 - **Tổng số Skill trong thư viện**: **517+ skills** (Đã đồng bộ và đánh chỉ mục trong `scripts/registry.json`).
 - **Hệ thống Kiểm thử tự động**:
   - Full Unit Test Discovery (`tests/test_*.py`): `54/54 PASS (100% OK across all 14 test modules)`
-  - Test Engine Suite (`test_engine.py`): `32/32 PASS (100% OK, bao gồm PreToolUse Warn-Once Gate)`
+  - Test Engine Suite (`test_engine.py`): `32/32 PASS (100% OK, bao gồm PreToolUse Warn-Once Gate, SDD active plan & TargetFile)`
+  - Benchmark Suite (`tests/benchmark_suite.py`, `OMNI_READ_ONLY=1` fail-closed SLA): `PASS (Avg 5.985ms, P99 22.469ms <= 25ms, 167.1 QPS, Subprocess P50 33.584ms <= 50ms, 5/5 Chaos True)`
+  - DSH Empirical Auditor (`--read-only` trên `fc3652e`): `PASS (7/7 edge probes, SHA-256 parity 100%, 0 unauthorized_mutations)`
   - Internal Scripts Suite (`scripts/test_*.py`): `91/91 PASS (100% OK)`
   - Kernel Synchronizer Suite (`test_kernel_sync.py`): `5/5 PASS (100% OK)`
   - Universal Portability Suite (`test_portability.py`): `7/7 PASS (100% OK, including Git Worktree .git pointer resolution)`
@@ -55,7 +57,7 @@ Worker cục bộ `local_worker_mi50` (AMD Instinct MI50 16GB) và worker rate-l
 - **Nâng cấp MCP Server (`D:\Antigravity\Gemini Worker\gemini_worker_mcp.py`)**: Tách module gọn sạch (`io_helpers.py`, `autonomous_tools.py`, `loop_runner.py`), nâng `maxOutputTokens=32768`, sửa `_extract_code_block` không cắt nhầm fence lồng nhau, đăng ký đủ 7 công cụ MCP: `gemini_heavy_code_gen`, `gemini_multimodal_vision`, `gemini_argon_solve`, `gemini_fast_edit`, `gemini_generate_tests`, `gemini_autonomous_loop`, và `gemini_execute_plan` (9/9 unit tests + JSON-RPC handshake + live verification PASS).
 - **Loại bỏ `groq_worker_cloud`**: Gỡ khỏi `mcp_config.json`, xóa MCP cache `groq_worker_cloud`, cập nhật `gemini_worker_cloud` autoApprove cho đủ 7 tools, archive `D:\Antigravity\Groq Worker`.
 - **Động cơ CLI Worker (`scripts/gemini_worker.py`)**: 100% Python Standard Library, không phụ thuộc pip, tải `GEMINI_API_KEY` an toàn từ `.env`, tự động exponential backoff + jitter, hỗ trợ tham số `--out` để chống tràn context (Zero-Context Leaking).
-- **L1 Reflex & `PreToolUse` Plan Gate (`hooks.json`, `scripts/hook_runner.py`)**: Tự động nhận diện và phân luồng Unified Cloud Worker Fleet ngay trong Pre-Flight Reflex (<0.3ms), đồng thời bật hook `PreToolUse` trên `write_file|edit_file` với cơ chế Warn-Once Auto-Unlock (`score >= 95`, hỗ trợ từ khóa kiến trúc tiếng Việt, fallback Step 0 từ `transcriptPath` cho subagent, nhận diện `specs/`/`.specify/`/`exit_plan_mode`, và từ khóa bypass `--no-plan`/`làm luôn`).
+- **L1 Reflex & `PreToolUse` Plan Gate (`hooks.json`, `scripts/hook_runner.py`, `scripts/mcp_gateway.py`)**: Tự động nhận diện và phân luồng Unified Cloud Worker Fleet ngay trong Pre-Flight Reflex (<0.3ms), bật `PreToolUse` (`python -S`) trên `write_file|edit_file|replace_file_content|multi_replace_file_content|write_to_file` (hỗ trợ `Path`/`TargetFile`) với cơ chế Warn-Once Auto-Unlock (`score >= 95` EN/VI, đầu-cuối 2.048 ký tự + `parts[].text` fallback từ `transcriptPath` cho subagent, chỉ mở khóa SDD khi có `plan.md|spec.md|tasks.md` khác rỗng và cập nhật `< 7200s`, chống ghi nhầm `mcp_index_cache.json` khi `OMNI_READ_ONLY=1`).
 - **Nâng cấp Spec-Driven Development (`skills/spec-driven-development/SKILL.md`)**:
   - Phase 5 (`council_gate`): Mở rộng tiếp nhận toàn bộ dự án với 1.000.000 tokens context của DeepSeek-V4.1-Flash.
   - Phase 7 (`implement`): Phân quyền ủy thác hợp nhất về `gemini_worker_cloud` (7 công cụ) + `deepseek_worker_cloud` audit gate, phá vỡ điểm nghẽn token limit khi triển khai module lớn.
@@ -75,7 +77,7 @@ Worker cục bộ `local_worker_mi50` (AMD Instinct MI50 16GB) và worker rate-l
 - Server JSON-RPC 2.0 stdio MCP đặt tại `d:\Antigravity\DeepSeek Worker\deepseek_worker_mcp.py`.
 
 ### D. Spec 001: Tri-Tier Omni-Memory v4.1 (Episodic Memory Hierarchy)
-- **Tier 1 (L1 Reflex - <25ms Turnaround, <0.3ms Reflex)**: Ephemeral PreInvocation hook trong `scripts/hook_runner.py` (100% Python stdlib). Spool phi khóa `l1_staging_spool.jsonl`.
+- **Tier 1 (L1 Reflex - <25ms In-Process SLA / ~34ms OS Subprocess, <0.3ms Reflex)**: Ephemeral PreInvocation & PreToolUse (`python -S`) hook trong `scripts/hook_runner.py` (100% Python stdlib, lazy-load deps). Spool phi khóa `l1_staging_spool.jsonl`.
 - **Tier 2 (L2 Hybrid Memory - <15ms Retrieval)**: SQLite WAL (`omni_memory.db`), FTS5 BM25 + CPU ONNX Embeddings 256 chiều (`google/embeddinggemma-2-omni` INT8 MRL) qua RRF ($k=20$).
 - **Tier 3 (L3 Background Consolidator)**: Daemon `scripts/consolidator.py` tiêu thụ log staging, thăng hạng tri thức ($\ge 2$ lần), tính độ suy giảm Ebbinghaus.
 
