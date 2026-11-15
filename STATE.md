@@ -93,3 +93,15 @@ Worker cục bộ `local_worker_mi50` (AMD Instinct MI50 16GB) và worker rate-l
 ### Các Đề Mục Sẵn Sàng Thực Hiện Tiếp Theo:
 1. Thực hiện các dự án lập trình thực tế sử dụng quy trình SDD 10 pha với Cloud Worker Fleet.
 2. Trực quan hóa cấu trúc nâng cao: D3 Collapsible Tree Visualizer (`tree.html`) cho Omni-Graph.
+
+---
+
+## 🗺️ 5. Lộ Trình Nâng Cấp Omni-Kernel (Specs 1–9)
+
+| Pha | Phiên bản mục tiêu | Trạng thái | Các đặc tả chính (Specs 1–9) |
+| --- | --- | --- | --- |
+| **Phase 1** | `v4.3.1` (Hotfix) | **Hoàn tất** (`b02f327`) | • **Spec 1:** Chuẩn hóa `python -S -B` cho L1 hook & debounce 60s theo workspace khi spawn consolidator (kèm `TrustFileLock` & `OMNI_READ_ONLY=1`).<br>• **Spec 2:** Khôi phục pure FTS5 BM25 fallback khi bảng vector ONNX chưa có dữ liệu + live-WAL-aware RO guard. |
+| **Phase 2** | `v4.4.0` (Minor) | **Kế tiếp** | • **Spec 3:** Quét vector L2 bằng NumPy vectorized batching + partition bounding.<br>• **Spec 4:** Chặn thăng hạng tri thức L3 theo tỷ lệ thành công ròng ($\ge 60\%$) & batched ONNX backfill.<br>• **Spec 5:** Chuyển stdio server của Cloud Worker Fleet sang threaded non-blocking & mở rộng mã HTTP retry (`500`, `502`, `504`).<br>• **Spec 6:** Đồng bộ `PreToolUse` Plan Gate sang các tool ghi của Worker Fleet (`gemini_fast_edit`, `gemini_heavy_code_gen`, ...).<br>• **Spec 7:** Thống nhất điều phối Council Gate (`omni-council` CLI) & unit test cho critic.<br>• **Spec 8:** Sửa phân giải binary trên Windows (`shutil.which`) & xả lỗi `pipefail`. |
+| **Phase 3** | `v5.0.0` (Major) | **Dự kiến** | • **Spec 9:** Giới hạn lưu trữ `learned_affinities` (retention cap) & dọn dẹp spool daemon định kỳ. |
+
+> *Tài liệu đặc tả chi tiết:* [`docs/OMNI_KERNEL_V4.3_UPGRADE_PROPOSAL.md`](docs/OMNI_KERNEL_V4.3_UPGRADE_PROPOSAL.md) | *Audit Spec:* [`docs/audits/OMNI_KERNEL_V4.3_UPGRADE_PROPOSAL_DEEPSEEK_AUDIT.md`](docs/audits/OMNI_KERNEL_V4.3_UPGRADE_PROPOSAL_DEEPSEEK_AUDIT.md)

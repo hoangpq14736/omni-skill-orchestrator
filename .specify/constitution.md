@@ -2,7 +2,7 @@
 
 <!--
   Sync Impact Report:
-  - Version: 4.3.0 (Ratified Architectural Invariants)
+  - Version: 4.3.1 (Ratified Architectural Invariants)
   - Scope: Omni-Kernel Tri-Tier Cognitive Architecture, Hardware Fleet & Memory Management
   - Ratification Date: 2026-11-02
   - Principles Enshrined: Principles I through V, Governance & SemVer Policies
@@ -81,4 +81,4 @@
 
 ---
 
-**Version**: 4.3.0 | **Ratified**: 2026-11-02 | **Last Amended**: 2026-11-13
+**Version**: 4.3.1 | **Ratified**: 2026-11-02 | **Last Amended**: 2026-11-16

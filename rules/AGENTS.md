@@ -48,10 +48,10 @@ You have access to the **Omni-Kernel v4.3 Orchestrator**, a unified autonomous i
    - **Tier 3 (L3 Background Consolidator)**: Out-of-band consolidation daemon in `scripts/consolidator.py`. Ingests pending logs, promotes multi-hit patterns ($\ge 2$ successes) with automated bilingual tags, applies bounded Ebbinghaus stability decay, soft-archives stale records (`status = 'Archived'`), and versions invariant rules (`status = 'Superseded'`, `superseded_by`).
 
 8. **Kernel Version & Skill Alignment Invariant**:
-   - All active skills, SDD blueprints, and orchestration scripts MUST align with the ratified Constitution version (`v4.3.0`).
+   - All active skills, SDD blueprints, and orchestration scripts MUST align with the ratified Constitution version (`v4.3.1`).
    - Run `python "C:/Users/vuhuu/.gemini/config/plugins/omni-skill-orchestrator/scripts/kernel_sync.py" --sync-kernel` to resolve any version drift across the ecosystem.
 
-<!-- OMNI-KERNEL-START v4.3.0 -->
+<!-- OMNI-KERNEL-START v4.3.1 -->
 # --- OMNI-KERNEL v4.3 AGENT INVARIANTS ---
 # 1. Zero-Trust Security: Validate all inputs at trust boundaries. Never leak secrets.
 # 2. Reliable Engineering: Fail loudly with context. Never swallow exceptions. Immutability first.
