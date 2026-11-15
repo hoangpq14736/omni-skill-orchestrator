@@ -7,6 +7,7 @@ __pycache__/
 scripts/registry.json
 scripts/mcp_index_cache.json
 scripts/l1_staging_spool.jsonl*
+scripts/.consolidator_spawn*.ts
 scripts/activations_history.jsonl
 reports/
 *.tmp

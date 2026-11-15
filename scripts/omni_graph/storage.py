@@ -16,7 +16,11 @@ def get_connection(workspace_root: str | Path, read_only: bool = False, timeout_
     if read_only:
         if not db_path.exists():
             raise FileNotFoundError(f"Database file not found: {db_path}")
-        uri = f"file:{db_path.resolve().as_posix()}?mode=ro"
+        # Use immutable=1 only when no non-empty WAL exists; live WAL still requires WAL-aware mode=ro.
+        has_live_wal = os.path.exists(f"{db_path}-wal") and os.path.getsize(f"{db_path}-wal") > 0
+        use_immutable = os.environ.get("OMNI_READ_ONLY") == "1" and not has_live_wal
+        ro_query = "mode=ro&immutable=1" if use_immutable else "mode=ro"
+        uri = f"file:{db_path.resolve().as_posix()}?{ro_query}"
     else:
         uri = f"file:{db_path.resolve().as_posix()}"
     conn = sqlite3.connect(uri, uri=True, timeout=timeout_ms / 1000.0)

@@ -334,7 +334,8 @@ def build_index(output_file=None):
         "token_index": token_index
     }
 
-    if output_file:
+    should_write = bool(output_file) and os.environ.get("OMNI_READ_ONLY") != "1"
+    if should_write:
         out_dir = os.path.dirname(os.path.abspath(output_file))
         os.makedirs(out_dir, exist_ok=True)
         lock_path = output_file + ".lock"
@@ -354,7 +355,8 @@ def build_index(output_file=None):
                         pass
 
     duration = time.time() - start
-    print(f"Indexed {len(skills)} skills in {duration:.2f}s -> {output_file or 'in-memory'}")
+    target_desc = output_file if should_write else "in-memory"
+    print(f"Indexed {len(skills)} skills in {duration:.2f}s -> {target_desc}", file=sys.stderr)
     return registry
 
 

@@ -389,12 +389,15 @@ def load_learned_affinities(path=None):
             data.setdefault("skill_stats", {})
             return data
     except Exception as e:
-        bak_path = f"{path}.corrupt.{int(time.time())}.bak"
-        try:
-            shutil.copy2(path, bak_path)
-            print(f"[!] Warning: Corrupt learned affinities quarantined to {bak_path}: {e}", file=sys.stderr)
-        except Exception:
-            pass
+        if os.environ.get("OMNI_READ_ONLY") == "1":
+            print(f"[!] Warning: Corrupt learned affinities (read-only): {e}", file=sys.stderr)
+        else:
+            bak_path = f"{path}.corrupt.{int(time.time())}.bak"
+            try:
+                shutil.copy2(path, bak_path)
+                print(f"[!] Warning: Corrupt learned affinities quarantined to {bak_path}: {e}", file=sys.stderr)
+            except Exception:
+                pass
         return {"version": "1.1.0", "affinities": {}, "skill_stats": {}}
 
 
@@ -566,12 +569,15 @@ def load_registry(registry_path=REGISTRY_PATH):
             _CACHED_REGISTRY_MTIME = curr_mtime
         return registry
     except Exception as e:
-        bak_path = f"{registry_path}.corrupt.{int(time.time())}.bak"
-        try:
-            shutil.copy2(registry_path, bak_path)
-            print(f"[!] Warning: Corrupt registry quarantined to {bak_path}: {e}", file=sys.stderr)
-        except Exception:
-            pass
+        if os.environ.get("OMNI_READ_ONLY") == "1":
+            print(f"[!] Warning: Corrupt registry (read-only): {e}", file=sys.stderr)
+        else:
+            bak_path = f"{registry_path}.corrupt.{int(time.time())}.bak"
+            try:
+                shutil.copy2(registry_path, bak_path)
+                print(f"[!] Warning: Corrupt registry quarantined to {bak_path}: {e}", file=sys.stderr)
+            except Exception:
+                pass
         from indexer import build_index
         return build_index(registry_path)
 

@@ -796,30 +796,43 @@ def recall_episodic_memory(
 
     conn = None
     try:
-        conn = sqlite3.connect(resolved_db, timeout=2.0)
-        conn.execute("PRAGMA busy_timeout = 2000;")
-        conn.execute("PRAGMA journal_mode = WAL;")
-        conn.execute("PRAGMA synchronous = NORMAL;")
+        if os.environ.get("OMNI_READ_ONLY") == "1":
+            from pathlib import Path
+            has_live_wal = os.path.exists(f"{resolved_db}-wal") and os.path.getsize(f"{resolved_db}-wal") > 0
+            ro_query = "mode=ro" if has_live_wal else "mode=ro&immutable=1"
+            ro_uri = f"file:{Path(resolved_db).resolve().as_posix()}?{ro_query}"
+            conn = sqlite3.connect(ro_uri, uri=True, timeout=2.0)
+            conn.execute("PRAGMA busy_timeout = 2000;")
+        else:
+            conn = sqlite3.connect(resolved_db, timeout=2.0)
+            conn.execute("PRAGMA busy_timeout = 2000;")
+            conn.execute("PRAGMA journal_mode = WAL;")
+            conn.execute("PRAGMA synchronous = NORMAL;")
 
-        # Fast Guard (<0.1ms): Never load 261MB ONNX model if dense_embeddings table has 0 rows
-        has_dense = conn.execute("SELECT 1 FROM dense_embeddings LIMIT 1;").fetchone()
-        if not has_dense:
-            return []
-
-        # 2. Resolve workspace hash
+        # 2. Resolve workspace hash first so dense check is workspace-scoped
         ws_hash = workspace_hash
         if not ws_hash and workspace_dir:
             from memory_utils import canonical_workspace_hash
             ws_hash = canonical_workspace_hash(workspace_dir)
 
-        # 3. Compute query vector using fine-tuned EmbeddingGemma-2
+        # 3. Check if dense embeddings exist for target workspace before loading the model
+        if ws_hash:
+            has_dense = conn.execute(
+                "SELECT 1 FROM dense_embeddings WHERE workspace_hash = ? LIMIT 1;",
+                (ws_hash,),
+            ).fetchone()
+        else:
+            has_dense = conn.execute("SELECT 1 FROM dense_embeddings LIMIT 1;").fetchone()
+
+        # 4. Compute query vector using fine-tuned EmbeddingGemma-2 only if dense vectors exist
         query_vector = None
-        try:
-            from embedding_service import get_embedding
-            query_vector = get_embedding(query_text, is_query=True)
-        except Exception as emb_err:
-            import sys
-            sys.stderr.write(f"[!] Warning: embedding_service get_embedding failed: {emb_err}\n")
+        if has_dense:
+            try:
+                from embedding_service import get_embedding
+                query_vector = get_embedding(query_text, is_query=True)
+            except Exception as emb_err:
+                import sys
+                sys.stderr.write(f"[!] Warning: embedding_service get_embedding failed: {emb_err}\n")
 
         # If ws_hash is not known, fetch all active workspace hashes to permit unscoped retrieval
         target_hashes = [ws_hash] if ws_hash else []

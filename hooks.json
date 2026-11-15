@@ -3,7 +3,7 @@
     "PreInvocation": [
       {
         "type": "command",
-        "command": "python scripts/hook_runner.py",
+        "command": "python -S -B scripts/hook_runner.py",
         "timeout": 3
       }
     ],
@@ -13,7 +13,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python -S scripts/hook_runner.py",
+            "command": "python -S -B scripts/hook_runner.py",
             "timeout": 3
           }
         ]

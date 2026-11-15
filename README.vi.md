@@ -81,22 +81,27 @@ Omni **không phải** là một tác tử lập trình độc lập (như Aider
 
 | Thành phần | Đường dẫn | Chức năng |
 |---|---|---|
-| **PreInvocation & PreToolUse Hook** | `scripts/hook_runner.py` | Bộ chặn tiền khởi chạy tiêm kỹ năng JIT & Cổng kiểm soát kế hoạch Warn-Once Auto-Unlock (`<25ms` in-process SLA, `~34ms` Windows `python -S` subprocess). |
-| **JIT Skill Resolver** | `scripts/resolver.py` | Bộ máy định tuyến kỹ năng và quy tắc theo phân đoạn (<5ms). |
+| **PreInvocation & PreToolUse Hook** | `scripts/hook_runner.py` | Bộ chặn tiền khởi chạy tiêm kỹ năng JIT & Cổng kiểm soát kế hoạch Warn-Once Auto-Unlock (`<25ms` in-process SLA, `~34ms` warm `python -S -B` subprocess, debounce 60s theo workspace, `OMNI_READ_ONLY=1` zero-write). |
+| **JIT Skill Resolver** | `scripts/resolver.py` | Bộ máy định tuyến kỹ năng và quy tắc theo phân đoạn (<5ms; an toàn read-only). |
 | **Gemini Cloud Worker** | `scripts/gemini_worker.py` | Driver 100% Python stdlib kết nối Google Gemini 3.5/3.8/Argon (ngữ cảnh 1M, multimodal, reasoning). |
 | **Gemini Worker MCP** | `D:\Antigravity\Gemini Worker\gemini_worker_mcp.py` | Server stdio JSON-RPC MCP (`io_helpers`, `autonomous_tools`, `loop_runner`) cung cấp `gemini_heavy_code_gen`, `gemini_multimodal_vision`, `gemini_argon_solve`, `gemini_fast_edit`, `gemini_generate_tests`, `gemini_autonomous_loop`, và `gemini_execute_plan`. |
 | **Architecture Auditor** | `scripts/consult_critic.py` | Client Hội đồng Phản biện Độc lập kết nối DeepSeek-V4.1-Flash với cửa sổ 1.000.000 tokens context. |
+| **DSH Empirical Auditor** | `scripts/dsh_auditor.py` | Trình kiểm toán thực nghiệm cô lập Tier 1/2/3 chạy test thật, kiểm tra live-WAL/read-only và diff. |
 | **Omni-Graph CLI** | `scripts/omni_graph.py` | Trình điều khiển quét mã nguồn, kiểm tra hợp đồng chữ ký và xuất đồ thị tương tác. |
-| **Memory Engine** | `scripts/memory_engine.py` | Tìm kiếm lai kết hợp SQLite FTS5 BM25 và vector đặc CPU ONNX qua RRF. |
+| **Memory Engine** | `scripts/memory_engine.py` | Tìm kiếm lai kết hợp SQLite FTS5 BM25 và vector đặc CPU ONNX qua RRF, hỗ trợ guard dense theo workspace, fallback thuần FTS5 và đọc WAL an toàn `mode=ro`/`immutable=1` dưới `OMNI_READ_ONLY=1`. |
 | **Autonomous Synthesizer** | `scripts/synthesizer.py` | Quy trình tự soạn thảo, kiểm tra AST, sandbox test và thăng hạng kỹ năng mới. |
 
 ---
 
 ## 🧪 Kiểm thử Tự động & Xác minh Thực nghiệm
 
-Omni-Skill Orchestrator duy trì bộ kiểm thử tự động toàn diện với **tỷ lệ đạt 100%**:
+Omni-Skill Orchestrator duy trì bộ kiểm thử tự động toàn diện (**126/126 pass** + **DSH Tier 2 Empirical Audit** đã xác minh):
 
 ```bash
+# 0. Chạy toàn bộ bộ test hồi quy & đo SLA hiệu năng
+python -m pytest tests/
+python tests/benchmark_suite.py
+
 # 1. Chạy kiểm thử đa tiến trình đồng thời trên SQLite WAL (Windows/NT)
 python tests/test_concurrency_wal.py
 

@@ -496,7 +496,7 @@ def build_preflight_message(resolution: dict, gatekeeper_text: str = None, drift
     lines.append("\n🤖 Active Cloud Worker Fleet Directives (MANDATORY DELEGATION INVARIANT):")
     lines.append("  * gemini_worker_cloud: Google Gemini 3.5 Flash-Lite / 3.8 Flash / 4 Argon (1M context; rapid in-place edits, test synthesis, self-healing verification loops, heavy generation, multimodal vision, Argon deep reasoning)")
     lines.append("  * deepseek_worker_cloud: Independent spec & diff audit gatekeeper (deepseek_audit_spec, deepseek_audit_diff)")
-    lines.append("  * DELEGATION MANDATE: Do NOT generate large code, boilerplate edits, or test suites in primary Cloud context. Delegate implementation, fast edits, test generation, and self-healing verification loops to 'gemini_worker_cloud' (gemini_heavy_code_gen, gemini_fast_edit, gemini_generate_tests, gemini_autonomous_loop, gemini_multimodal_vision, gemini_argon_solve), and run 'deepseek_worker_cloud' for critical spec/diff audits. Primary agent acts strictly as Architect & Gatekeeper.")
+    lines.append("  * DELEGATION MANDATE: Act primarily as Architect & Gatekeeper (except <=15-line micro-edits); do NOT generate bulk code (>15 lines) or large test suites in primary Cloud context. Micro-edits (<=15 lines, known exact target): use native edit_file directly. Larger edits, tests, vision & reasoning: delegate to 'gemini_worker_cloud' (gemini_fast_edit, gemini_generate_tests, gemini_autonomous_loop with context_files + verify_cmd, gemini_execute_plan, gemini_heavy_code_gen, gemini_multimodal_vision, gemini_argon_solve). 1-Strike Fallback: on worker timeout or syntax error, NEVER blindly retry the same prompt — escalate model once or handle directly. Run 'deepseek_worker_cloud' for critical spec/diff audits.")
 
     # 7. Dual-Tier Cognitive Routing & Quota Guard
     tier_info = resolution.get("tier_assessment", {})
@@ -591,7 +591,7 @@ def process_pre_tool_use(payload: dict) -> dict:
         unlock_marker = os.path.join(workspace_dir, ".omni", "plan_unlocked.json")
 
         def _write_unlock(source: str) -> None:
-            if not os.path.isdir(workspace_dir):
+            if os.environ.get("OMNI_READ_ONLY") == "1" or not os.path.isdir(workspace_dir):
                 return
             try:
                 os.makedirs(os.path.dirname(unlock_marker), exist_ok=True)
@@ -826,28 +826,43 @@ def process_hook(payload: dict) -> dict:
     try:
         spool_path = os.path.join(_SCRIPT_DIR, "l1_staging_spool.jsonl")
         spool_lock = spool_path + ".lock"
+        ws_hash = canonical_workspace_hash(workspace_dir)
         spool_entry = {
             "session_id": redact_secrets(str(payload.get("sessionId", "session_default")))[:64],
             "timestamp": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f"),
             "user_input": safe_user_input[:250],
-            "workspace_hash": canonical_workspace_hash(workspace_dir),
+            "workspace_hash": ws_hash,
             "top_skill": safe_field(skills[0]["skill"]["name"], 64, single_line=True) if skills else "none",
             "tier_used": resolution.get("tier_assessment", {}).get("tier", 1),
             "recalled_traces": [t.get("trace", {}).get("id") for t in resolution.get("proven_traces", [])]
         }
         should_spawn_consolidator = False
-        with TrustFileLock(spool_lock, timeout=0.05):
-            if os.path.exists(spool_path):
-                try:
-                    sz = os.path.getsize(spool_path)
-                    if sz > 10 * 1024 * 1024:
-                        os.replace(spool_path, spool_path + ".1.bak")
-                    elif sz > 25 * 1024:
-                        should_spawn_consolidator = True
-                except Exception:
-                    pass
-            with open(spool_path, "a", encoding="utf-8") as sf:
-                sf.write(json.dumps(spool_entry, ensure_ascii=False) + "\n")
+        if os.environ.get("OMNI_READ_ONLY") != "1":
+            with TrustFileLock(spool_lock, timeout=0.05):
+                if os.path.exists(spool_path):
+                    try:
+                        sz = os.path.getsize(spool_path)
+                        if sz > 10 * 1024 * 1024:
+                            os.replace(spool_path, spool_path + ".1.bak")
+                        elif sz > 25 * 1024:
+                            # 60s per-workspace debounce guarded by OS-advisory TrustFileLock (auto-released on crash)
+                            marker_path = os.path.join(_SCRIPT_DIR, f".consolidator_spawn.{ws_hash[:12]}.ts")
+                            now = time.time()
+                            last_spawn = 0.0
+                            if os.path.exists(marker_path):
+                                try:
+                                    with open(marker_path, "r", encoding="utf-8") as mf:
+                                        last_spawn = float(mf.read().strip())
+                                except Exception:
+                                    last_spawn = 0.0
+                            if now - last_spawn >= 60.0:
+                                should_spawn_consolidator = True
+                                with open(marker_path, "w", encoding="utf-8") as mf:
+                                    mf.write(str(now))
+                    except Exception:
+                        pass
+                with open(spool_path, "a", encoding="utf-8") as sf:
+                    sf.write(json.dumps(spool_entry, ensure_ascii=False) + "\n")
 
         if should_spawn_consolidator:
             try:
@@ -869,69 +884,70 @@ def process_hook(payload: dict) -> dict:
         persist_diag(e, 256)
 
     # VULN-006, VULN-204 & VULN-008: Record telemetry to last_activation.json atomically with universal credential redaction
-    try:
-        safe_skills = [
-            {
-                "name": safe_field(s.get("skill", {}).get("name"), 64, single_line=True),
-                "version": safe_field(s.get("skill", {}).get("version"), 32, single_line=True),
-                "source_type": safe_field(str(s.get("skill", {}).get("source_type")), 32, single_line=True),
-                "raw_score": round(s.get("raw_score", 0), 1),
-                "arbitration_reason": safe_field(s.get("arbitration_reason", ""), 120, single_line=True)
-            } for s in skills[:3]
-        ]
-        record = {
-            "timestamp": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-            "user_input": safe_user_input,
-            "workspace_dir": redact_secrets(workspace_dir),
-            "top_skill": safe_skills[0]["name"] if safe_skills else "none",
-            "skills": safe_skills,
-            "inferred_rules": [redact_secrets(str(r)) for r in resolution.get("inferred_rules", [])],
-            "suggested_mcp": [redact_secrets(str(m)) for m in resolution.get("suggested_mcp", [])],
-            "cognitive_pre_flight": redact_secrets(resolution.get("cognitive_pre_flight", {})),
-            "tier_assessment": redact_secrets(resolution.get("tier_assessment", {})),
-            "proven_traces": redact_secrets(resolution.get("proven_traces", []))
-        }
-        
-        # Atomic replace for last_activation.json (no blocking fsync on telemetry to preserve <25ms SLA)
-        tmp_act = f"{LAST_ACTIVATION_PATH}.{uuid.uuid4().hex}.tmp"
+    if os.environ.get("OMNI_READ_ONLY") != "1":
         try:
-            with open(tmp_act, "w", encoding="utf-8") as f:
-                json.dump(record, f, indent=2, ensure_ascii=False)
-            os.replace(tmp_act, LAST_ACTIVATION_PATH)
-        finally:
-            if os.path.exists(tmp_act):
-                try:
-                    os.remove(tmp_act)
-                except OSError:
-                    pass
+            safe_skills = [
+                {
+                    "name": safe_field(s.get("skill", {}).get("name"), 64, single_line=True),
+                    "version": safe_field(s.get("skill", {}).get("version"), 32, single_line=True),
+                    "source_type": safe_field(str(s.get("skill", {}).get("source_type")), 32, single_line=True),
+                    "raw_score": round(s.get("raw_score", 0), 1),
+                    "arbitration_reason": safe_field(s.get("arbitration_reason", ""), 120, single_line=True)
+                } for s in skills[:3]
+            ]
+            record = {
+                "timestamp": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                "user_input": safe_user_input,
+                "workspace_dir": redact_secrets(workspace_dir),
+                "top_skill": safe_skills[0]["name"] if safe_skills else "none",
+                "skills": safe_skills,
+                "inferred_rules": [redact_secrets(str(r)) for r in resolution.get("inferred_rules", [])],
+                "suggested_mcp": [redact_secrets(str(m)) for m in resolution.get("suggested_mcp", [])],
+                "cognitive_pre_flight": redact_secrets(resolution.get("cognitive_pre_flight", {})),
+                "tier_assessment": redact_secrets(resolution.get("tier_assessment", {})),
+                "proven_traces": redact_secrets(resolution.get("proven_traces", []))
+            }
 
-        # Append compact event and rotate activations_history.jsonl under file lock (VULN-105)
-        history_entry = {
-            "timestamp": record["timestamp"],
-            "user_input": safe_user_input[:150],
-            "workspace_dir": record["workspace_dir"],
-            "top_skill": record["top_skill"],
-            "tier": record.get("tier_assessment", {}).get("tier", 1),
-            "tier_name": record.get("tier_assessment", {}).get("tier_name", "L1 Reflex"),
-            "rules_count": len(record.get("inferred_rules", [])),
-            "mcp_count": len(record.get("suggested_mcp", [])),
-            "traces_count": len(record.get("proven_traces", []))
-        }
-        try:
-            with TrustFileLock(ACTIVATIONS_HISTORY_PATH, timeout=0.02):
-                if os.path.exists(ACTIVATIONS_HISTORY_PATH):
+            # Atomic replace for last_activation.json (no blocking fsync on telemetry to preserve <25ms SLA)
+            tmp_act = f"{LAST_ACTIVATION_PATH}.{uuid.uuid4().hex}.tmp"
+            try:
+                with open(tmp_act, "w", encoding="utf-8") as f:
+                    json.dump(record, f, indent=2, ensure_ascii=False)
+                os.replace(tmp_act, LAST_ACTIVATION_PATH)
+            finally:
+                if os.path.exists(tmp_act):
                     try:
-                        if os.path.getsize(ACTIVATIONS_HISTORY_PATH) > MAX_HISTORY_BYTES:
-                            bak_path = f"{ACTIVATIONS_HISTORY_PATH}.1.bak"
-                            os.replace(ACTIVATIONS_HISTORY_PATH, bak_path)
+                        os.remove(tmp_act)
                     except OSError:
                         pass
-                with open(ACTIVATIONS_HISTORY_PATH, "a", encoding="utf-8") as hf:
-                    hf.write(json.dumps(history_entry, ensure_ascii=False) + "\n")
-        except Exception as lock_err:
-            persist_diag(lock_err, 256)
-    except Exception as e:
-        persist_diag(e, 256)
+
+            # Append compact event and rotate activations_history.jsonl under file lock (VULN-105)
+            history_entry = {
+                "timestamp": record["timestamp"],
+                "user_input": safe_user_input[:150],
+                "workspace_dir": record["workspace_dir"],
+                "top_skill": record["top_skill"],
+                "tier": record.get("tier_assessment", {}).get("tier", 1),
+                "tier_name": record.get("tier_assessment", {}).get("tier_name", "L1 Reflex"),
+                "rules_count": len(record.get("inferred_rules", [])),
+                "mcp_count": len(record.get("suggested_mcp", [])),
+                "traces_count": len(record.get("proven_traces", []))
+            }
+            try:
+                with TrustFileLock(ACTIVATIONS_HISTORY_PATH, timeout=0.02):
+                    if os.path.exists(ACTIVATIONS_HISTORY_PATH):
+                        try:
+                            if os.path.getsize(ACTIVATIONS_HISTORY_PATH) > MAX_HISTORY_BYTES:
+                                bak_path = f"{ACTIVATIONS_HISTORY_PATH}.1.bak"
+                                os.replace(ACTIVATIONS_HISTORY_PATH, bak_path)
+                        except OSError:
+                            pass
+                    with open(ACTIVATIONS_HISTORY_PATH, "a", encoding="utf-8") as hf:
+                        hf.write(json.dumps(history_entry, ensure_ascii=False) + "\n")
+            except Exception as lock_err:
+                persist_diag(lock_err, 256)
+        except Exception as e:
+            persist_diag(e, 256)
 
     message_text = build_preflight_message(resolution, gatekeeper_text=gatekeeper_text, drift_text=drift_text)
     

@@ -81,22 +81,27 @@ Omni is **not** a standalone autonomous coding agent (like Aider, OpenCode, or O
 
 | Component | Path | Description |
 |---|---|---|
-| **PreInvocation & PreToolUse Hook** | `scripts/hook_runner.py` | Sub-millisecond pre-flight interceptor injecting JIT skills/rules & Warn-Once Auto-Unlock Plan Gate (`<25ms` in-process SLA, `~34ms` Windows `python -S` subprocess). |
-| **JIT Skill Resolver** | `scripts/resolver.py` | Segment-aware skill and rule matching engine (<5ms). |
+| **PreInvocation & PreToolUse Hook** | `scripts/hook_runner.py` | Sub-millisecond pre-flight interceptor injecting JIT skills/rules & Warn-Once Auto-Unlock Plan Gate (`<25ms` in-process SLA, `~34ms` warm `python -S -B` subprocess, 60s per-workspace consolidator debounce, strict `OMNI_READ_ONLY=1` zero-write). |
+| **JIT Skill Resolver** | `scripts/resolver.py` | Segment-aware skill and rule matching engine (<5ms; read-only safe). |
 | **Gemini Cloud Worker** | `scripts/gemini_worker.py` | 100% Python stdlib driver for Google Gemini 3.5/3.8/Argon (1M context, multimodal, deep reasoning). |
 | **Gemini Worker MCP** | `D:\Antigravity\Gemini Worker\gemini_worker_mcp.py` | JSON-RPC 2.0 stdio MCP server (`io_helpers`, `autonomous_tools`, `loop_runner`) exposing `gemini_heavy_code_gen`, `gemini_multimodal_vision`, `gemini_argon_solve`, `gemini_fast_edit`, `gemini_generate_tests`, `gemini_autonomous_loop`, and `gemini_execute_plan`. |
 | **Architecture Auditor** | `scripts/consult_critic.py` | Decoupled Council Gatekeeper client connecting to DeepSeek-V4.1-Flash with 1,000,000 tokens context. |
+| **DSH Empirical Auditor** | `scripts/dsh_auditor.py` | Sandboxed Tier 1/2/3 empirical peer auditor executing real tests, live-WAL/read-only probes, and diff checks. |
 | **Omni-Graph CLI** | `scripts/omni_graph.py` | CLI driver for scanning codebases, validating signature contracts, and generating visual graphs. |
-| **Memory Engine** | `scripts/memory_engine.py` | Hybrid search engine combining SQLite FTS5 BM25 and CPU ONNX dense vectors via RRF. |
+| **Memory Engine** | `scripts/memory_engine.py` | Hybrid search engine combining SQLite FTS5 BM25 and CPU ONNX dense vectors via RRF, with workspace-scoped dense guard, pure FTS5 fallback, and WAL-aware `mode=ro`/`immutable=1` read-only safety. |
 | **Autonomous Synthesizer** | `scripts/synthesizer.py` | Self-bootstrapping pipeline authoring, verifying in sandbox, and promoting novel skills. |
 
 ---
 
 ## 🧪 Testing & Verification
 
-Omni-Skill Orchestrator maintains a comprehensive automated test suite with **100% pass rate**:
+Omni-Skill Orchestrator maintains a comprehensive automated test suite (**126/126 passing** + **DSH Tier 2 Empirical Audit** verified):
 
 ```bash
+# 0. Run Full Regression Suite & Performance SLA Benchmark
+python -m pytest tests/
+python tests/benchmark_suite.py
+
 # 1. Run WAL Multi-Process Concurrency Test (NT/Windows SQLite WAL Stress Test)
 python tests/test_concurrency_wal.py
 
