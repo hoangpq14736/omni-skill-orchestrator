@@ -59,6 +59,10 @@ except ImportError:
             return _CRED_PATTERN.sub("[REDACTED_SECRET]", text)
 
 
+MIN_AUDIT_TIMEOUT_SEC = 601.0
+DEFAULT_AUDIT_TIMEOUT_SEC = 720.0
+
+
 # -----------------------------------------------------------------------------
 # Enums and Domain Data Models
 # -----------------------------------------------------------------------------
@@ -455,7 +459,7 @@ class LockManager:
         self,
         session_id: str,
         scope: str = "tier_1_in_place",
-        timeout_sec: float = 120.0,
+        timeout_sec: float = DEFAULT_AUDIT_TIMEOUT_SEC,
         retry_deadline_sec: float = 10.0,
         base_backoff_sec: float = 0.05,
     ) -> bool:
@@ -541,7 +545,7 @@ class LockManager:
             if heartbeat_at.tzinfo is None:
                 heartbeat_at = heartbeat_at.replace(tzinfo=timezone.utc)
             delta_sec = (datetime.now(timezone.utc) - heartbeat_at).total_seconds()
-            timeout_sec = float(data.get("timeout_sec", 120.0))
+            timeout_sec = float(data.get("timeout_sec", DEFAULT_AUDIT_TIMEOUT_SEC))
 
             holder_pid = int(data.get("pid", -1))
             if not is_process_alive(holder_pid) or delta_sec > timeout_sec:
@@ -1012,16 +1016,16 @@ class DynamicWorkspaceResolver:
 
     def default_timeout_for(self, category: AuditCategory) -> float:
         mapping = {
-            AuditCategory.STATIC_AUDIT: 30.0,
-            AuditCategory.TEST_EXISTING: 60.0,
-            AuditCategory.BUG_REPRODUCE: 60.0,
-            AuditCategory.DB_CONCURRENCY: 120.0,
-            AuditCategory.ISOLATED_PROBE: 60.0,
-            AuditCategory.STRESS_TEST: 120.0,
-            AuditCategory.REFACTOR_EVAL: 180.0,
-            AuditCategory.SPECULATIVE_FIX: 180.0,
+            AuditCategory.STATIC_AUDIT: DEFAULT_AUDIT_TIMEOUT_SEC,
+            AuditCategory.TEST_EXISTING: DEFAULT_AUDIT_TIMEOUT_SEC,
+            AuditCategory.BUG_REPRODUCE: DEFAULT_AUDIT_TIMEOUT_SEC,
+            AuditCategory.DB_CONCURRENCY: 900.0,
+            AuditCategory.ISOLATED_PROBE: DEFAULT_AUDIT_TIMEOUT_SEC,
+            AuditCategory.STRESS_TEST: 900.0,
+            AuditCategory.REFACTOR_EVAL: 1200.0,
+            AuditCategory.SPECULATIVE_FIX: 1200.0,
         }
-        return mapping.get(category, 60.0)
+        return max(MIN_AUDIT_TIMEOUT_SEC, mapping.get(category, DEFAULT_AUDIT_TIMEOUT_SEC))
 
     def provision_workspace(self, tier: WorkspaceTier, session_id: str) -> WorkspaceContext:
         if tier == WorkspaceTier.TIER_1_IN_PLACE:
@@ -1677,7 +1681,8 @@ class DSHAuditorClient:
     def execute_audit(self, task: AuditTask) -> AuditResult:
         start_t = time.time()
         tier = self.dwr.evaluate_tier(task.category, task.read_only, task.tier_override)
-        timeout = task.timeout_sec or self.dwr.default_timeout_for(task.category)
+        raw_timeout = task.timeout_sec if task.timeout_sec is not None else self.dwr.default_timeout_for(task.category)
+        timeout = max(MIN_AUDIT_TIMEOUT_SEC, float(raw_timeout))
 
         session_state, _ = self.session_manager.get_or_create_session(task.session_id, tier)
         resume_id = task.session_id if task.session_id else None
@@ -1924,7 +1929,7 @@ def run_empirical_audit(
     prompt: str,
     session_id: Optional[str] = None,
     cwd: Optional[str] = None,
-    timeout: int = 120,
+    timeout: int = 720,
     verbose: bool = True,
     category: AuditCategory = AuditCategory.BUG_REPRODUCE,
 ) -> Dict[str, Any]:
@@ -1977,7 +1982,12 @@ def main() -> int:
     )
     parser.add_argument("--session-id", default=None, help="Existing DSH session ID to resume")
     parser.add_argument("--cwd", default=None, help="Repository root directory")
-    parser.add_argument("--timeout", type=float, default=None, help="Execution timeout in seconds")
+    parser.add_argument(
+        "--timeout",
+        type=float,
+        default=None,
+        help=f"Execution timeout in seconds (enforced minimum {MIN_AUDIT_TIMEOUT_SEC:.0f}s)",
+    )
     parser.add_argument("--read-only", action="store_true", help="Enforce Tier 1 read-only mode")
     parser.add_argument(
         "--target-paths",

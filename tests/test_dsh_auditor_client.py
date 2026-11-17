@@ -518,6 +518,26 @@ def test_tier3_locked_worktree_registers_deferred_cleanup(repo_path):
     assert "dsh_shadow_locked|4242|locked_wt|" in dwr._deferred_file.read_text(encoding="utf-8")
 
 
+def test_audit_timeouts_always_exceed_600s(repo_path):
+    """All default category timeouts and execute_audit invocations must stay > 600s."""
+    from scripts.dsh_auditor import DynamicWorkspaceResolver, MIN_AUDIT_TIMEOUT_SEC
+
+    dwr = DynamicWorkspaceResolver(repo_root=repo_path, auto_sweep=False)
+    for cat in AuditCategory:
+        assert dwr.default_timeout_for(cat) > 600.0
+
+    seen = []
+    def capture(cmd_args, injected_prompt, cwd, timeout_sec, parser, env=None):
+        seen.append(timeout_sec)
+        return _make_parser_setter()(cmd_args, injected_prompt, cwd, timeout_sec, parser, env)
+
+    client = DSHAuditorClient(repo_root=repo_path, auto_sweep=False)
+    task = AuditTask(category=AuditCategory.STATIC_AUDIT, task_prompt="Audit", timeout_sec=120.0, read_only=True)
+    with patch("scripts.dsh_auditor.resolve_dsh_binary", _mock_resolve_binary), patch("scripts.dsh_auditor.execute_streaming_subprocess", side_effect=capture):
+        assert client.execute_audit(task).success is True
+    assert seen == [MIN_AUDIT_TIMEOUT_SEC] and seen[0] > 600.0
+
+
 
 
 
