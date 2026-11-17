@@ -307,8 +307,8 @@ def infer_domain_rules_and_mcp(target_tokens):
 
 
 def _enrich_pre_flight_with_graph(intent_text, workspace_dir, pre_flight):
-    """Fail-soft enrichment of Pre-Flight with Omni-Graph Code Topology (<1.5ms)."""
-    if not workspace_dir:
+    """Fail-soft enrichment of Pre-Flight with exact Omni-Graph Code Topology (<1.5ms)."""
+    if not workspace_dir or not intent_text:
         return
     try:
         from pathlib import Path
@@ -318,35 +318,70 @@ def _enrich_pre_flight_with_graph(intent_text, workspace_dir, pre_flight):
 
         import re
         from omni_graph.storage import get_connection
-        from omni_graph.traversal import compute_blast_radius
+        from omni_graph.traversal import compute_blast_radius, query_file_callers
 
         conn = get_connection(workspace_dir, read_only=True, timeout_ms=50)
-        words = re.findall(r"\b[A-Za-z_][A-Za-z0-9_]{3,}\b", intent_text)
-        checked_symbols = set()
-
-        for word in words:
-            if word in checked_symbols:
-                continue
-            checked_symbols.add(word)
-
+        try:
             cur = conn.cursor()
-            cur.execute("SELECT name, qualified_name, file_path FROM nodes WHERE name = ? OR qualified_name LIKE ? LIMIT 1", (word, f"%{word}%"))
-            node_row = cur.fetchone()
-            if node_row:
-                sym_name = node_row[0]
-                blast = compute_blast_radius(conn, sym_name, max_depth=3)
-                direct_callers = blast.get("direct_callers", [])
-                impacted_files = blast.get("impacted_files", [])
-                if direct_callers:
-                    caller_names = [c["source_id"].split(":")[-1] for c in direct_callers[:3]]
-                    pre_flight["du_completeness"].append(
-                        f"Omni-Graph Blast Radius: Modifying '{sym_name}' impacts {len(direct_callers)} caller(s) across {len(impacted_files)} file(s) ({', '.join(caller_names)}). Callers must be updated in lockstep."
-                    )
-                    pre_flight["hai_risks"].append(
-                        f"Omni-Graph Signature Guard: '{sym_name}' signature must remain backwards-compatible with callers in: {', '.join(impacted_files[:3])}."
-                    )
-                    break
-        conn.close()
+
+            # 1. File paths explicitly mentioned in the prompt
+            file_tokens = re.findall(
+                r"[A-Za-z0-9_.\-/\\]+\.(?:py|pyw|ts|tsx|js|jsx|mjs|cjs|go|rs)",
+                intent_text,
+            )
+            for ftok in file_tokens[:4]:
+                norm_f = ftok.replace("\\", "/").lstrip("./").lower()
+                cur.execute(
+                    "SELECT file_path FROM codebase_files_meta WHERE file_path = ? OR file_path LIKE ? LIMIT 1",
+                    (norm_f, f"%/{norm_f}"),
+                )
+                frow = cur.fetchone()
+                if frow:
+                    file_callers = query_file_callers(conn, frow[0], limit=3)
+                    if file_callers:
+                        parts = [
+                            f"{fc['symbol']} (called by {', '.join(list(dict.fromkeys(c['file_path'] for c in fc['callers']))[:3])})"
+                            for fc in file_callers
+                        ]
+                        pre_flight["du_completeness"].append(
+                            f"Omni-Graph File Impact ({frow[0]}): {'; '.join(parts)}."
+                        )
+                        return
+
+            # 2. Exact code identifiers (snake_case, CamelCase, or backticked `symbol`) — never prose stopwords
+            candidates: list[str] = []
+            candidates.extend(re.findall(r"`([A-Za-z_][A-Za-z0-9_.]{2,})`", intent_text))
+            for tok in re.findall(r"\b([A-Za-z_][A-Za-z0-9_]{3,})\b", intent_text):
+                if "_" in tok or (any(c.isupper() for c in tok[1:]) and any(c.islower() for c in tok)):
+                    candidates.append(tok)
+
+            seen = set()
+            for word in candidates:
+                if word in seen:
+                    continue
+                seen.add(word)
+                cur.execute(
+                    "SELECT name FROM nodes WHERE (name = ? OR qualified_name = ?) "
+                    "AND node_type IN ('function','async_function','method','async_method','class') LIMIT 1",
+                    (word, word),
+                )
+                node_row = cur.fetchone()
+                if node_row:
+                    sym_name = node_row[0]
+                    blast = compute_blast_radius(conn, sym_name, max_depth=3)
+                    direct_callers = blast.get("direct_callers", [])
+                    impacted_files = blast.get("impacted_files", [])
+                    if direct_callers:
+                        caller_names = [c["source_id"].split(":")[-1] for c in direct_callers[:3]]
+                        pre_flight["du_completeness"].append(
+                            f"Omni-Graph Blast Radius: Modifying '{sym_name}' impacts {len(direct_callers)} caller(s) across {len(impacted_files)} file(s) ({', '.join(caller_names)}). Callers must be updated in lockstep."
+                        )
+                        pre_flight["hai_risks"].append(
+                            f"Omni-Graph Signature Guard: '{sym_name}' signature must remain backwards-compatible with callers in: {', '.join(impacted_files[:3])}."
+                        )
+                        break
+        finally:
+            conn.close()
     except Exception:
         pass
 

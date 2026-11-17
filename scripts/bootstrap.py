@@ -27,6 +27,28 @@ from memory_utils import (
 from memory_schema import init_database, CURRENT_SCHEMA_VERSION
 
 
+def _sync_plugin_tree(src_root: Path, dest_root: Path) -> None:
+    """Syncs runtime scripts (including subdirs), hooks, rules, skills, and manifest to plugin dir."""
+    import shutil
+    for rel in ("hooks.json", "plugin.json"):
+        s = src_root / rel
+        if s.is_file():
+            (dest_root / rel).write_bytes(s.read_bytes())
+    scripts_src = src_root / "scripts"
+    scripts_dest = dest_root / "scripts"
+    for py_file in scripts_src.rglob("*.py"):
+        rel_p = py_file.relative_to(scripts_src)
+        if "__pycache__" in rel_p.parts:
+            continue
+        out_p = scripts_dest / rel_p
+        out_p.parent.mkdir(parents=True, exist_ok=True)
+        out_p.write_bytes(py_file.read_bytes())
+    for folder in ("rules", "skills"):
+        s_dir = src_root / folder
+        if s_dir.is_dir():
+            shutil.copytree(s_dir, dest_root / folder, dirs_exist_ok=True)
+
+
 def setup_plugin_link() -> bool:
     """Links or synchronizes this repository to the user's global Gemini plugins directory."""
     user_gemini_dir = Path.home() / ".gemini" / "config" / "plugins"
@@ -36,15 +58,10 @@ def setup_plugin_link() -> bool:
     print(f"[*] Configuring Global Plugin Link at: {plugin_dest}")
     if os.name == "nt":
         if plugin_dest.exists():
-            # If it's a junction or symlink pointing somewhere else, or normal directory
             print(f"  ✔ Target exists: {plugin_dest}")
-            # Ensure scripts are updated
-            scripts_dest = plugin_dest / "scripts"
-            scripts_dest.mkdir(parents=True, exist_ok=True)
-            for f in _CURRENT_DIR.glob("*.py"):
-                dest_f = scripts_dest / f.name
-                dest_f.write_bytes(f.read_bytes())
-            print(f"  ✔ Synchronized script files to active plugin runtime.")
+            if not plugin_dest.is_symlink() and plugin_dest.resolve() != _PROJECT_ROOT.resolve():
+                _sync_plugin_tree(_PROJECT_ROOT, plugin_dest)
+                print(f"  ✔ Synchronized runtime files to active plugin directory.")
             return True
         else:
             # Attempt directory junction (requires no admin privileges on Windows NTFS)
@@ -59,11 +76,8 @@ def setup_plugin_link() -> bool:
 
     # Fallback to copy sync
     plugin_dest.mkdir(parents=True, exist_ok=True)
-    scripts_dest = plugin_dest / "scripts"
-    scripts_dest.mkdir(parents=True, exist_ok=True)
-    for f in _CURRENT_DIR.glob("*.py"):
-        (scripts_dest / f.name).write_bytes(f.read_bytes())
-    print(f"  ✔ Synchronized scripts to {scripts_dest}")
+    _sync_plugin_tree(_PROJECT_ROOT, plugin_dest)
+    print(f"  ✔ Synchronized runtime files to {plugin_dest}")
     return True
 
 

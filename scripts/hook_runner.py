@@ -414,7 +414,7 @@ def verify_critic_artifact(workspace_dir: str, target_file: str = None, user_pro
     return best_verdict, best_meta
 
 
-def build_preflight_message(resolution: dict, gatekeeper_text: str = None, drift_text: str = None) -> str:
+def build_preflight_message(resolution: dict, gatekeeper_text: str = None, drift_text: str = None, graph_text: str = None) -> str:
     """Formats the cognitive pre-flight resolution into a clean, sanitized markdown block (VULN-004, VULN-202)."""
     lines = ["[OMNI-KERNEL v4.3 PRE-FLIGHT ACTIVATION]"]
     
@@ -529,6 +529,10 @@ def build_preflight_message(resolution: dict, gatekeeper_text: str = None, drift
         clean_gate = safe_field(gatekeeper_text, 1000, single_line=False)
         if clean_gate != "[BLOCKED_BY_POLICY]":
             lines.append(clean_gate)
+    if graph_text:
+        clean_graph = safe_field(graph_text, 1200, single_line=False)
+        if clean_graph != "[BLOCKED_BY_POLICY]":
+            lines.append(clean_graph)
     return "\n".join(lines)
 
 
@@ -565,28 +569,438 @@ GATEKEEPER_MUTATING_TOOLS = (
 )
 
 
+def _resolve_hook_workspace(payload: dict, target_path: str = "") -> str:
+    """Resolves canonical workspace directory from hook payload or target file path."""
+    target_str = str(target_path).strip()
+    target_parent = os.path.dirname(os.path.normpath(target_str)) if target_str and os.path.isabs(target_str) else ""
+
+    workspace_paths = payload.get("workspacePaths")
+    workspace_dir = None
+    if isinstance(workspace_paths, list) and workspace_paths and isinstance(workspace_paths[0], str) and workspace_paths[0].strip():
+        workspace_dir = os.path.realpath(os.path.normpath(workspace_paths[0].strip()))
+    elif isinstance(payload.get("workspacePath"), str) and payload["workspacePath"].strip():
+        workspace_dir = os.path.realpath(os.path.normpath(payload["workspacePath"].strip()))
+    elif target_parent and os.path.isdir(target_parent):
+        workspace_dir = os.path.realpath(target_parent)
+    elif isinstance(payload.get("cwd"), str) and payload["cwd"].strip():
+        workspace_dir = os.path.realpath(os.path.normpath(payload["cwd"].strip()))
+    if not workspace_dir or not os.path.isdir(workspace_dir):
+        workspace_dir = os.path.realpath(os.getcwd())
+    return workspace_dir
+
+
+def _maybe_sync_omni_graph(workspace_dir: str, force: bool = False) -> None:
+    """Non-blocking, debounced background cold-start and git/staleness sync for Omni-Graph."""
+    if os.environ.get("OMNI_READ_ONLY") == "1" or not workspace_dir or not os.path.isdir(workspace_dir):
+        return
+    try:
+        graph_script = os.path.join(_SCRIPT_DIR, "omni_graph.py")
+        if not os.path.isfile(graph_script):
+            return
+
+        db_path = os.path.join(workspace_dir, ".omni", "codebase_graph.db")
+        now = time.time()
+        needs_sync = force or (not os.path.isfile(db_path))
+        if not needs_sync:
+            db_mtime = os.path.getmtime(db_path)
+            if (now - db_mtime) >= 300.0:
+                needs_sync = True
+            else:
+                for git_probe in (
+                    os.path.join(workspace_dir, ".git", "index"),
+                    os.path.join(workspace_dir, ".git", "logs", "HEAD"),
+                ):
+                    if os.path.isfile(git_probe) and os.path.getmtime(git_probe) > db_mtime + 1.0:
+                        needs_sync = True
+                        break
+        if not needs_sync:
+            return
+
+        _ensure_runtime_deps()
+        ws_hash = canonical_workspace_hash(workspace_dir)
+        marker_path = os.path.join(_SCRIPT_DIR, f".omni_graph_scan.{ws_hash[:12]}.ts")
+        should_spawn = False
+        with TrustFileLock(marker_path + ".lock", timeout=0.02):
+            last_scan = 0.0
+            if os.path.isfile(marker_path):
+                try:
+                    with open(marker_path, "r", encoding="utf-8") as mf:
+                        last_scan = float(mf.read().strip())
+                except Exception:
+                    last_scan = 0.0
+            if now - last_scan >= 60.0:
+                should_spawn = True
+                with open(marker_path, "w", encoding="utf-8") as mf:
+                    mf.write(str(now))
+
+        if should_spawn:
+            cflags = 0
+            if os.name == "nt":
+                cflags = getattr(subprocess, "DETACHED_PROCESS", 0) | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+            subprocess.Popen(
+                [sys.executable, "-B", graph_script, "--workspace", workspace_dir, "--scan"],
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                close_fds=True,
+                creationflags=cflags,
+            )
+    except Exception as ex:
+        _safe_persist_diag(ex, 256)
+
+
+_MUTATING_MCP_TOOLS = frozenset({
+    "gemini_fast_edit",
+    "gemini_heavy_code_gen",
+    "gemini_generate_tests",
+    "gemini_autonomous_loop",
+    "gemini_execute_plan",
+})
+_JS_TS_EXTS = (".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs")
+
+
+def _extract_mcp_edit_info(tool_name: str, args: dict) -> Tuple[bool, str, Optional[str], str]:
+    """Returns (is_mutating, target_path, inline_code, mcp_tool_name) for native or MCP edit calls."""
+    if tool_name != "call_mcp_tool":
+        t_path = str(
+            args.get("Path")
+            or args.get("TargetFile")
+            or args.get("file_path")
+            or args.get("target_file")
+            or args.get("AbsolutePath")
+            or ""
+        ).strip()
+        return tool_name in GATEKEEPER_MUTATING_TOOLS, t_path, None, ""
+    mcp_tool = str(args.get("ToolName", "")).strip()
+    mcp_args = args.get("Arguments") if isinstance(args.get("Arguments"), dict) else {}
+    if mcp_tool not in _MUTATING_MCP_TOOLS or mcp_args.get("dry_run"):
+        return False, "", None, mcp_tool
+    t_path = str(
+        mcp_args.get("file_path")
+        or mcp_args.get("save_to_path")
+        or mcp_args.get("target_file")
+        or ""
+    ).strip()
+    inline_code = mcp_args.get("source_code") if isinstance(mcp_args.get("source_code"), str) else None
+    return True, t_path, inline_code, mcp_tool
+
+
+def _pre_tool_signature_guard(
+    workspace_dir: str,
+    tool_name: str,
+    args: dict,
+    target_path: str,
+    inline_code: Optional[str] = None,
+) -> Optional[str]:
+    """Blocks unambiguous Python & JS/TS call-site signature violations before writing to disk (<2ms)."""
+    if os.environ.get("OMNI_GRAPH_GUARD") == "0":
+        return None
+    try:
+        t_str = str(target_path or "").strip()
+        lower_t = t_str.lower()
+        is_py = lower_t.endswith((".py", ".pyw"))
+        is_js = lower_t.endswith(_JS_TS_EXTS)
+        if not t_str or (not is_py and not is_js):
+            return None
+        db_path = os.path.join(workspace_dir, ".omni", "codebase_graph.db")
+        if not os.path.isfile(db_path):
+            return None
+
+        candidate_code = inline_code
+        line_range = None
+        abs_target = t_str if os.path.isabs(t_str) else os.path.join(workspace_dir, t_str)
+
+        if candidate_code is None:
+            if tool_name in ("write_file", "write_to_file"):
+                candidate_code = args.get("Content") or args.get("CodeContent")
+            elif tool_name in ("edit_file", "replace_file_content"):
+                old_target = args.get("Target") if tool_name == "edit_file" else args.get("TargetContent")
+                rep_text = args.get("Replacement") if tool_name == "edit_file" else args.get("ReplacementContent")
+                if isinstance(old_target, str) and isinstance(rep_text, str) and os.path.isfile(abs_target):
+                    with open(abs_target, "r", encoding="utf-8", errors="replace") as f:
+                        orig = f.read()
+                    idx = orig.find(old_target)
+                    if idx != -1:
+                        start_ln = orig[:idx].count("\n") + 1
+                        end_ln = start_ln + rep_text.count("\n") + 1
+                        line_range = (start_ln, end_ln)
+                        candidate_code = orig[:idx] + rep_text + orig[idx + len(old_target):]
+
+        if not isinstance(candidate_code, str) or not candidate_code.strip():
+            return None
+
+        from omni_graph.storage import get_connection
+        from omni_graph.fingerprint import normalize_canonical_path
+        from omni_graph.validator import audit_python_calls, audit_js_ts_calls
+
+        canon, _ = normalize_canonical_path(workspace_dir, abs_target)
+        conn = get_connection(workspace_dir, read_only=True, timeout_ms=50)
+        try:
+            if is_py:
+                violations = audit_python_calls(conn, candidate_code, target_lines=line_range, exclude_file_path=canon)
+            else:
+                violations = audit_js_ts_calls(conn, candidate_code, target_lines=line_range, exclude_file_path=canon)
+        finally:
+            conn.close()
+
+        if not violations:
+            return None
+        v = violations[0]
+        hint = f" ({v['suggested_fix']})" if v.get("suggested_fix") else ""
+        return (
+            f"[Omni-Graph Signature Guard] {v['error_code']} calling '{v['symbol']}' "
+            f"(defined in {v['defined_in']}) at line {v['line']}: {v['message']}{hint}"
+        )
+    except Exception:
+        return None
+
+
+def _post_tool_graph_advisory(workspace_dir: str, target_path: str) -> None:
+    """Computes callers & signature drift after an edit and caches advisory for the next PreInvocation."""
+    if os.environ.get("OMNI_READ_ONLY") == "1" or not str(target_path).strip():
+        return
+    try:
+        db_path = os.path.join(workspace_dir, ".omni", "codebase_graph.db")
+        if not os.path.isfile(db_path):
+            return
+        from omni_graph.storage import get_connection
+        from omni_graph.fingerprint import normalize_canonical_path
+        from omni_graph.traversal import query_file_callers
+        from omni_graph.validator import audit_python_calls, audit_js_ts_calls, audit_callers_of_file
+
+        abs_target = target_path if os.path.isabs(target_path) else os.path.join(workspace_dir, target_path)
+        canon, display = normalize_canonical_path(workspace_dir, abs_target)
+
+        conn = get_connection(workspace_dir, read_only=True, timeout_ms=50)
+        try:
+            callers = query_file_callers(conn, canon, limit=5)
+            violations: List[Dict[str, Any]] = []
+            is_py = canon.endswith((".py", ".pyw"))
+            is_js = canon.endswith(_JS_TS_EXTS)
+            if (is_py or is_js) and os.path.isfile(abs_target):
+                with open(abs_target, "r", encoding="utf-8", errors="replace") as f:
+                    src = f.read()
+                local_hits = (
+                    audit_python_calls(conn, src, exclude_file_path=canon)[:3]
+                    if is_py
+                    else audit_js_ts_calls(conn, src, exclude_file_path=canon)[:3]
+                )
+                for v in local_hits:
+                    violations.append({
+                        "where": f"{display}:{v['line']}",
+                        "symbol": v["symbol"],
+                        "error_code": v["error_code"],
+                        "message": v["message"],
+                        "suggested_fix": v.get("suggested_fix"),
+                    })
+                for v in audit_callers_of_file(conn, canon, limit=3):
+                    violations.append({
+                        "where": f"{v['file_path']}:{v['line']}",
+                        "symbol": v["symbol"],
+                        "error_code": v["error_code"],
+                        "message": v["message"],
+                        "suggested_fix": v.get("suggested_fix"),
+                    })
+        finally:
+            conn.close()
+
+        if not callers and not violations:
+            return
+        adv_path = os.path.join(workspace_dir, ".omni", "last_graph_advisory.json")
+        os.makedirs(os.path.dirname(adv_path), exist_ok=True)
+        with open(adv_path, "w", encoding="utf-8") as af:
+            json.dump({
+                "timestamp": time.time(),
+                "file": display,
+                "callers": callers,
+                "violations": violations,
+            }, af, ensure_ascii=False)
+    except Exception:
+        pass
+
+
+def _build_active_graph_advisory(workspace_dir: str, transcript_path: Any) -> str:
+    """Builds concise caller/contract memory for recently touched/read files (<1.5ms)."""
+    try:
+        db_path = os.path.join(workspace_dir, ".omni", "codebase_graph.db")
+        if not os.path.isfile(db_path):
+            return ""
+
+        lines: List[str] = []
+        now = time.time()
+        adv_path = os.path.join(workspace_dir, ".omni", "last_graph_advisory.json")
+        advised_files = set()
+
+        if os.path.isfile(adv_path):
+            try:
+                with open(adv_path, "r", encoding="utf-8") as af:
+                    adv = json.load(af)
+                if now - float(adv.get("timestamp", 0)) < 120.0:
+                    f_disp = adv.get("file", "")
+                    if f_disp:
+                        advised_files.add(f_disp.replace("\\", "/").lower())
+                    for c in adv.get("callers", [])[:4]:
+                        c_locs = ", ".join(f"{x['file_path']}:{x['line_number']}" for x in c.get("callers", [])[:3])
+                        lines.append(f"  * Edited `{f_disp}` -> `{c['symbol']}` (L{c['line_number']}) called by: {c_locs}")
+                    for v in adv.get("violations", [])[:3]:
+                        hint = f" ({v['suggested_fix']})" if v.get("suggested_fix") else ""
+                        lines.append(f"  * [Contract Alert] `{v['where']}` calling `{v['symbol']}`: {v['error_code']} - {v['message']}{hint}")
+                if os.environ.get("OMNI_READ_ONLY") != "1":
+                    os.remove(adv_path)
+            except Exception:
+                pass
+
+        # Also inspect recently read/edited workspace files in transcript tail
+        if isinstance(transcript_path, str) and transcript_path.strip() and os.path.isfile(transcript_path.strip()):
+            try:
+                t_path = transcript_path.strip()
+                t_size = os.path.getsize(t_path)
+                with open(t_path, "rb") as tf:
+                    if t_size > 65536:
+                        tf.seek(t_size - 65536)
+                    tail = tf.read(65536).decode("utf-8", errors="replace")
+                raw_paths = re.findall(
+                    r'"(?:Path|TargetFile|AbsolutePath|file_path)"\s*:\s*"([^"\r\n]+?\.(?:py|pyw|ts|tsx|js|jsx|go|rs))"',
+                    tail,
+                )
+                if raw_paths:
+                    from omni_graph.storage import get_connection
+                    from omni_graph.fingerprint import normalize_canonical_path
+                    from omni_graph.traversal import query_file_callers
+
+                    ws_real = os.path.realpath(workspace_dir)
+                    recent_canons: List[Tuple[str, str]] = []
+                    for rp in reversed(raw_paths):
+                        clean_rp = rp.replace("\\\\", "\\").strip('"')
+                        if not os.path.isabs(clean_rp):
+                            clean_rp = os.path.join(ws_real, clean_rp)
+                        try:
+                            rp_real = os.path.realpath(clean_rp)
+                            if not rp_real.lower().startswith(ws_real.lower()):
+                                continue
+                        except OSError:
+                            continue
+                        canon, disp = normalize_canonical_path(ws_real, rp_real)
+                        if canon in advised_files or canon.startswith(("scratch/", ".omni/", ".agents/")):
+                            continue
+                        advised_files.add(canon)
+                        recent_canons.append((canon, disp))
+                        if len(recent_canons) >= 2:
+                            break
+
+                    if recent_canons:
+                        conn = get_connection(workspace_dir, read_only=True, timeout_ms=50)
+                        try:
+                            for canon, disp in recent_canons:
+                                for c in query_file_callers(conn, canon, limit=3):
+                                    c_locs = ", ".join(f"{x['file_path']}:{x['line_number']}" for x in c.get("callers", [])[:3])
+                                    lines.append(f"  * Active `{disp}` -> `{c['symbol']}` (L{c['line_number']}) called by: {c_locs}")
+                        finally:
+                            conn.close()
+            except Exception:
+                pass
+
+        if not lines:
+            return ""
+        return "\n🕸️ [OMNI-GRAPH ACTIVE TOPOLOGY (Caller & Contract Memory)]:\n" + "\n".join(lines[:8])
+    except Exception:
+        return ""
+
+
+def process_post_tool_use(payload: dict) -> dict:
+    """Self-healing PostToolUse micro-indexer for edited files (native & MCP); always returns {}."""
+    if os.environ.get("OMNI_READ_ONLY") == "1":
+        return {}
+    try:
+        tool_call = payload.get("toolCall") if isinstance(payload.get("toolCall"), dict) else {}
+        tool_name = str(tool_call.get("name", "")).strip()
+        args = tool_call.get("args") if isinstance(tool_call.get("args"), dict) else {}
+        is_mutating, target_path, _, mcp_tool = _extract_mcp_edit_info(tool_name, args)
+        if not is_mutating:
+            return {}
+
+        workspace_dir = _resolve_hook_workspace(payload, target_path)
+        db_exists = os.path.isfile(os.path.join(workspace_dir, ".omni", "codebase_graph.db"))
+        if target_path:
+            from omni_graph.self_healing import micro_index_file
+            micro_index_file(workspace_dir, target_path)
+            _post_tool_graph_advisory(workspace_dir, target_path)
+        if not db_exists or mcp_tool == "gemini_execute_plan":
+            _maybe_sync_omni_graph(workspace_dir, force=True)
+    except Exception as ex:
+        _safe_persist_diag(ex, 256)
+    return {}
+
+
+def _allow_pre_tool_use(
+    workspace_dir: str,
+    tool_name: str,
+    args: dict,
+    target_path: str,
+    inline_code: Optional[str],
+) -> dict:
+    """Allows tool execution, enriching instruction-based MCP worker calls with caller constraints."""
+    if tool_name != "call_mcp_tool" or inline_code is not None or not target_path:
+        return {"decision": "allow"}
+    try:
+        db_path = os.path.join(workspace_dir, ".omni", "codebase_graph.db")
+        if not os.path.isfile(db_path):
+            return {"decision": "allow"}
+        mcp_args = args.get("Arguments")
+        if not isinstance(mcp_args, dict):
+            return {"decision": "allow"}
+        prompt_key = "instruction" if isinstance(mcp_args.get("instruction"), str) else (
+            "task_description" if isinstance(mcp_args.get("task_description"), str) else None
+        )
+        if not prompt_key or "[Omni-Graph Constraints]" in mcp_args[prompt_key]:
+            return {"decision": "allow"}
+
+        from omni_graph.storage import get_connection
+        from omni_graph.fingerprint import normalize_canonical_path
+        from omni_graph.traversal import query_file_callers
+
+        abs_target = target_path if os.path.isabs(target_path) else os.path.join(workspace_dir, target_path)
+        canon, _ = normalize_canonical_path(workspace_dir, abs_target)
+        conn = get_connection(workspace_dir, read_only=True, timeout_ms=50)
+        try:
+            callers = query_file_callers(conn, canon, limit=3)
+        finally:
+            conn.close()
+        if not callers:
+            return {"decision": "allow"}
+
+        summary = "; ".join(
+            f"{c['symbol']} (called by {', '.join(list(dict.fromkeys(x['file_path'] for x in c['callers']))[:2])})"
+            for c in callers
+        )
+        new_mcp_args = dict(mcp_args)
+        new_mcp_args[prompt_key] = (
+            f"{mcp_args[prompt_key]}\n\n[Omni-Graph Constraints] Preserve signatures for existing callers: {summary}"
+        )
+        return {"decision": "allow", "overwrite": {"Arguments": new_mcp_args}}
+    except Exception:
+        return {"decision": "allow"}
+
+
 def process_pre_tool_use(payload: dict) -> dict:
-    """Zero-friction PreToolUse Plan Gate: never blocks medium tasks and auto-unlocks on plan/doc writes or fast-bypass."""
+    """Zero-friction PreToolUse Plan Gate + Omni-Graph Signature Guard."""
     try:
         tool_call = payload.get("toolCall") if isinstance(payload.get("toolCall"), dict) else {}
         tool_name = str(tool_call.get("name", "")).strip()
         args = tool_call.get("args") if isinstance(tool_call.get("args"), dict) else {}
 
-        target_path = args.get("Path") or args.get("TargetFile") or args.get("file_path") or args.get("target_file") or ""
-        target_parent = os.path.dirname(os.path.normpath(str(target_path).strip())) if str(target_path).strip() and os.path.isabs(str(target_path).strip()) else ""
+        is_mutating, target_path, inline_code, _ = _extract_mcp_edit_info(tool_name, args)
+        if tool_name == "call_mcp_tool" and not is_mutating:
+            return {"decision": "allow"}
 
-        workspace_paths = payload.get("workspacePaths")
-        workspace_dir = None
-        if isinstance(workspace_paths, list) and workspace_paths and isinstance(workspace_paths[0], str) and workspace_paths[0].strip():
-            workspace_dir = os.path.realpath(os.path.normpath(workspace_paths[0].strip()))
-        elif isinstance(payload.get("workspacePath"), str) and payload["workspacePath"].strip():
-            workspace_dir = os.path.realpath(os.path.normpath(payload["workspacePath"].strip()))
-        elif target_parent and os.path.isdir(target_parent):
-            workspace_dir = os.path.realpath(target_parent)
-        elif isinstance(payload.get("cwd"), str) and payload["cwd"].strip():
-            workspace_dir = os.path.realpath(os.path.normpath(payload["cwd"].strip()))
-        if not workspace_dir or not os.path.isdir(workspace_dir):
-            workspace_dir = os.path.realpath(os.getcwd())
+        workspace_dir = _resolve_hook_workspace(payload, target_path)
+
+        if is_mutating:
+            sig_err = _pre_tool_signature_guard(
+                workspace_dir, tool_name, args, target_path, inline_code=inline_code
+            )
+            if sig_err:
+                return {"decision": "deny", "reason": sig_err}
 
         unlock_marker = os.path.join(workspace_dir, ".omni", "plan_unlocked.json")
 
@@ -615,7 +1029,7 @@ def process_pre_tool_use(payload: dict) -> dict:
             or bool(re.search(r"(?:^|[._\-])(plan|spec|tasks|constitution)(?:$|[._\-])", base_target))
         ):
             _write_unlock(norm_target[-120:])
-            return {"decision": "allow"}
+            return _allow_pre_tool_use(workspace_dir, tool_name, args, target_path, inline_code)
 
         last_input = str(payload.get("lastUserInput") or payload.get("prompt") or "").strip()
         if len(last_input) > 2048:
@@ -680,7 +1094,7 @@ def process_pre_tool_use(payload: dict) -> dict:
         )
         if has_explicit_bypass or has_action_bypass:
             _write_unlock("bypass_keyword")
-            return {"decision": "allow"}
+            return _allow_pre_tool_use(workspace_dir, tool_name, args, target_path, inline_code)
 
         # Rule C: Active unlock marker, recent plan file (< 7200s), SDD repo dirs, or native exit_plan_mode hand-off
         now = time.time()
@@ -690,15 +1104,15 @@ def process_pre_tool_use(payload: dict) -> dict:
             os.path.join(workspace_dir, "plan.md"),
         ):
             if os.path.isfile(candidate) and (now - os.path.getmtime(candidate)) < 7200:
-                return {"decision": "allow"}
+                return _allow_pre_tool_use(workspace_dir, tool_name, args, target_path, inline_code)
 
         if _has_active_sdd_plan(workspace_dir, now):
             _write_unlock("sdd_active_plan")
-            return {"decision": "allow"}
+            return _allow_pre_tool_use(workspace_dir, tool_name, args, target_path, inline_code)
 
         if tail_text and re.search(r'"name"\s*:\s*"exit_plan_mode"', tail_text):
             _write_unlock("exit_plan_mode")
-            return {"decision": "allow"}
+            return _allow_pre_tool_use(workspace_dir, tool_name, args, target_path, inline_code)
 
         # Rule D: Warn-Once Auto-Unlock — only gate score >= 95 architectural intent once, then auto-unlock for next attempt
         from dual_tier import calculate_task_complexity
@@ -709,13 +1123,15 @@ def process_pre_tool_use(payload: dict) -> dict:
                 "decision": "deny",
                 "reason": "[Omni Plan Gate - Warn Once] High-complexity architectural task detected without an active plan. Consider creating plan.md or using gemini_execute_plan; subsequent edit is now auto-unlocked."
             }
-        return {"decision": "allow"}
+        return _allow_pre_tool_use(workspace_dir, tool_name, args, target_path, inline_code)
     except Exception:
         return {"decision": "allow"}
 
 
 def process_hook(payload: dict) -> dict:
     """Core hook processing logic with robust type coercion and schema validation (VULN-006)."""
+    if payload.get("hookEventName") == "PostToolUse":
+        return process_post_tool_use(payload)
     if payload.get("hookEventName") == "PreToolUse" or "toolCall" in payload:
         return process_pre_tool_use(payload)
     _ensure_runtime_deps()
@@ -949,7 +1365,9 @@ def process_hook(payload: dict) -> dict:
         except Exception as e:
             persist_diag(e, 256)
 
-    message_text = build_preflight_message(resolution, gatekeeper_text=gatekeeper_text, drift_text=drift_text)
+    _maybe_sync_omni_graph(workspace_dir)
+    graph_text = _build_active_graph_advisory(workspace_dir, payload.get("transcriptPath"))
+    message_text = build_preflight_message(resolution, gatekeeper_text=gatekeeper_text, drift_text=drift_text, graph_text=graph_text)
     
     return {
         "injectSteps": [

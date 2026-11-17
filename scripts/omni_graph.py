@@ -27,7 +27,7 @@ from omni_graph.storage import (
     batch_insert_edges,
     batch_insert_lifecycle_hooks,
 )
-from omni_graph.git_hygiene import ensure_git_hygiene
+from omni_graph.git_hygiene import ensure_git_hygiene, ensure_git_hooks
 from omni_graph.fingerprint import (
     detect_dirty_files,
     scan_workspace_files,
@@ -54,6 +54,7 @@ def _load_json(text: str):
 def scan_workspace(workspace_root: Path, force_full: bool = False) -> dict:
     start_time = time.time()
     ensure_git_hygiene(workspace_root)
+    ensure_git_hooks(workspace_root, Path(__file__).resolve())
 
     conn = get_connection(workspace_root)
     init_db(conn)
@@ -115,6 +116,8 @@ def scan_workspace(workspace_root: Path, force_full: bool = False) -> dict:
 
     clean_orphan_edges(conn)
     conn.commit()
+    if force_full:
+        conn.execute("VACUUM")
     conn.close()
 
     stats["elapsed_sec"] = time.time() - start_time

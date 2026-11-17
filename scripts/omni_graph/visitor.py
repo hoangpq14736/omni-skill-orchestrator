@@ -297,31 +297,376 @@ _JS_IMPORT_RE = re.compile(
     r"""(?m)^\s*import\s+(?:(?P<def>\w+)\s*,?\s*)?(?:\{\s*(?P<named>[^}]+)\s*\}\s*)?from\s+['"](?P<mod>[^'"]+)['"]|require\(\s*['"](?P<req_mod>[^'"]+)['"]\s*\)"""
 )
 _JS_FUNC_RE = re.compile(
-    r"""(?m)^\s*(?:export\s+)?(?:async\s+)?function\s+(?P<name>[A-Za-z0-9_$]+)\s*\((?P<params>[^)]*)\)"""
+    r"""(?m)^\s*(?:export\s+(?:default\s+)?)?(?:async\s+)?function\s+(?P<name>[A-Za-z0-9_$]+)\s*\((?P<params>[^)]*)\)(?:\s*:\s*[^{=]+)?(?:\s*=>|\s*\{)"""
 )
 _JS_ARROW_RE = re.compile(
-    r"""(?m)^\s*(?:export\s+)?(?:const|let|var)\s+(?P<name>[A-Za-z0-9_$]+)\s*=\s*(?:async\s*)?\((?P<params>[^)]*)\)\s*=>"""
+    r"""(?m)^\s*(?:export\s+)?(?:const|let|var)\s+(?P<name>[A-Za-z0-9_$]+)\s*=\s*(?:async\s*)?\((?P<params>[^)]*)\)(?:\s*:\s*[^{=]+)?\s*=>"""
 )
 _JS_CLASS_RE = re.compile(
-    r"""(?m)^\s*(?:export\s+)?class\s+(?P<name>[A-Za-z0-9_$]+)(?:\s+extends\s+(?P<base>[A-Za-z0-9_$.]+))?"""
+    r"""(?m)^\s*(?:export\s+(?:default\s+)?)?class\s+(?P<name>[A-Za-z0-9_$]+)(?:\s+extends\s+(?P<base>[A-Za-z0-9_$.]+))?"""
+)
+_JS_METHOD_RE = re.compile(
+    r"""(?m)^[ \t]+(?:(?:public|private|protected|static|async|readonly|override)\s+)*(?P<name>[A-Za-z0-9_$]+)\s*\((?P<params>[^)]*)\)(?:\s*:\s*[^{;]+)?\s*\{"""
+)
+_TS_IFACE_RE = re.compile(
+    r"""(?m)^\s*(?:export\s+(?:declare\s+)?)?(?:interface\s+(?P<iname>[A-Za-z0-9_$]+)(?:\s+extends\s+(?P<iext>[^{]+))?\s*\{|type\s+(?P<tname>[A-Za-z0-9_$]+)\s*=\s*\{)"""
+)
+_TS_DERIVED_TYPE_RE = re.compile(
+    r"""(?m)^\s*(?:export\s+)?type\s+(?P<name>[A-Za-z0-9_$]+)\s*=\s*(?:(?P<op>Pick|Omit)\s*<\s*(?P<base>[A-Za-z0-9_$]+)\s*,\s*(?P<keys>[^>]+)\s*>|(?P<inter>[A-Za-z0-9_$]+(?:\s*&\s*(?:[A-Za-z0-9_$]+|\{[^}]*\}))+))\s*;?"""
 )
 _JS_CALL_RE = re.compile(
     r"""\b(?P<callee>[A-Za-z0-9_$]+(?:\.[A-Za-z0-9_$]+)?)\s*\("""
 )
+
+def _split_js_args(text: str, track_generics: bool = False) -> List[str]:
+    """Split JS/TS parameter or argument string on top-level commas, respecting nesting and strings."""
+    parts = []
+    current = []
+    depth_paren = 0
+    depth_bracket = 0
+    depth_brace = 0
+    depth_angle = 0
+    in_single_str = False
+    in_double_str = False
+    in_backtick_str = False
+    escaped = False
+
+    i = 0
+    while i < len(text):
+        char = text[i]
+        if escaped:
+            current.append(char)
+            escaped = False
+            i += 1
+            continue
+
+        if char == '\\' and (in_single_str or in_double_str or in_backtick_str):
+            escaped = True
+            current.append(char)
+            i += 1
+            continue
+
+        if not in_single_str and not in_double_str and not in_backtick_str:
+            if char == "'":
+                in_single_str = True
+                current.append(char)
+            elif char == '"':
+                in_double_str = True
+                current.append(char)
+            elif char == '`':
+                in_backtick_str = True
+                current.append(char)
+            elif char == '(':
+                depth_paren += 1
+                current.append(char)
+            elif char == ')':
+                depth_paren = max(0, depth_paren - 1)
+                current.append(char)
+            elif char == '[':
+                depth_bracket += 1
+                current.append(char)
+            elif char == ']':
+                depth_bracket = max(0, depth_bracket - 1)
+                current.append(char)
+            elif char == '{':
+                depth_brace += 1
+                current.append(char)
+            elif char == '}':
+                depth_brace = max(0, depth_brace - 1)
+                current.append(char)
+            elif track_generics and char == '<':
+                depth_angle += 1
+                current.append(char)
+            elif track_generics and char == '>':
+                depth_angle = max(0, depth_angle - 1)
+                current.append(char)
+            elif char == ',' and depth_paren == 0 and depth_bracket == 0 and depth_brace == 0 and depth_angle == 0:
+                parts.append("".join(current).strip())
+                current = []
+                i += 1
+                continue
+            else:
+                current.append(char)
+        else:
+            if in_single_str and char == "'":
+                in_single_str = False
+            elif in_double_str and char == '"':
+                in_double_str = False
+            elif in_backtick_str and char == '`':
+                in_backtick_str = False
+            current.append(char)
+        i += 1
+
+    if current or not parts and text.strip():
+        parts.append("".join(current).strip())
+    return [p for p in parts if p]
+
+def _parse_js_ts_params(params_str: str) -> Tuple[List[str], int, Optional[str]]:
+    """Parse JS/TS parameter string into (pos_args, defaults_count, vararg)."""
+    pos_args: List[str] = []
+    defaults_count = 0
+    vararg: Optional[str] = None
+
+    raw_args = _split_js_args(params_str, track_generics=True)
+    for arg_str in raw_args:
+        if not arg_str:
+            continue
+        # Strip leading TS modifiers
+        clean_arg = arg_str
+        for mod in ("public ", "private ", "protected ", "readonly "):
+            if clean_arg.startswith(mod):
+                clean_arg = clean_arg[len(mod):].strip()
+
+        # Check rest/spread parameter
+        if clean_arg.startswith("..."):
+            rest_part = clean_arg[3:].strip()
+            # Strip type annotation if present
+            if ":" in rest_part:
+                rest_part = rest_part.split(":", 1)[0].strip()
+            vararg = rest_part or "args"
+            break
+
+        # Check optional or default value: has top-level '=' or '?' before ':'
+        is_optional = False
+        # To avoid false positives inside types/nesting, scan top-level or check parts
+        # A simple robust check: look for '=' or '?' outside of type annotations or split by ':'
+        # In JS/TS, default is `name = defaultVal`, optional is `name?: Type`
+        
+        # Let's check for '='
+        has_eq = "=" in clean_arg
+        has_q = "?" in clean_arg
+
+        # Distinguish '?' in ternary vs optional param name: optional param has '?' right after name or before ':'
+        # Let's inspect tokens or split by first colon or equals
+        name_part = clean_arg
+        if ":" in clean_arg:
+            parts_colon = clean_arg.split(":", 1)
+            name_part = parts_colon[0].strip()
+            # If '?' is in name_part (e.g. `param?`), it's optional
+            if "?" in name_part:
+                is_optional = True
+                name_part = name_part.replace("?", "").strip()
+        
+        if "=" in clean_arg:
+            # Default value present
+            parts_eq = clean_arg.split("=", 1)
+            lhs = parts_eq[0].strip()
+            if ":" in lhs:
+                lhs = lhs.split(":", 1)[0].strip()
+            if "?" in lhs:
+                is_optional = True
+                lhs = lhs.replace("?", "").strip()
+            name_part = lhs
+            is_optional = True
+
+        if has_q and not is_optional:
+            # Check if ? is part of optional parameter name
+            if "?" in name_part:
+                is_optional = True
+                name_part = name_part.replace("?", "").strip()
+
+        # Handle destructuring
+        if name_part.startswith("{") or name_part.startswith("["):
+            param_name = "_destructured"
+        else:
+            # Clean identifier
+            param_name = re.sub(r'[^A-Za-z0-9_$]', '', name_part)
+            if not param_name:
+                param_name = "arg"
+
+        if is_optional:
+            defaults_count += 1
+
+        pos_args.append(param_name)
+
+    return pos_args, defaults_count, vararg
+
+def _extract_js_call_args(source: str, open_paren_idx: int) -> Tuple[int, bool]:
+    """Scan from '(' to its matching ')' and return (count_non_spread, has_spread)."""
+    if open_paren_idx >= len(source) or source[open_paren_idx] != '(':
+        return 0, False
+
+    depth = 0
+    in_single_str = False
+    in_double_str = False
+    in_backtick_str = False
+    escaped = False
+
+    end_idx = open_paren_idx
+    for i in range(open_paren_idx, len(source)):
+        char = source[i]
+        if escaped:
+            escaped = False
+            continue
+        if char == '\\' and (in_single_str or in_double_str or in_backtick_str):
+            escaped = True
+            continue
+
+        if not in_single_str and not in_double_str and not in_backtick_str:
+            if char == "'":
+                in_single_str = True
+            elif char == '"':
+                in_double_str = True
+            elif char == '`':
+                in_backtick_str = True
+            elif char == '(':
+                depth += 1
+            elif char == ')':
+                depth -= 1
+                if depth == 0:
+                    end_idx = i
+                    break
+        else:
+            if in_single_str and char == "'":
+                in_single_str = False
+            elif in_double_str and char == '"':
+                in_double_str = False
+            elif in_backtick_str and char == '`':
+                in_backtick_str = False
+
+    inside = source[open_paren_idx + 1:end_idx]
+    args = _split_js_args(inside)
+    
+    count_non_spread = 0
+    has_spread = False
+    for arg in args:
+        if arg.startswith("..."):
+            has_spread = True
+        else:
+            count_non_spread += 1
+
+    return count_non_spread, has_spread
+
+def _strip_js_comments_and_strings(text: str, strip_strings: bool = False) -> str:
+    """Blanks JS/TS comments (and optionally string literals) while preserving line numbers and indices."""
+    out: List[str] = []
+    i, n = 0, len(text)
+    while i < n:
+        ch = text[i]
+        nxt = text[i + 1] if i + 1 < n else ""
+        if ch == "/" and nxt == "/":
+            while i < n and text[i] != "\n":
+                out.append(" ")
+                i += 1
+        elif ch == "/" and nxt == "*":
+            out.append("  ")
+            i += 2
+            while i < n:
+                if text[i] == "*" and i + 1 < n and text[i + 1] == "/":
+                    out.append("  ")
+                    i += 2
+                    break
+                out.append("\n" if text[i] == "\n" else " ")
+                i += 1
+        elif ch in ("'", '"', "`"):
+            quote = ch
+            out.append(ch)
+            i += 1
+            while i < n:
+                c = text[i]
+                if c == "\\" and i + 1 < n:
+                    out.append("\n" if text[i + 1] == "\n" else ("xx" if strip_strings else c + text[i + 1]))
+                    i += 2
+                    continue
+                if c == quote:
+                    out.append(c)
+                    i += 1
+                    break
+                out.append("\n" if c == "\n" else ("x" if strip_strings else c))
+                i += 1
+        else:
+            out.append(ch)
+            i += 1
+    return "".join(out)
+
+
+def _extract_ts_object_type_fields(body: str) -> Tuple[List[str], List[bool]]:
+    """Extracts top-level field names and optionality flags from a TS `{ k: T; k2?: U }` body."""
+    keys: List[str] = []
+    opts: List[bool] = []
+    depth = 0
+    buf: List[str] = []
+    segments: List[str] = []
+    for ch in body:
+        if ch in "({[":
+            depth += 1
+        elif ch in ")}]":
+            depth = max(0, depth - 1)
+        if depth == 0 and ch in (";", ",", "\n"):
+            seg = "".join(buf).strip()
+            if seg:
+                segments.append(seg)
+            buf = []
+        else:
+            buf.append(ch)
+    if buf:
+        seg = "".join(buf).strip()
+        if seg:
+            segments.append(seg)
+    for seg in segments:
+        m = re.match(r"^(?:readonly\s+)?(?P<k>[A-Za-z_$][A-Za-z0-9_$]*)(?P<opt>\??)\s*:", seg)
+        if m:
+            keys.append(m.group("k"))
+            opts.append(m.group("opt") == "?")
+    return keys, opts
+
+
+def _extract_js_object_param_spec(params_str: str) -> Tuple[List[str], List[bool], Optional[str]]:
+    """Extracts destructured/inline-typed object keys or `__ts_type__:Name` ref for single-object params."""
+    raw = _split_js_args(params_str, track_generics=True)
+    if len(raw) != 1:
+        return [], [], None
+    one = raw[0].strip()
+    if one.startswith("{"):
+        end_b = one.find("}")
+        if end_b <= 1:
+            return [], [], None
+        keys: List[str] = []
+        for item in _split_js_args(one[1:end_b], track_generics=True):
+            k = item.split("=", 1)[0].split(":", 1)[0].strip()
+            if k and not k.startswith("...") and re.match(r"^[A-Za-z_$][A-Za-z0-9_$]*$", k):
+                keys.append(k)
+        return keys, [True] * len(keys), None
+    if ":" in one and not one.startswith("..."):
+        type_part = one.split(":", 1)[1].split("=", 1)[0].strip()
+        if type_part.startswith("{") and type_part.endswith("}"):
+            keys, opts = _extract_ts_object_type_fields(type_part[1:-1])
+            return keys, opts, None
+        m_ref = re.match(r"^([A-Za-z_$][A-Za-z0-9_$]*)$", type_part)
+        if m_ref and m_ref.group(1) not in ("string", "number", "boolean", "any", "unknown", "object", "void", "never"):
+            return [], [], f"__ts_type__:{m_ref.group(1)}"
+    return [], [], None
+
+
+def _find_matching_brace(text: str, open_idx: int) -> int:
+    depth = 0
+    for i in range(open_idx, len(text)):
+        if text[i] == "{":
+            depth += 1
+        elif text[i] == "}":
+            depth -= 1
+            if depth == 0:
+                return i
+    return len(text) - 1
+
 
 def parse_js_ts_file(
     canonical_file_path: str,
     display_path: str,
     abs_path: str,
 ) -> Tuple[List[Tuple], List[Tuple], List[Tuple], List[Tuple], str, Optional[str]]:
-    """Parse JS/TS/JSX/TSX files for modules, classes, functions, and imports."""
+    """Parse JS/TS/JSX/TSX files for modules, classes, methods, functions, signatures, and imports."""
     try:
         with open(abs_path, "r", encoding="utf-8", errors="replace") as f:
-            source = f.read()
+            raw_source = f.read()
     except Exception as exc:
         return [], [], [], [], "SKIPPED", str(exc)
 
+    source = _strip_js_comments_and_strings(raw_source, strip_strings=False)
+    call_source = _strip_js_comments_and_strings(raw_source, strip_strings=True)
+
     nodes: List[Tuple] = []
+    signatures: List[Tuple] = []
     edges: List[Tuple] = []
     file_stem = Path(canonical_file_path).stem
     module_id = f"{canonical_file_path}:module"
@@ -339,7 +684,100 @@ def parse_js_ts_file(
         1,
     ))
 
-    # Classes
+    decl_spans: List[Tuple[int, int]] = []
+    decl_lines: set[int] = set()
+    _JS_METHOD_SKIP = frozenset({"constructor", "if", "for", "while", "switch", "catch", "return", "super"})
+
+    # TypeScript Interfaces & Object Type Aliases (supports extends, Pick, Omit, &)
+    seen_ifaces: set[str] = set()
+    for tm in _TS_IFACE_RE.finditer(source):
+        tname = tm.group("iname") or tm.group("tname")
+        iext = (tm.group("iext") or "").strip()
+        open_b = tm.end() - 1
+        end_b = _find_matching_brace(source, open_b)
+        keys, opts = _extract_ts_object_type_fields(source[open_b + 1:end_b])
+        parents = [p.strip().split("<")[0].strip() for p in iext.split(",") if p.strip()]
+        if not keys and not parents:
+            continue
+        t_lineno = source[:tm.start()].count("\n") + 1
+        iface_id = f"{canonical_file_path}:{tname}"
+        seen_ifaces.add(tname)
+        nodes.append((
+            iface_id,
+            tname,
+            tname,
+            canonical_file_path,
+            display_path,
+            t_lineno,
+            t_lineno,
+            "interface",
+            None,
+            1,
+        ))
+        signatures.append((
+            iface_id,
+            canonical_file_path,
+            json.dumps([]),
+            json.dumps([]),
+            0,
+            None,
+            json.dumps(keys),
+            json.dumps(opts),
+            None,
+            None,
+        ))
+        for parent_name in parents:
+            if parent_name:
+                edges.append((
+                    iface_id,
+                    parent_name,
+                    "inherits",
+                    canonical_file_path,
+                    t_lineno,
+                    0,
+                    None,
+                    json.dumps([]),
+                    0,
+                    0,
+                    0,
+                ))
+
+    for dm in _TS_DERIVED_TYPE_RE.finditer(source):
+        tname = dm.group("name")
+        if tname in seen_ifaces:
+            continue
+        t_lineno = source[:dm.start()].count("\n") + 1
+        iface_id = f"{canonical_file_path}:{tname}"
+        op = dm.group("op")
+        if op in ("Pick", "Omit"):
+            base_name = dm.group("base")
+            key_list = re.findall(r"""['"]([A-Za-z_$][A-Za-z0-9_$]*)['"]""", dm.group("keys") or "")
+            if not key_list:
+                continue
+            tag = f"__ts_{op.lower()}__:{base_name}:{','.join(key_list)}"
+            nodes.append((iface_id, tname, tname, canonical_file_path, display_path, t_lineno, t_lineno, "interface", None, 1))
+            signatures.append((iface_id, canonical_file_path, json.dumps([]), json.dumps([]), 0, None, json.dumps([]), json.dumps([]), tag, None))
+        elif dm.group("inter"):
+            inter_str = dm.group("inter")
+            parents: List[str] = []
+            keys: List[str] = []
+            opts: List[bool] = []
+            for part in inter_str.split("&"):
+                part = part.strip()
+                if part.startswith("{") and part.endswith("}"):
+                    ik, io = _extract_ts_object_type_fields(part[1:-1])
+                    keys.extend(ik)
+                    opts.extend(io)
+                elif re.match(r"^[A-Za-z_$][A-Za-z0-9_$]*$", part):
+                    parents.append(part)
+            if not parents and not keys:
+                continue
+            nodes.append((iface_id, tname, tname, canonical_file_path, display_path, t_lineno, t_lineno, "interface", None, 1))
+            signatures.append((iface_id, canonical_file_path, json.dumps([]), json.dumps([]), 0, None, json.dumps(keys), json.dumps(opts), None, None))
+            for parent_name in parents:
+                edges.append((iface_id, parent_name, "inherits", canonical_file_path, t_lineno, 0, None, json.dumps([]), 0, 0, 0))
+
+    # Classes & Class Methods
     for m in _JS_CLASS_RE.finditer(source):
         name = m.group("name")
         base = m.group("base")
@@ -371,12 +809,63 @@ def parse_js_ts_file(
                 0,
                 0,
             ))
+        brace_idx = source.find("{", m.end())
+        if brace_idx != -1:
+            end_brace = _find_matching_brace(source, brace_idx)
+            class_body = source[brace_idx + 1:end_brace]
+            for mm in _JS_METHOD_RE.finditer(class_body):
+                m_name = mm.group("name")
+                if m_name in _JS_METHOD_SKIP:
+                    continue
+                abs_start = brace_idx + 1 + mm.start()
+                abs_end = brace_idx + 1 + mm.end()
+                m_lineno = source[:abs_start].count("\n") + 1
+                m_end_ln = source[:abs_end].count("\n") + 1
+                decl_spans.append((abs_start, abs_end))
+                for ln in range(m_lineno, m_end_ln + 1):
+                    decl_lines.add(ln)
+                qname = f"{name}.{m_name}"
+                meth_id = f"{canonical_file_path}:{qname}"
+                nodes.append((
+                    meth_id,
+                    m_name,
+                    qname,
+                    canonical_file_path,
+                    display_path,
+                    m_lineno,
+                    m_lineno,
+                    "method",
+                    None,
+                    1,
+                ))
+                params_str = mm.group("params")
+                pos_args, defaults_count, vararg = _parse_js_ts_params(params_str)
+                kw_keys, kw_opts, kw_ref = _extract_js_object_param_spec(params_str)
+                signatures.append((
+                    meth_id,
+                    canonical_file_path,
+                    json.dumps([]),
+                    json.dumps(pos_args),
+                    defaults_count,
+                    vararg,
+                    json.dumps(kw_keys),
+                    json.dumps(kw_opts),
+                    kw_ref,
+                    None,
+                ))
 
     # Functions & Arrow Functions
     for pattern, ntype in ((_JS_FUNC_RE, "function"), (_JS_ARROW_RE, "function")):
         for m in pattern.finditer(source):
             name = m.group("name")
-            lineno = source[:m.start()].count("\n") + 1
+            start_idx = m.start()
+            end_idx = m.end()
+            lineno = source[:start_idx].count("\n") + 1
+            end_lineno = source[:end_idx].count("\n") + 1
+            decl_spans.append((start_idx, end_idx))
+            for ln in range(lineno, end_lineno + 1):
+                decl_lines.add(ln)
+
             func_id = f"{canonical_file_path}:{name}"
             nodes.append((
                 func_id,
@@ -389,6 +878,22 @@ def parse_js_ts_file(
                 ntype,
                 None,
                 1,
+            ))
+
+            params_str = m.group("params")
+            pos_args, defaults_count, vararg = _parse_js_ts_params(params_str)
+            kw_keys, kw_opts, kw_ref = _extract_js_object_param_spec(params_str)
+            signatures.append((
+                func_id,
+                canonical_file_path,
+                json.dumps([]),
+                json.dumps(pos_args),
+                defaults_count,
+                vararg,
+                json.dumps(kw_keys),
+                json.dumps(kw_opts),
+                kw_ref,
+                None,
             ))
 
     # Imports
@@ -409,12 +914,23 @@ def parse_js_ts_file(
             0,
         ))
 
-    # Top calls
-    for m in _JS_CALL_RE.finditer(source):
+    # Top calls (from comment- and string-stripped source to avoid false call edges inside strings)
+    for m in _JS_CALL_RE.finditer(call_source):
         callee = m.group("callee")
-        if callee in ("if", "for", "while", "switch", "catch", "function", "return"):
+        if callee in ("if", "for", "while", "switch", "catch", "function", "return", "constructor", "super", "import", "require"):
             continue
-        lineno = source[:m.start()].count("\n") + 1
+
+        lineno = call_source[:m.start()].count("\n") + 1
+        if lineno in decl_lines:
+            in_decl = False
+            for start_s, end_s in decl_spans:
+                if start_s <= m.start() <= end_s:
+                    in_decl = True
+                    break
+            if in_decl:
+                continue
+
+        arg_cnt, has_splat = _extract_js_call_args(call_source, m.end() - 1)
         edges.append((
             module_id,
             callee,
@@ -422,14 +938,14 @@ def parse_js_ts_file(
             canonical_file_path,
             lineno,
             0,
-            0,
+            arg_cnt,
             json.dumps([]),
-            0,
+            int(has_splat),
             0,
             0,
         ))
 
-    return nodes, [], edges, [], "SUCCESS", None
+    return nodes, signatures, edges, [], "SUCCESS", None
 
 # --------------------------------------------------------------------------- #
 # 3. Go Extractor

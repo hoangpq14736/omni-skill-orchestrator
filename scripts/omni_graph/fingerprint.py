@@ -11,6 +11,7 @@ import sqlite3
 DEFAULT_EXCLUDE_DIRS = {
     ".git",
     ".omni",
+    ".agents",
     ".venv",
     "venv",
     "__pycache__",
@@ -20,6 +21,10 @@ DEFAULT_EXCLUDE_DIRS = {
     "build",
     "dist",
     ".pytest_cache",
+    ".mypy_cache",
+    ".ruff_cache",
+    ".tox",
+    "scratch",
 }
 MAX_FILE_SIZE = 2 * 1024 * 1024  # 2 MiB
 _READ_CHUNK = 64 * 1024  # 64 KiB
@@ -98,7 +103,7 @@ def scan_workspace_files(
 def detect_dirty_files(
     conn: sqlite3.Connection,
     workspace_root: Path | str,
-    extensions: Iterable[str] = (".py",),
+    extensions: Iterable[str] = DEFAULT_SUPPORTED_EXTENSIONS,
 ) -> Dict[str, Any]:
     root = Path(workspace_root).resolve()
 
