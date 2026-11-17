@@ -743,3 +743,67 @@ def test_ts_extends_pick_omit_and_intersection(tmp_path, monkeypatch):
         },
     })
     assert ok["decision"] == "allow"
+
+
+def test_dsh_audit_regressions(tmp_path, monkeypatch):
+    from omni_graph.git_hygiene import ensure_git_hygiene
+    monkeypatch.delenv("OMNI_READ_ONLY", raising=False)
+
+    # 1. Non-UTF-8 / binary .gitignore and .git/hooks do not crash + hooks use LF
+    (tmp_path / ".gitignore").write_bytes(b"\xff\xfe# non-utf8\n")
+    assert ensure_git_hygiene(tmp_path) is True
+    (tmp_path / ".gitignore").write_bytes(b"\xff\xfe\x00binary")
+    assert ensure_git_hygiene(tmp_path) is False
+    hooks_dir = tmp_path / ".git" / "hooks"
+    hooks_dir.mkdir(parents=True)
+    (hooks_dir / "post-commit").write_bytes(b"\xff\xfe\x00binary")
+    assert ensure_git_hooks(tmp_path) is True
+    assert b"\r\n" not in (hooks_dir / "post-merge").read_bytes()
+
+    # 2. Transitive blast radius depth >= 2 (d -> b -> c)
+    (tmp_path / "a.py").write_text("def c():\n    return 1\n", encoding="utf-8")
+    (tmp_path / "b.py").write_text("from a import c\n\ndef b():\n    return c()\n", encoding="utf-8")
+    (tmp_path / "d.py").write_text("from b import b\n\ndef d():\n    return b()\n", encoding="utf-8")
+    for f in ("a.py", "b.py", "d.py"):
+        micro_index_file(tmp_path, f)
+    conn = get_connection(tmp_path, read_only=True)
+    try:
+        blast = compute_blast_radius(conn, "c", max_depth=4)
+        assert any(x["source_id"] == "d.py:d" and x["depth"] == 2 for x in blast["transitive_callers"])
+    finally:
+        conn.close()
+
+    # 3. Unrelated attribute receiver (.acquire / .add) has zero false positives
+    (tmp_path / "lock_mgr.py").write_text("class LockMgr:\n    def acquire(self, session_id: str):\n        return True\n", encoding="utf-8")
+    micro_index_file(tmp_path, "lock_mgr.py")
+    conn = get_connection(tmp_path, read_only=True)
+    try:
+        assert audit_python_calls(conn, "def work(self):\n    return self._lock.acquire(timeout=1)\n") == []
+    finally:
+        conn.close()
+
+    # 4. TS destructured rest ({ a, ...rest }), destructured inline type required key, & audit_callers_of_file
+    (tmp_path / "lib.ts").write_text(
+        "export interface Props { id: string; name: string; }\n"
+        "export function withRest({ a, ...rest }: { a: number; [k: string]: any }) { return a; }\n"
+        "export function bootInline({ serverId, ram }: { serverId: string; ram?: string }) { return serverId; }\n"
+        "export function typedApi(opts: Props) { return opts; }\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "caller.ts").write_text(
+        "import { withRest, typedApi } from './lib';\n"
+        "withRest({ a: 1, extraKey: 2 });\n"
+        "typedApi({ id: '1', bogus: 2 });\n",
+        encoding="utf-8",
+    )
+    micro_index_file(tmp_path, "lib.ts")
+    micro_index_file(tmp_path, "caller.ts")
+    conn = get_connection(tmp_path, read_only=True)
+    try:
+        assert audit_js_ts_calls(conn, "import { withRest } from './lib';\nwithRest({ a: 1, extraKey: 2 });\n") == []
+        inline_err = audit_js_ts_calls(conn, "import { bootInline } from './lib';\nbootInline({ ram: '4G' });\n")
+        assert any(e["error_code"] == "MISSING_REQUIRED_KWONLY_ARG" for e in inline_err)
+        caller_errs = audit_callers_of_file(conn, "lib.ts")
+        assert any(e["file_path"] == "caller.ts" and e["error_code"] == "UNEXPECTED_KEYWORD_ARG" for e in caller_errs)
+    finally:
+        conn.close()

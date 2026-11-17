@@ -33,11 +33,14 @@ def ensure_git_hygiene(workspace_root: Union[str, Path]) -> bool:
             )
             return True
 
-        lines = gitignore.read_text(encoding="utf-8").splitlines()
+        raw_gi = gitignore.read_bytes()
+        if b"\x00" in raw_gi:
+            return False
+        lines = raw_gi.decode("utf-8", errors="replace").splitlines()
         if any(line_matches(l) for l in lines):
             return False
 
-        with gitignore.open("a", encoding="utf-8") as f:
+        with gitignore.open("a", encoding="utf-8", newline="\n") as f:
             f.write(f"\n# Omni-Kernel workspace artifacts\n{entry}\n")
         return True
 
@@ -98,19 +101,24 @@ def ensure_git_hooks(workspace_root: Union[str, Path], omni_graph_script: Union[
             block = f"# OMNI-GRAPH-HOOK-START\n{command_body}\n# OMNI-GRAPH-HOOK-END\n"
 
             if hook_file.exists():
-                content = hook_file.read_text(encoding="utf-8")
+                raw_hk = hook_file.read_bytes()
+                if b"\x00" in raw_hk:
+                    continue
+                content = raw_hk.decode("utf-8", errors="replace").replace("\r\n", "\n")
                 if "# OMNI-GRAPH-HOOK-START" in content:
                     continue
-                
-                # Append to existing hook
+
+                # Append to existing hook with LF line endings
                 new_content = content if content.endswith("\n") else content + "\n"
                 new_content += "\n" + block
-                hook_file.write_text(new_content, encoding="utf-8")
+                with hook_file.open("w", encoding="utf-8", newline="\n") as hf:
+                    hf.write(new_content)
                 updated_any = True
             else:
-                # Create new hook file
+                # Create new hook file with LF line endings
                 new_content = "#!/bin/sh\n\n" + block
-                hook_file.write_text(new_content, encoding="utf-8")
+                with hook_file.open("w", encoding="utf-8", newline="\n") as hf:
+                    hf.write(new_content)
                 updated_any = True
 
             # Ensure chmod +x (0o755)

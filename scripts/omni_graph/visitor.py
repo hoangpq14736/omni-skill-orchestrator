@@ -611,6 +611,37 @@ def _extract_ts_object_type_fields(body: str) -> Tuple[List[str], List[bool]]:
     return keys, opts
 
 
+def _extract_js_call_obj_keys(source: str, open_paren_idx: int) -> Tuple[List[str], bool]:
+    """If a JS/TS call passes a single `{ k1, k2: v }` object literal, returns (keys, has_spread)."""
+    if open_paren_idx >= len(source) or source[open_paren_idx] != "(":
+        return [], False
+    depth = 0
+    end_idx = open_paren_idx
+    for i in range(open_paren_idx, len(source)):
+        if source[i] == "(":
+            depth += 1
+        elif source[i] == ")":
+            depth -= 1
+            if depth == 0:
+                end_idx = i
+                break
+    inside = source[open_paren_idx + 1:end_idx].strip()
+    args = _split_js_args(inside, track_generics=False)
+    if len(args) != 1 or not args[0].startswith("{") or not args[0].endswith("}"):
+        return [], False
+    body = args[0][1:-1].strip()
+    keys: List[str] = []
+    has_spread = False
+    for item in _split_js_args(body, track_generics=False):
+        if item.startswith("..."):
+            has_spread = True
+            continue
+        k = item.split(":", 1)[0].strip()
+        if re.match(r"^[A-Za-z_$][A-Za-z0-9_$]*$", k):
+            keys.append(k)
+    return keys, has_spread
+
+
 def _extract_js_object_param_spec(params_str: str) -> Tuple[List[str], List[bool], Optional[str]]:
     """Extracts destructured/inline-typed object keys or `__ts_type__:Name` ref for single-object params."""
     raw = _split_js_args(params_str, track_generics=True)
@@ -622,11 +653,31 @@ def _extract_js_object_param_spec(params_str: str) -> Tuple[List[str], List[bool
         if end_b <= 1:
             return [], [], None
         keys: List[str] = []
+        has_default: Dict[str, bool] = {}
+        rest_name: Optional[str] = None
         for item in _split_js_args(one[1:end_b], track_generics=True):
-            k = item.split("=", 1)[0].split(":", 1)[0].strip()
-            if k and not k.startswith("...") and re.match(r"^[A-Za-z_$][A-Za-z0-9_$]*$", k):
+            s_item = item.strip()
+            if s_item.startswith("..."):
+                rest_name = re.sub(r"[^A-Za-z0-9_$]", "", s_item[3:].split(":", 1)[0]) or "rest"
+                continue
+            has_def = "=" in s_item
+            k = s_item.split("=", 1)[0].split(":", 1)[0].strip()
+            if k and re.match(r"^[A-Za-z_$][A-Za-z0-9_$]*$", k):
                 keys.append(k)
-        return keys, [True] * len(keys), None
+                has_default[k] = has_def
+
+        after_brace = one[end_b + 1:].split("=", 1)[0].strip()
+        if after_brace.startswith(":"):
+            type_part = after_brace[1:].strip()
+            if type_part.startswith("{") and type_part.endswith("}"):
+                tkeys, topts = _extract_ts_object_type_fields(type_part[1:-1])
+                opt_map = dict(zip(tkeys, topts))
+                opts = [has_default.get(k, False) or opt_map.get(k, False) for k in keys]
+                return keys, opts, rest_name
+            m_ref = re.match(r"^([A-Za-z_$][A-Za-z0-9_$]*)$", type_part)
+            if m_ref and not rest_name and m_ref.group(1) not in ("any", "unknown", "object"):
+                return [], [], f"__ts_type__:{m_ref.group(1)}"
+        return keys, [True] * len(keys), rest_name
     if ":" in one and not one.startswith("..."):
         type_part = one.split(":", 1)[1].split("=", 1)[0].strip()
         if type_part.startswith("{") and type_part.endswith("}"):
@@ -931,6 +982,7 @@ def parse_js_ts_file(
                 continue
 
         arg_cnt, has_splat = _extract_js_call_args(call_source, m.end() - 1)
+        obj_keys, obj_spread = _extract_js_call_obj_keys(call_source, m.end() - 1)
         edges.append((
             module_id,
             callee,
@@ -939,9 +991,9 @@ def parse_js_ts_file(
             lineno,
             0,
             arg_cnt,
-            json.dumps([]),
+            json.dumps(obj_keys),
             int(has_splat),
-            0,
+            int(obj_spread),
             0,
         ))
 

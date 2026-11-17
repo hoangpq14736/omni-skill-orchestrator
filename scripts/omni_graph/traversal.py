@@ -27,7 +27,18 @@ class BlastRadiusEngine:
             ct.depth + 1,
             ct.path_tokens || e.source_id || '|'
         FROM edges e
-        JOIN caller_tree ct ON e.target_id = ct.source_id
+        JOIN caller_tree ct ON (
+            e.target_id = ct.source_id
+            OR (
+                instr(ct.source_id, ':') > 0
+                AND instr(ct.source_id, ':module') = 0
+                AND instr(ct.source_id, ':package') = 0
+                AND (
+                    e.target_id = substr(ct.source_id, instr(ct.source_id, ':') + 1)
+                    OR e.target_id LIKE '%.' || substr(ct.source_id, instr(ct.source_id, ':') + 1)
+                )
+            )
+        )
         WHERE ct.depth < ?
           AND instr(ct.path_tokens, '|' || e.source_id || '|') = 0
           AND e.relation_type IN ('calls', 'imports')

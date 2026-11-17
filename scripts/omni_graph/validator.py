@@ -315,6 +315,7 @@ def audit_python_calls(
             continue
 
         rows = []
+        matched_qualified = False
         if dotted:
             cur.execute(
                 "SELECT s.node_id, n.node_type, s.posonly_args, s.args, s.defaults_count, "
@@ -323,7 +324,8 @@ def audit_python_calls(
                 "WHERE n.qualified_name = ? LIMIT 10",
                 (dotted,),
             )
-            rows = cur.fetchall()
+            rows = [r for r in cur.fetchall() if (r[9] or "").lower().endswith((".py", ".pyw"))]
+            matched_qualified = bool(rows)
         if not rows:
             cur.execute(
                 "SELECT s.node_id, n.node_type, s.posonly_args, s.args, s.defaults_count, "
@@ -332,7 +334,16 @@ def audit_python_calls(
                 "WHERE n.name = ? LIMIT 10",
                 (sym,),
             )
-            rows = cur.fetchall()
+            rows = [r for r in cur.fetchall() if (r[9] or "").lower().endswith((".py", ".pyw"))]
+            # Unqualified attribute receiver (e.g. self._lock.acquire) must not collide with unrelated class methods
+            if isinstance(node.func, ast.Attribute) and not matched_qualified:
+                base_id = node.func.value.id if isinstance(node.func.value, ast.Name) else ""
+                mod_hints = import_map.get(base_id) or ()
+                rows = [
+                    r for r in rows
+                    if r[1] in ("function", "async_function")
+                    or any((r[9] or "").replace("\\", "/").lower().endswith(h.lower()) for h in mod_hints)
+                ]
 
         if len(rows) > 1:
             base_sym = dotted.split(".")[0] if dotted else sym
@@ -419,6 +430,17 @@ def audit_callers_of_file(
         cur.execute("SELECT COUNT(*) FROM nodes WHERE name = ?", (name,))
         is_unique = cur.fetchone()[0] == 1
         sig_data = _row_to_sig_data(row)
+        kw_args_defined = sig_data.get("kwonly_args") or []
+        kw_defs_defined = sig_data.get("kw_defaults") or []
+        is_ts_file = norm.endswith(_JS_TS_EXTS)
+        ts_rest_kwarg = None
+        if is_ts_file:
+            kw_tag = sig_data.get("kwarg") or ""
+            if isinstance(kw_tag, str) and kw_tag.startswith("__ts_type__:"):
+                kw_args_defined, kw_defs_defined = _resolve_ts_interface_fields(conn, kw_tag.split(":", 1)[1])
+            elif isinstance(kw_tag, str) and kw_tag:
+                ts_rest_kwarg = kw_tag
+
         cur.execute(
             "SELECT file_path, line_number, call_args_count, call_kwargs, has_splat_pos, has_splat_kw, target_id "
             "FROM edges WHERE relation_type = 'calls' AND file_path != ? "
@@ -436,15 +458,44 @@ def audit_callers_of_file(
                 kw_list = json.loads(edge[3]) if edge[3] else []
             except Exception:
                 kw_list = []
-            res = HardenedSignatureContractValidator.validate(
-                node_id=row[0],
-                node_type=row[1],
-                sig_data=sig_data,
-                call_args_count=int(edge[2]),
-                call_kwargs=kw_list,
-                has_splat_pos=bool(edge[4]),
-                has_splat_kw=bool(edge[5]),
-            )
+            if is_ts_file and kw_args_defined and (kw_list or bool(edge[5])):
+                res = HardenedSignatureContractValidator.validate(
+                    node_id=row[0],
+                    node_type="function",
+                    sig_data={
+                        "posonly_args": [],
+                        "args": [],
+                        "defaults_count": 0,
+                        "vararg": None,
+                        "kwonly_args": kw_args_defined,
+                        "kw_defaults": kw_defs_defined or [True] * len(kw_args_defined),
+                        "kwarg": ts_rest_kwarg,
+                    },
+                    call_args_count=0,
+                    call_kwargs=kw_list,
+                    has_splat_pos=False,
+                    has_splat_kw=bool(edge[5]),
+                )
+            elif is_ts_file and kw_args_defined:
+                res = HardenedSignatureContractValidator.validate(
+                    node_id=row[0],
+                    node_type="function",
+                    sig_data={**sig_data, "kwonly_args": [], "kw_defaults": [], "kwarg": ts_rest_kwarg},
+                    call_args_count=int(edge[2]),
+                    call_kwargs=[],
+                    has_splat_pos=bool(edge[4]),
+                    has_splat_kw=False,
+                )
+            else:
+                res = HardenedSignatureContractValidator.validate(
+                    node_id=row[0],
+                    node_type=row[1],
+                    sig_data=sig_data,
+                    call_args_count=int(edge[2]),
+                    call_kwargs=kw_list,
+                    has_splat_pos=bool(edge[4]),
+                    has_splat_kw=bool(edge[5]),
+                )
             if not res.is_valid:
                 violations.append({
                     "file_path": edge[0],
@@ -467,36 +518,6 @@ _JS_SKIP_KEYWORDS = frozenset({
     "if", "for", "while", "switch", "catch", "function", "return", "new", "typeof", "await", "import", "require", "super", "constructor",
     "log", "warn", "error", "push", "pop", "map", "filter", "reduce", "forEach", "find", "some", "every", "includes", "join", "split", "slice", "trim", "keys", "values", "entries", "stringify", "parse", "resolve", "reject", "all", "then"
 })
-
-
-def _extract_js_call_obj_keys(source: str, open_paren_idx: int) -> Tuple[List[str], bool]:
-    """If a JS/TS call passes a single `{ k1, k2: v }` object literal, returns (keys, has_spread)."""
-    from omni_graph.visitor import _split_js_args
-    depth = 0
-    end_idx = open_paren_idx
-    for i in range(open_paren_idx, len(source)):
-        if source[i] == "(":
-            depth += 1
-        elif source[i] == ")":
-            depth -= 1
-            if depth == 0:
-                end_idx = i
-                break
-    inside = source[open_paren_idx + 1:end_idx].strip()
-    args = _split_js_args(inside, track_generics=False)
-    if len(args) != 1 or not args[0].startswith("{") or not args[0].endswith("}"):
-        return [], False
-    body = args[0][1:-1].strip()
-    keys: List[str] = []
-    has_spread = False
-    for item in _split_js_args(body, track_generics=False):
-        if item.startswith("..."):
-            has_spread = True
-            continue
-        k = item.split(":", 1)[0].strip()
-        if re.match(r"^[A-Za-z_$][A-Za-z0-9_$]*$", k):
-            keys.append(k)
-    return keys, has_spread
 
 
 def _resolve_ts_interface_fields(
@@ -540,10 +561,9 @@ def _resolve_ts_interface_fields(
                 tset = set(target_keys)
                 pairs = [(k, o) for k, o in zip(b_keys, b_opts) if k in tset]
                 return [p[0] for p in pairs], [p[1] for p in pairs]
-            else:
-                oset = set(target_keys)
-                pairs = [(k, o) for k, o in zip(b_keys, b_opts) if k not in oset]
-                return [p[0] for p in pairs], [p[1] for p in pairs]
+            oset = set(target_keys)
+            pairs = [(k, o) for k, o in zip(b_keys, b_opts) if k not in oset]
+            return [p[0] for p in pairs], [p[1] for p in pairs]
         return [], []
 
     cur.execute(
@@ -581,6 +601,7 @@ def audit_js_ts_calls(
         _JS_IMPORT_RE,
         _JS_METHOD_RE,
         _extract_js_call_args,
+        _extract_js_call_obj_keys,
         _strip_js_comments_and_strings,
     )
 
@@ -600,6 +621,10 @@ def audit_js_ts_calls(
             item_clean = item.strip().split(" as ")[-1].strip()
             if item_clean:
                 import_map[item_clean] = mod_stem
+
+    var_types: Dict[str, str] = {}
+    for m_new in re.finditer(r"\b(?:const|let|var)\s+(?P<var>[A-Za-z_$][A-Za-z0-9_$]*)\s*=\s*new\s+(?P<cls>[A-Za-z_$][A-Za-z0-9_$]*)\s*\(", clean_code):
+        var_types[m_new.group("var")] = m_new.group("cls")
 
     decl_lines: set[int] = set()
     for pat in (_JS_FUNC_RE, _JS_ARROW_RE, _JS_METHOD_RE):
@@ -625,15 +650,19 @@ def audit_js_ts_calls(
 
         call_args_count, has_splat = _extract_js_call_args(call_code, m_call.end() - 1)
         rows = []
+        matched_qualified = False
         if "." in callee:
+            recv = callee.split(".")[0]
+            q_cand = f"{var_types[recv]}.{sym}" if recv in var_types else callee
             cur.execute(
                 "SELECT s.node_id, n.node_type, s.posonly_args, s.args, s.defaults_count, "
                 "s.vararg, s.kwonly_args, s.kw_defaults, s.kwarg, n.file_path "
                 "FROM signatures s JOIN nodes n ON s.node_id = n.id "
                 "WHERE n.qualified_name = ? LIMIT 10",
-                (callee,),
+                (q_cand,),
             )
             rows = [r for r in cur.fetchall() if any((r[9] or "").lower().endswith(ext) for ext in _JS_TS_EXTS)]
+            matched_qualified = bool(rows)
         if not rows:
             cur.execute(
                 "SELECT s.node_id, n.node_type, s.posonly_args, s.args, s.defaults_count, "
@@ -643,6 +672,13 @@ def audit_js_ts_calls(
                 (sym,),
             )
             rows = [r for r in cur.fetchall() if any((r[9] or "").lower().endswith(ext) for ext in _JS_TS_EXTS)]
+            if "." in callee and not matched_qualified:
+                recv = callee.split(".")[0]
+                if recv in import_map:
+                    mod_h = import_map[recv].lower()
+                    rows = [r for r in rows if mod_h in (r[9] or "").replace("\\", "/").lower()]
+                else:
+                    rows = [r for r in rows if r[1] != "method"]
         if not rows:
             continue
 
@@ -669,9 +705,13 @@ def audit_js_ts_calls(
         sig_data = _row_to_sig_data(row)
         kw_args_defined = sig_data.get("kwonly_args") or []
         kw_defs_defined = sig_data.get("kw_defaults") or []
-        if not kw_args_defined and isinstance(sig_data.get("kwarg"), str) and sig_data["kwarg"].startswith("__ts_type__:"):
-            tname = sig_data["kwarg"].split(":", 1)[1]
+        kw_tag = sig_data.get("kwarg") or ""
+        ts_rest_kwarg = None
+        if not kw_args_defined and isinstance(kw_tag, str) and kw_tag.startswith("__ts_type__:"):
+            tname = kw_tag.split(":", 1)[1]
             kw_args_defined, kw_defs_defined = _resolve_ts_interface_fields(conn, tname)
+        elif isinstance(kw_tag, str) and kw_tag and not kw_tag.startswith("__ts_type__:"):
+            ts_rest_kwarg = kw_tag
         if kw_args_defined:
             obj_keys, obj_spread = _extract_js_call_obj_keys(call_code, m_call.end() - 1)
             if obj_keys or obj_spread:
@@ -686,7 +726,7 @@ def audit_js_ts_calls(
                         "vararg": None,
                         "kwonly_args": kw_args_defined,
                         "kw_defaults": kw_defs_defined or [True] * len(kw_args_defined),
-                        "kwarg": None,
+                        "kwarg": ts_rest_kwarg,
                     },
                     call_args_count=0,
                     call_kwargs=obj_keys,
@@ -697,7 +737,7 @@ def audit_js_ts_calls(
                 res = HardenedSignatureContractValidator.validate(
                     node_id=row[0],
                     node_type="function",
-                    sig_data={**sig_data, "kwonly_args": [], "kw_defaults": []},
+                    sig_data={**sig_data, "kwonly_args": [], "kw_defaults": [], "kwarg": ts_rest_kwarg},
                     call_args_count=call_args_count,
                     call_kwargs=[],
                     has_splat_pos=has_splat,
